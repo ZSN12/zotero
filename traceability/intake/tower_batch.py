@@ -264,6 +264,9 @@ def cross_file_batch(
     """
     from ..intake.tower_pipeline import finalize_tower_model
     from ..io import load_model, save_model
+
+    batch = intake_tower_batch(input_dir, out_dir, layer_map_path=layer_map_path, merge=False)
+    models: List[EngineeringModel] = []
     for entry in batch["files"]:
         if entry.get("error"):
             continue
