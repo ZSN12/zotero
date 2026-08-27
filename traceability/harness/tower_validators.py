@@ -168,6 +168,12 @@ def validate_gusset_plate(model: EngineeringModel, rule_id: str) -> Optional[Val
     cid = f"gusset_{plate_id}"
     comp = model.components.get(cid)
     if comp is None:
+        comp = model.components.get(plate_id)
+    if comp is None:
+        rule = model.rules.get(rule_id)
+        if rule and rule.applies_to:
+            comp = model.components.get(rule.applies_to[0])
+    if comp is None:
         return ValidationResult(rule_id, ValidationStatus.FAILED,
                                 f"节点板组件 {cid} 不存在", "gusset-plate")
     poly = comp.properties.get("polygon_local") or []

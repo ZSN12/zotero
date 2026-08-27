@@ -101,6 +101,17 @@ if not bolt:
 print(f"PASS: nodes_solved={ns}/{len(front_nodes) or '?'}, derived_y={ndy}, gusset_rules={len(gusset)}, bolt_rules={len(bolt)}")
 PYEOF
 
+echo "==> [3b/5] guowang strict GLB（confirm-derived-y → export）"
+"$PY" -m traceability.cli cross-file-batch \
+  examples/external/guowang_35A1/ \
+  --layer-map examples/external/guowang_35A1/layer_overlay.json \
+  --out-dir "$OUT/guowang-glb" >/dev/null
+"$PY" -m traceability.cli confirm-derived-y "$OUT/guowang-glb/model.json"
+"$PY" -m traceability.cli solve-tower "$OUT/guowang-glb/model.json" \
+  --format glb --out "$OUT/guowang-glb/tower.glb" --allow-derived-y >/dev/null
+test -s "$OUT/guowang-glb/tower.glb" || { echo "FAIL: guowang strict GLB 未生成"; exit 1; }
+echo "PASS: guowang strict GLB $(wc -c < "$OUT/guowang-glb/tower.glb") bytes"
+
 echo "==> [4/5] examples/clear/ 扫描批量（3 view_type + merged model）"
 "$PY" -m traceability.cli run-tower examples/clear/ \
   --out-dir "$OUT/clear-multi" >/dev/null 2>&1 || true

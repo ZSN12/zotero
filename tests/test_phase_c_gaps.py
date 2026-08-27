@@ -184,6 +184,38 @@ class CrossFileBatchTest(unittest.TestCase):
             except Exception as exc:
                 self.skipTest(f"trimesh 不可用或导出失败: {exc}")
 
+    def test_cross_file_gusset_auto_anchored(self):
+        from traceability.intake.tower_batch import cross_file_batch
+        from traceability.harness.harness import run_harness
+
+        d = EXAMPLES / "external" / "guowang_35A1"
+        if not d.exists():
+            self.skipTest("国网目录不存在")
+        with tempfile.TemporaryDirectory() as tmp:
+            r = cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
+            from traceability.io import load_model
+            model = load_model(str(Path(tmp) / "model.json"))
+        mr = r.get("merge_report") or {}
+        self.assertGreaterEqual(mr.get("gussets_anchored", 0), 1)
+        gussets = [c for c in model.components.values() if c.kind == "gusset_plate"]
+        self.assertTrue(any(c.properties.get("polygon_global") for c in gussets))
+        results = {x.target_id: x for x in run_harness(model)}
+        gusset_rules = [v for k, v in results.items() if k.startswith("r_gusset_")]
+        self.assertTrue(gusset_rules)
+        self.assertEqual(gusset_rules[0].status.value, "passed")
+
+    def test_guowang_merged_bars_drop_self_loops(self):
+        from traceability.intake.tower_batch import cross_file_batch
+
+        d = EXAMPLES / "external" / "guowang_35A1"
+        if not d.exists():
+            self.skipTest("国网目录不存在")
+        with tempfile.TemporaryDirectory() as tmp:
+            r = cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
+        mr = r.get("merge_report") or {}
+        self.assertGreater(mr.get("bars", 0), 0)
+        self.assertLess(mr.get("bars", 9999), 200)
+
     def test_guowang_side_infer_single_facade(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf
 

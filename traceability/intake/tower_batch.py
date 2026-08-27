@@ -120,6 +120,12 @@ def intake_tower_batch(
                     if c.kind == "tower_node"
                     and c.properties.get("y_origin") == "z_peer_interpolate"
                 ),
+                "gussets_anchored": sum(
+                    1 for c in merged.components.values()
+                    if c.kind == "gusset_plate"
+                    and c.properties.get("solve_status") == "verified"
+                    and c.properties.get("polygon_global")
+                ),
             }
         else:
             merged = merge_tower_models(models)
@@ -334,6 +340,12 @@ def cross_file_batch(
             1 for c in merged.components.values()
             if c.kind == "tower_node"
             and c.properties.get("y_origin") == "z_peer_interpolate"
+        )
+        merge_report["gussets_anchored"] = sum(
+            1 for c in merged.components.values()
+            if c.kind == "gusset_plate"
+            and c.properties.get("solve_status") == "verified"
+            and c.properties.get("polygon_global")
         )
     elif len(models) == 1:
         merged = finalize_tower_model(

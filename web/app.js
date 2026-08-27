@@ -177,9 +177,44 @@ function showDerivedYStatus(model) {
 
 function updateDerivedYButton() {
   const btn = $('confirm-derived-y');
-  if (!btn || !currentModel) return;
+  const exportBtn = $('export-glb');
+  if (!currentModel) return;
   const pending = derivedYPendingNodes(currentModel);
-  btn.disabled = pending.length === 0 || !currentModelPath;
+  if (btn) btn.disabled = pending.length === 0 || !currentModelPath;
+  if (exportBtn) exportBtn.disabled = !currentModelPath;
+}
+
+async function exportGlb() {
+  if (!currentModelPath) return;
+  const btn = $('export-glb');
+  btn.disabled = true;
+  try {
+    const pending = derivedYPendingNodes(currentModel);
+    const res = await fetch('/api/export-glb', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model_path: currentModelPath,
+        allow_derived_y: pending.length === 0,
+      }),
+    });
+    const payload = await res.json();
+    if (payload.ok && payload.glb_path) {
+      $('status').textContent = `GLB 导出 ✓ ${payload.glb_path}`;
+      loadGlb(payload.glb_path);
+      await loadAuditLog();
+    } else {
+      $('status').textContent = 'GLB 导出失败：' + (payload.error || '未知');
+      if ((payload.derived_y_pending || 0) > 0) {
+        showDerivedYStatus(currentModel);
+      }
+    }
+  } catch (e) {
+    $('status').textContent = 'GLB 导出请求失败：' + e;
+  } finally {
+    btn.disabled = false;
+    updateDerivedYButton();
+  }
 }
 
 function highlightBar3D(barId) {
@@ -321,6 +356,7 @@ async function confirmDerivedY() {
     if (payload.ok) {
       $('status').textContent = `插值 Y 复核 ✓ confirmed=${payload.confirmed_nodes || 0}`;
       await renderBars(currentModelPath);
+      await exportGlb();
       await loadAuditLog();
     } else {
       $('status').textContent = '插值 Y 复核失败：' + (payload.error || '未知');
@@ -396,7 +432,8 @@ async function run() {
       $('status').textContent = '完成 ✓\n' + Object.entries(payload).filter(([k, v]) => v && k !== 'steps').map(([k, v]) => `${k}=${v}`).join('\n');
       renderSteps((payload.steps && payload.steps.steps) || []);
       if (payload.glb_path) loadGlb(payload.glb_path);
-      if (payload.model_path) renderBars(payload.model_path);
+      if (payload.model_path) await renderBars(payload.model_path);
+      updateDerivedYButton();
       await loadAuditLog();
     } else {
       $('status').textContent = '失败 ✗\n' + (payload.error || '未知错误');
@@ -412,6 +449,7 @@ async function run() {
 $('run').onclick = run;
 $('confirm-scan').onclick = confirmScan;
 $('confirm-derived-y').onclick = confirmDerivedY;
+$('export-glb').onclick = exportGlb;
 initViewer();
 loadAuditLog();
 

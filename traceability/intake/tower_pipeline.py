@@ -40,6 +40,9 @@ def finalize_tower_model(
     if merge:
         merge_view_coordinates(model, overlay=layer_map_path)
         model = merge_view_bars(model, overlay=layer_map_path)
+        if layer_map_path:
+            from ..connection.gusset_anchor import auto_anchor_gussets
+            auto_anchor_gussets(model, overlay=layer_map_path)
     inject_tower_rules(model)
     if allow_scan:
         # 只做「允许进入求解链」的标记；是否 verified 仍由 r_scan_reviewed 规则判定

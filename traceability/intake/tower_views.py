@@ -493,7 +493,11 @@ def merge_view_bars(
 
     primary_nodes = {cid for cid, c in _tower_nodes(model)
                      if c.properties.get("view_type") == primary}
-    primary_bars = [c for c in bars if c.properties.get("view_type") == primary]
+    primary_bars = [
+        c for c in bars
+        if c.properties.get("view_type") == primary
+        and c.properties.get("from_node") != c.properties.get("to_node")
+    ]
 
     # BOM 长度表（dim_bom_length_*）与截面表
     bom_len: Dict[str, float] = {}

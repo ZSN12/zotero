@@ -168,6 +168,52 @@ def confirm_derived_y_model(model_path: Path, *, reviewer: str = "web_user") -> 
     }
 
 
+def export_glb_model(
+    model_path: Path,
+    *,
+    allow_derived_y: bool = True,
+    allow_scan: bool = False,
+    reviewer: str = "web_user",
+) -> dict:
+    from traceability.io import load_model
+    from traceability.intake.tower_pipeline import derived_y_pending_nodes
+    from traceability.solve.tower_solver import export_tower_glb, SolveError
+
+    model = load_model(str(model_path))
+    pending_y = derived_y_pending_nodes(model)
+    if pending_y and not allow_derived_y:
+        return {
+            "ok": False,
+            "error": f"{len(pending_y)} 个插值 y 待复核，请先 confirm-derived-y",
+            "derived_y_pending": len(pending_y),
+        }
+    glb_path = model_path.parent / "tower.glb"
+    try:
+        export_tower_glb(
+            model,
+            glb_path,
+            strict=True,
+            allow_scan=allow_scan,
+            allow_derived_y=allow_derived_y,
+        )
+    except SolveError as exc:
+        return {"ok": False, "error": str(exc), "derived_y_pending": len(pending_y)}
+    _audit(
+        "export_glb",
+        reviewer=reviewer,
+        model=str(model_path),
+        glb=str(glb_path),
+        allow_derived_y=allow_derived_y,
+        derived_y_pending=len(pending_y),
+    )
+    return {
+        "ok": True,
+        "glb_path": _public_path(str(glb_path)),
+        "derived_y_pending": len(pending_y),
+        "allow_derived_y": allow_derived_y,
+    }
+
+
 def _public_path(path: str | None) -> str | None:
     if not path:
         return None
@@ -265,6 +311,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, payload)
             except Exception as exc:
                 _audit("confirm_derived_y_error", error=str(exc))
+                self._send(500, {"ok": False, "error": str(exc)})
+            return
+
+        if self.path == "/api/export-glb":
+            rel = data.get("model_path", "")
+            target = _resolve_artifact(rel)
+            if target is None:
+                return self._send(400, {"ok": False, "error": "model_path 无效或越界"})
+            if not target.exists():
+                return self._send(404, {"ok": False, "error": "model 不存在"})
+            try:
+                payload = export_glb_model(
+                    target,
+                    allow_derived_y=bool(data.get("allow_derived_y", True)),
+                    allow_scan=bool(data.get("allow_scan", False)),
+                    reviewer=data.get("reviewer") or "web_user",
+                )
+                code = 200 if payload.get("ok") else 422
+                self._send(code, payload)
+            except Exception as exc:
+                _audit("export_glb_error", error=str(exc))
                 self._send(500, {"ok": False, "error": str(exc)})
             return
 
