@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from ..model import Component, EngineeringModel
-from .tower_spec import view_regions, cross_file_z_ref
+from .tower_spec import view_regions, cross_file_z_ref, cross_file_allow_z_peer_interpolate
 
 # 三视图展开系数（与 schema/tower_layer_map.json 生成器约定一致）
 DEFAULT_EXPAND = 0.08
@@ -198,6 +198,66 @@ def _propagate_front_y_via_bar_id(
                     merged[fnode.id] = dict(solved)
 
 
+def _interpolate_front_y_from_z_peers(
+    model: EngineeringModel,
+    merged: Dict[str, Dict[str, Optional[float]]],
+    eps: float,
+) -> None:
+    """同 Z 带内已解算节点的 y，对剩余 front 节点按 view_x 线性插值（cross_file 补全）。"""
+    front_nodes = [
+        comp for _, comp in _tower_nodes(model)
+        if comp.properties.get("view_type") == "front"
+    ]
+    solved = [
+        c for c in front_nodes
+        if c.properties.get("solve_status") == "solved" and c.properties.get("y") is not None
+    ]
+    for comp in front_nodes:
+        if comp.properties.get("solve_status") == "solved":
+            continue
+        ux = comp.properties.get("view_x")
+        uz = comp.properties.get("view_y")
+        if ux is None or uz is None:
+            continue
+        peers = [
+            s for s in solved
+            if abs(float(s.properties.get("view_y") or 0) - float(uz)) <= eps
+        ]
+        if len(peers) < 2:
+            continue
+        peers.sort(key=lambda s: float(s.properties.get("view_x") or 0))
+        left = [s for s in peers if float(s.properties.get("view_x") or 0) <= float(ux)]
+        right = [s for s in peers if float(s.properties.get("view_x") or 0) >= float(ux)]
+        if left and right:
+            s1 = max(left, key=lambda s: float(s.properties.get("view_x") or 0))
+            s2 = min(right, key=lambda s: float(s.properties.get("view_x") or 0))
+            if s1.id == s2.id:
+                s1, s2 = sorted(peers, key=lambda s: abs(float(s.properties.get("view_x") or 0) - float(ux)))[:2]
+        else:
+            s1, s2 = sorted(peers, key=lambda s: abs(float(s.properties.get("view_x") or 0) - float(ux)))[:2]
+        x1, y1 = float(s1.properties["view_x"]), float(s1.properties["y"])
+        x2, y2 = float(s2.properties["view_x"]), float(s2.properties["y"])
+        if abs(x2 - x1) < 1e-6:
+            y = y1
+        else:
+            t = (float(ux) - x1) / (x2 - x1)
+            y = y1 + t * (y2 - y1)
+        solved_dict = {
+            "x": round(float(ux), 2),
+            "y": round(float(y), 2),
+            "z": round(float(uz), 2),
+        }
+        comp.properties.update({
+            **solved_dict,
+            "solve_status": "solved",
+            "y_origin": "z_peer_interpolate",
+        })
+        ao = dict(comp.properties.get("axis_origin") or {})
+        ao["y"] = "derived"
+        comp.properties["axis_origin"] = ao
+        merged[comp.id] = dict(solved_dict)
+
+
 def merge_view_coordinates(
     model: EngineeringModel,
     overlay: Optional[str | Path | dict] = None,
@@ -324,6 +384,10 @@ def merge_view_coordinates(
 
     # ---- front + plan bar_id 端点传播 y（共享件号杆件）----
     _propagate_front_y_via_bar_id(model, nodes_by_view, merged, eps)
+
+    # ---- cross_file：同 Z 带 y 插值（需 overlay 显式开启）----
+    if cross_file_allow_z_peer_interpolate(overlay=overlay):
+        _interpolate_front_y_from_z_peers(model, merged, eps)
 
     # ---- front + side + section 三视图线性解耦 ----
     front_meta = meta.get("front", {})

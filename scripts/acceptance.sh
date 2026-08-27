@@ -81,6 +81,10 @@ ns = mr.get("nodes_solved", 0)
 if ns <= 0:
     print(f"FAIL: guowang cross_file nodes_solved={ns} <= 0")
     sys.exit(1)
+front_nodes = [c for c in model.get("components", {}).values() if c.get("kind") == "tower_node" and (c.get("properties") or {}).get("view_type") == "front"]
+if front_nodes and ns < len(front_nodes):
+    print(f"FAIL: nodes_solved={ns} < front_nodes={len(front_nodes)}")
+    sys.exit(1)
 rules = model.get("rules") or {}
 bolt = [k for k in rules if k.startswith("r_bolt_group_")]
 gusset = [k for k in rules if k.startswith("r_gusset_")]
@@ -90,7 +94,7 @@ if not gusset:
 if not bolt:
     print("FAIL: 合并模型缺少 r_bolt_group_* 规则")
     sys.exit(1)
-print(f"PASS: nodes_solved={ns}, gusset_rules={len(gusset)}, bolt_rules={len(bolt)}")
+print(f"PASS: nodes_solved={ns}/{len(front_nodes) or '?'}, gusset_rules={len(gusset)}, bolt_rules={len(bolt)}")
 PYEOF
 
 echo "==> [4/5] examples/clear/ 扫描批量（3 view_type + merged model）"

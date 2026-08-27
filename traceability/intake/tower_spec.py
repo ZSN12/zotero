@@ -209,3 +209,20 @@ def cross_file_z_ref(overlay: Optional[str | Path | dict] = None) -> Optional[fl
         if str(key).endswith(":front") and "z_level" in meta:
             return float(meta["z_level"])
     return None
+
+
+def cross_file_allow_z_peer_interpolate(overlay: Optional[str | Path | dict] = None) -> bool:
+    manifest = cross_file_view_manifest(overlay)
+    return bool(manifest.get("allow_z_peer_y_interpolate"))
+
+
+def cross_file_infer_side_stems(overlay: Optional[str | Path | dict] = None) -> List[str]:
+    manifest = cross_file_view_manifest(overlay)
+    stems = manifest.get("infer_side_on_stems") or []
+    return [str(s) for s in stems] if isinstance(stems, list) else []
+
+
+def assembly_split_min_gap_ratio(overlay: Optional[str | Path | dict] = None) -> float:
+    manifest = cross_file_view_manifest(overlay)
+    val = manifest.get("assembly_split_min_gap_ratio")
+    return float(val) if val is not None else 0.5

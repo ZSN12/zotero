@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 
 # 完整 demo 生成器（16 节点 26 杆件，立面+平面+BOM）在 tower_demo_dxf.py
 from .tower_demo_dxf import make_demo_tower_dxf  # noqa: F401  (复用完整版)
-from .tower_spec import layer_names, layer_names_for_stem, bar_id_patterns, view_regions
+from .tower_spec import layer_names, layer_names_for_stem, bar_id_patterns, view_regions, cross_file_infer_side_stems, assembly_split_min_gap_ratio
 
 from ..model import (
     Component,
@@ -276,6 +276,7 @@ def _region_axes(region: dict) -> List[str]:
 def _infer_assembly_views(
     raw_segments: List[Dict],
     drawing_kind: str,
+    min_gap_ratio: float = 0.5,
 ) -> List[dict]:
     """无 overlay view_regions 时，按图面结构推断视图区域（P0）。
 
@@ -316,7 +317,7 @@ def _infer_assembly_views(
         if left and right:
             gap = right[0] - left[-1]
             inner = max(max(left) - min(left), max(right) - min(right))
-            if gap > inner * 0.5:
+            if gap > inner * min_gap_ratio:
                 return [
                     {
                         "kind": "front",
@@ -427,6 +428,24 @@ def extract_tower_from_dxf(
                     "layer": layer,
                 })
 
+    # M3+ side POC：overlay 声明 infer_side_on_stems 时，尝试从总装图双簇推断侧立面 region
+    if stem in cross_file_infer_side_stems(layer_map_path):
+        gap_ratio = assembly_split_min_gap_ratio(layer_map_path)
+        inferred = _infer_assembly_views(
+            raw_segments, drawing_kind["kind"], min_gap_ratio=gap_ratio,
+        )
+        existing_kinds = {r.get("kind") for r in regions}
+        side_regions = [r for r in inferred if r.get("kind") == "side"]
+        df_side = model.components.get("drawing_file")
+        if side_regions and "side" not in existing_kinds:
+            regions = list(regions) + side_regions
+            if df_side:
+                df_side.properties["side_infer"] = "split"
+        elif df_side:
+            df_side.properties["side_infer"] = "single_facade_no_split"
+        if df_side:
+            df_side.properties["side_infer_gap_ratio"] = gap_ratio
+
     # B2：图签 / BOM 页不进入杆件解析，也不误报「解析失败」
     if not drawing_kind["parse_bars"]:
         _add_dimensions_from_dxf_entities(model, msp, lm, dxf_path, bar_id_re)
@@ -452,7 +471,10 @@ def extract_tower_from_dxf(
         #     * assembly 总装图 -> 左右两簇切 front/side，或单一 front 立面
         #     * node_detail 节点大样 -> detail（空 axes，不参与 merge）
         #     * 其它 -> 单一 drawing 视图（axes=[x,y]，保留旧行为）
-        inferred = _infer_assembly_views(raw_segments, drawing_kind["kind"])
+        inferred = _infer_assembly_views(
+            raw_segments, drawing_kind["kind"],
+            min_gap_ratio=assembly_split_min_gap_ratio(layer_map_path),
+        )
         if inferred:
             regions = inferred
             for seg in raw_segments:

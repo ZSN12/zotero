@@ -18,8 +18,12 @@
     "sheets": {
       "front": "35A1-JC1-02",
       "plan": "35C2-SJG1-ML",
+      "side": null,
       "detail": "35A1-JC1-03"
     },
+    "infer_side_on_stems": ["35A1-JC1-02"],
+    "assembly_split_min_gap_ratio": 0.5,
+    "allow_z_peer_y_interpolate": true,
     "view_align": {
       "35A1-JC1-02:front": {
         "match_axis": "x",

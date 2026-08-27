@@ -101,6 +101,35 @@ class CrossFileBatchTest(unittest.TestCase):
         self.assertIn("r_cross_file_3d_partial", results)
         self.assertEqual(results["r_cross_file_3d_partial"].status.value, "passed")
 
+    def test_cross_file_all_front_nodes_solved(self):
+        from traceability.intake.tower_batch import cross_file_batch
+
+        d = EXAMPLES / "external" / "guowang_35A1"
+        if not d.exists():
+            self.skipTest("国网目录不存在")
+        with tempfile.TemporaryDirectory() as tmp:
+            r = cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
+            from traceability.io import load_model
+            model = load_model(str(Path(tmp) / "model.json"))
+        front_nodes = [
+            c for c in model.components.values()
+            if c.kind == "tower_node" and c.properties.get("view_type") == "front"
+        ]
+        solved = [c for c in front_nodes if c.properties.get("solve_status") == "solved"]
+        self.assertEqual(len(solved), len(front_nodes))
+        mr = r.get("merge_report") or {}
+        self.assertEqual(mr.get("nodes_solved"), len(front_nodes))
+
+    def test_guowang_side_infer_single_facade(self):
+        from traceability.intake.tower_dxf import extract_tower_from_dxf
+
+        dxf = EXAMPLES / "external" / "guowang_35A1" / "35A1-JC1-02.dxf"
+        if not dxf.exists():
+            self.skipTest("国网立面不存在")
+        model = extract_tower_from_dxf(str(dxf), layer_map_path=str(OVERLAY))
+        df = model.components.get("drawing_file")
+        self.assertEqual(df.properties.get("side_infer"), "single_facade_no_split")
+
     def test_guowang_plan_overlay_parses_bars(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf
 
