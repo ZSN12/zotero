@@ -50,7 +50,7 @@ if failed:
 print(f"PASS: 五条规则 {len(rules)}/{len(rules)} passed")
 PYEOF
 
-echo "==> [2/4] guowang 02 parse-rate >= 50%"
+echo "==> [2/5] guowang 02 parse-rate >= 50%"
 "$PY" -m traceability.cli parse-report \
   examples/external/guowang_35A1/35A1-JC1-02.dxf \
   --layer-map examples/external/guowang_35A1/layer_overlay.json \
@@ -66,7 +66,34 @@ if rate < 0.50:
 print(f"PASS: guowang 02 parse-rate {rate:.4f} >= 0.50")
 PYEOF
 
-echo "==> [3/4] examples/clear/ 扫描批量（3 view_type + merged model）"
+echo "==> [3/5] guowang cross_file front+plan（nodes_solved > 0 + 连接规则）"
+"$PY" -m traceability.cli cross-file-batch \
+  examples/external/guowang_35A1/ \
+  --layer-map examples/external/guowang_35A1/layer_overlay.json \
+  --out-dir "$OUT/guowang-cross" >/dev/null
+
+"$PY" - "$OUT/guowang-cross/batch_report.json" "$OUT/guowang-cross/model.json" <<'PYEOF'
+import json, sys
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+model = json.load(open(sys.argv[2], encoding="utf-8"))
+mr = report.get("merge_report") or {}
+ns = mr.get("nodes_solved", 0)
+if ns <= 0:
+    print(f"FAIL: guowang cross_file nodes_solved={ns} <= 0")
+    sys.exit(1)
+rules = model.get("rules") or {}
+bolt = [k for k in rules if k.startswith("r_bolt_group_")]
+gusset = [k for k in rules if k.startswith("r_gusset_")]
+if not gusset:
+    print("FAIL: 合并模型缺少 r_gusset_* 规则")
+    sys.exit(1)
+if not bolt:
+    print("FAIL: 合并模型缺少 r_bolt_group_* 规则")
+    sys.exit(1)
+print(f"PASS: nodes_solved={ns}, gusset_rules={len(gusset)}, bolt_rules={len(bolt)}")
+PYEOF
+
+echo "==> [4/5] examples/clear/ 扫描批量（3 view_type + merged model）"
 "$PY" -m traceability.cli run-tower examples/clear/ \
   --out-dir "$OUT/clear-multi" >/dev/null 2>&1 || true
 
@@ -90,7 +117,7 @@ if not model.exists():
 print(f"PASS: view_type={sorted(vts)} + merged model 存在")
 PYEOF
 
-echo "==> [4/4] pytest 全量单测"
+echo "==> [5/5] pytest 全量单测"
 "$PY" -m pytest tests -q
 
 if [ "$WITH_MLLM" = "1" ]; then

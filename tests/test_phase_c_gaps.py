@@ -71,6 +71,36 @@ class CrossFileBatchTest(unittest.TestCase):
         mr = r.get("merge_report") or {}
         self.assertGreater(mr.get("nodes_solved", 0), 0, "cross_file front+plan 应解出 3D 节点")
 
+    def test_cross_file_merged_has_bolt_and_gusset_rules(self):
+        from traceability.intake.tower_batch import cross_file_batch
+
+        d = EXAMPLES / "external" / "guowang_35A1"
+        if not d.exists():
+            self.skipTest("国网目录不存在")
+        with tempfile.TemporaryDirectory() as tmp:
+            cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
+            from traceability.io import load_model
+            model = load_model(str(Path(tmp) / "model.json"))
+        bolt_rules = [r for r in model.rules if r.startswith("r_bolt_group_")]
+        gusset_rules = [r for r in model.rules if r.startswith("r_gusset_")]
+        self.assertGreaterEqual(len(gusset_rules), 1)
+        self.assertGreaterEqual(len(bolt_rules), 1)
+
+    def test_cross_file_partial_3d_rule_passes(self):
+        from traceability.intake.tower_batch import cross_file_batch
+        from traceability.harness.harness import run_harness
+
+        d = EXAMPLES / "external" / "guowang_35A1"
+        if not d.exists():
+            self.skipTest("国网目录不存在")
+        with tempfile.TemporaryDirectory() as tmp:
+            cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
+            from traceability.io import load_model
+            model = load_model(str(Path(tmp) / "model.json"))
+        results = {r.target_id: r for r in run_harness(model)}
+        self.assertIn("r_cross_file_3d_partial", results)
+        self.assertEqual(results["r_cross_file_3d_partial"].status.value, "passed")
+
     def test_guowang_plan_overlay_parses_bars(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf
 

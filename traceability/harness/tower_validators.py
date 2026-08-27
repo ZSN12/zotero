@@ -191,12 +191,8 @@ def validate_bolt_group_rule(model: EngineeringModel, rule_id: str) -> Optional[
         diameter_mm=float(comp.properties.get("diameter_mm") or 16),
         length_mm=float(comp.properties.get("length_mm") or 40),
     )
-    outline_raw = None
-    plate_id = gid.split("_B")[0] if "_B" in gid else gid.split("_")[0]
-    gusset = model.components.get(f"gusset_{plate_id}")
-    if gusset:
-        outline_raw = gusset.properties.get("polygon_local")
-    outline = [(float(p[0]), float(p[1])) for p in (outline_raw or []) if p]
+    outline_raw = _gusset_outline_for_bolt(model, gid)
+    outline = outline_raw or None
     group = BoltGroup(group_id=gid, spec=spec, holes=holes,
                       plate_outline=outline or None)
     result = verify_bolt_group(group)
@@ -216,6 +212,29 @@ def connection_validators_for_model(model: EngineeringModel) -> dict:
     return out
 
 
+def validate_cross_file_3d_partial(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:
+    """跨文件合并：至少部分节点解出三轴坐标（国网 front+plan 分册场景）。"""
+    df = model.components.get("drawing_file")
+    if df is None or df.properties.get("view_mode") != "cross_file_multi_view":
+        return ValidationResult(rule_id, ValidationStatus.PENDING,
+                                "非 cross_file 合并模型，跳过", "cross-file-3d")
+    nodes = [c for c in model.components.values() if c.kind == "tower_node"]
+    solved = [c for c in nodes if c.properties.get("solve_status") == "solved"
+              and c.properties.get("x") is not None and c.properties.get("y") is not None
+              and c.properties.get("z") is not None]
+    if not nodes:
+        return ValidationResult(rule_id, ValidationStatus.PENDING,
+                                "无 tower_node 可核验", "cross-file-3d")
+    if not solved:
+        return ValidationResult(rule_id, ValidationStatus.FAILED,
+                                "cross_file 合并后 nodes_solved=0", "cross-file-3d")
+    return ValidationResult(
+        rule_id, ValidationStatus.PASSED,
+        f"cross_file 部分 3D 解算 {len(solved)}/{len(nodes)} 节点",
+        "cross-file-3d",
+    )
+
+
 # 规则 ID -> 验证器
 tower_validators = {
     "r_topology_closed": validate_topology_closed,
@@ -224,6 +243,7 @@ tower_validators = {
     "r_node_fully_solved": validate_node_fully_solved,
     "r_no_duplicate_bar_id": validate_no_duplicate_bar_id,
     "r_scan_reviewed": validate_scan_reviewed,
+    "r_cross_file_3d_partial": validate_cross_file_3d_partial,
 }
 
 
@@ -258,6 +278,11 @@ TOWER_RULE_DEFS = [
         "name": "扫描图人工复核闸门",
         "description": "扫描图候选杆件/节点必须 solve_status=verified 才可进终版 3D",
     },
+    {
+        "id": "r_cross_file_3d_partial",
+        "name": "跨文件 3D 部分解算",
+        "description": "cross_file 合并后至少部分节点解出 x/y/z（front+plan 分册）",
+    },
 ]
 
 
@@ -275,10 +300,14 @@ def inject_tower_rules(model: EngineeringModel) -> EngineeringModel:
         c.properties.get("solve_status") == "pending_review"
         for c in model.components.values() if c.kind in ("tower_bar", "tower_node")
     )
+    df = model.components.get("drawing_file")
+    is_cross_file = bool(df and df.properties.get("view_mode") == "cross_file_multi_view")
 
     specs = list(TOWER_RULE_DEFS)
     if not has_scan:
         specs = [sp for sp in specs if sp["id"] != "r_scan_reviewed"]
+    if not is_cross_file:
+        specs = [sp for sp in specs if sp["id"] != "r_cross_file_3d_partial"]
 
     for spec in specs:
         rid = spec["id"]
@@ -328,4 +357,38 @@ def inject_connection_rules(model: EngineeringModel) -> EngineeringModel:
                 status=st,
                 message=msg,
             ))
+
+    from ..connection.bolt_verify import BoltGroup, BoltSpec, inject_bolt_verification_rule, verify_bolt_group
+
+    for cid, comp in model.components.items():
+        if comp.kind != "bolt_group":
+            continue
+        gid = cid.removeprefix("bolt_group_")
+        rid = f"r_bolt_group_{gid}"
+        if rid in model.rules:
+            continue
+        holes_raw = comp.properties.get("holes") or []
+        holes = [(float(h[0]), float(h[1])) for h in holes_raw if h]
+        spec = BoltSpec(
+            count=int(comp.properties.get("count") or len(holes) or 1),
+            diameter_mm=float(comp.properties.get("diameter_mm") or 16),
+            length_mm=float(comp.properties.get("length_mm") or 40),
+        )
+        outline = _gusset_outline_for_bolt(model, gid)
+        group = BoltGroup(group_id=gid, spec=spec, holes=holes, plate_outline=outline)
+        result = verify_bolt_group(group)
+        inject_bolt_verification_rule(model, group, result)
     return model
+
+
+def _gusset_outline_for_bolt(model: EngineeringModel, group_id: str):
+    """按 bolt group id 找同大样节点板轮廓（兼容 cross_file 前缀）。"""
+    plate_key = group_id.rsplit("_B", 1)[0] if "_B" in group_id else group_id
+    for gcid, gcomp in model.components.items():
+        if gcomp.kind != "gusset_plate":
+            continue
+        pid = gcid.removeprefix("gusset_")
+        if pid == plate_key or pid.endswith(f"__{plate_key}") or gcid.endswith(f"_{plate_key}"):
+            raw = gcomp.properties.get("polygon_local") or []
+            return [(float(p[0]), float(p[1])) for p in raw if p]
+    return None

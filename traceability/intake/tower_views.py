@@ -112,6 +112,92 @@ def _hungarian(cost: List[List[float]]) -> List[Tuple[int, int]]:
         return _linear_sum_assignment_fallback(cost)
 
 
+def _norm_view_x(val: float, items: List[Component]) -> float:
+    xs = [float(c.properties["view_x"]) for c in items if c.properties.get("view_x") is not None]
+    if not xs:
+        return 0.5
+    lo, hi = min(xs), max(xs)
+    return (val - lo) / (hi - lo) if hi - lo > 1e-6 else 0.5
+
+
+def _propagate_front_y_via_bar_id(
+    model: EngineeringModel,
+    nodes_by_view: Dict[str, List[Tuple[str, Component]]],
+    merged: Dict[str, Dict[str, Optional[float]]],
+    eps: float,
+) -> None:
+    """同 bar_id 的 plan 杆件端点 y → front 杆件端点（cross_file 提升解算率）。"""
+    from collections import defaultdict
+
+    node_index = {cid: comp for cid, comp in _tower_nodes(model)}
+
+    plan_bars: Dict[str, List[Component]] = defaultdict(list)
+    front_bars: Dict[str, List[Component]] = defaultdict(list)
+    for _, bar in _tower_bars(model):
+        bid = str(bar.properties.get("bar_id") or "")
+        if not bid or bid.startswith("UNLABELED"):
+            continue
+        vt = bar.properties.get("view_type")
+        if vt == "plan":
+            plan_bars[bid].append(bar)
+        elif vt == "front":
+            front_bars[bid].append(bar)
+
+    def _match_endpoints(plan_bar: Component, front_bar: Component) -> List[Tuple[Component, Component]]:
+        pairs: List[Tuple[Component, Component]] = []
+        plan_ends: List[Component] = []
+        front_ends: List[Component] = []
+        for end in ("from_node", "to_node"):
+            pnid = plan_bar.properties.get(end)
+            fnid = front_bar.properties.get(end)
+            if pnid and pnid in node_index:
+                plan_ends.append(node_index[pnid])
+            if fnid and fnid in node_index:
+                front_ends.append(node_index[fnid])
+        if not plan_ends or not front_ends:
+            return pairs
+        used: set = set()
+        for pe in plan_ends:
+            px = pe.properties.get("view_x")
+            if px is None:
+                continue
+            best_f, best_d = None, float("inf")
+            for fe in front_ends:
+                if fe.id in used:
+                    continue
+                fx = fe.properties.get("view_x")
+                if fx is None:
+                    continue
+                d = abs(
+                    _norm_view_x(float(px), plan_ends) - _norm_view_x(float(fx), front_ends)
+                )
+                if d < best_d:
+                    best_d, best_f = d, fe
+            if best_f is not None and best_d <= 0.4:
+                pairs.append((best_f, pe))
+                used.add(best_f.id)
+        return pairs
+
+    for bid in set(plan_bars) & set(front_bars):
+        for pbar in plan_bars[bid]:
+            for fbar in front_bars[bid]:
+                for fnode, pnode in _match_endpoints(pbar, fbar):
+                    if fnode.properties.get("solve_status") == "solved":
+                        continue
+                    fx = fnode.properties.get("view_x")
+                    fz = fnode.properties.get("view_y")
+                    py = pnode.properties.get("view_y")
+                    if fx is None or fz is None or py is None:
+                        continue
+                    solved = {
+                        "x": round(float(fx), 2),
+                        "y": round(float(py), 2),
+                        "z": round(float(fz), 2),
+                    }
+                    fnode.properties.update({**solved, "solve_status": "solved"})
+                    merged[fnode.id] = dict(solved)
+
+
 def merge_view_coordinates(
     model: EngineeringModel,
     overlay: Optional[str | Path | dict] = None,
@@ -235,6 +321,9 @@ def merge_view_coordinates(
             solved = {"x": round(float(x), 2), "y": round(float(y), 2), "z": round(float(z), 2)}
             merged[fcid] = dict(solved)
             fp.update({**solved, "solve_status": "solved"})
+
+    # ---- front + plan bar_id 端点传播 y（共享件号杆件）----
+    _propagate_front_y_via_bar_id(model, nodes_by_view, merged, eps)
 
     # ---- front + side + section 三视图线性解耦 ----
     front_meta = meta.get("front", {})
