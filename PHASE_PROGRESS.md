@@ -340,8 +340,7 @@ python -m traceability.cli compile-drawing examples/clear/tower_side_hd.png --to
    真实件号仅数十），`MIN_ASSOCIATION_RATE=0.20` 在杆件基数虚高时永远 pending。
    建议 A2 加「超长连续直线（图框）/ 贴图边界线段」过滤，或 A3 改用
    「OCR 件号中成功关联比例」而非「labeled/全部候选杆」。
-3. **`MLLM_MAX_IMAGE_EDGE` 默认值不一致**：`mllm_backend.py` docstring 写 1536、
-   实际代码默认 2048，建议统一。
+3. **`MLLM_MAX_IMAGE_EDGE` 默认值不一致**：~~`mllm_backend.py` docstring 写 1536、实际代码默认 2048~~ → 已统一为 2048（Phase A3 修复 class docstring）。
 4. **git 管理**：已推送远程 `https://github.com/ZSN12/zotero`（`main` 分支，见下「发布与验收」）。
 
 ---

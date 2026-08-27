@@ -170,7 +170,7 @@ class MLLMBackend:
         MLLM_MODEL              模型名（kimi-code 默认 k3-256k）
         MLLM_TIMEOUT            单次调用总超时秒（默认 300，大图 OCR 需更久）
         MLLM_CONNECT_TIMEOUT    连接超时秒（默认 30）
-        MLLM_MAX_IMAGE_EDGE     送图前最长边上限（默认 1536，可设 2048）
+        MLLM_MAX_IMAGE_EDGE     送图前最长边上限（默认 2048，大图件号 OCR 易超时可下调为 1536）
     """
 
     name = "mllm"

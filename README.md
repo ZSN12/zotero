@@ -283,6 +283,16 @@ python3 -m traceability.cli parse-report <dxf> \
 - [x] P2-10 web 2D 证据层（model.json + 源图 + tower_bar 双向高亮）
 - [x] P2-11 scripts/acceptance.sh 验收脚本固定化
 
+## 交付说明
+
+一页讲清「交付什么、哪条路径生产、Kimi 用在哪、怎么验收」：
+见 [`docs/DELIVERY_NOTE.md`](docs/DELIVERY_NOTE.md)。
+
+```bash
+bash scripts/acceptance.sh               # 一条命令证「没退化」
+bash scripts/acceptance.sh --with-mllm   # 追加 Kimi 门禁（需 KIMI_API_KEY）
+```
+
 ## License
 
 MIT
