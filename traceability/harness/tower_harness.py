@@ -234,7 +234,11 @@ def run_tower(
                     unidentified_layers=(f.get("layers") or {}).get("unidentified_layers"),
                 )
         graph.start("batch", "批量接入（DWG→DXF→intake）", input=str(batch_source))
-        graph.finish(files=len(batch["files"]), ok=batch["ok"])
+        # P0-5：多文件 merge 不做 110kV 式三视图解耦，只在报告里给出
+        # 「按 bar_id 跨文件去重」信息，供人工核对，不假装合 3D。
+        cross_dup = batch.get("cross_file_bar_id_dup") or {}
+        graph.finish(files=len(batch["files"]), ok=batch["ok"],
+                     cross_file_duplicate_count=cross_dup.get("duplicate_count", 0))
 
         model = None
         if merge:

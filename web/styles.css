@@ -21,5 +21,9 @@ td.passed { color:#0a7d33; } td.failed { color:#c62828; } td.running { color:#b2
 #bars { max-height:260px; overflow:auto; font-size:12px; }
 .bar-item { border-bottom:1px solid var(--border); padding:4px 2px; cursor:pointer; }
 .bar-item:hover { background:#eef4fb; }
+.bar-item.bar-active { background:#fff3cd; outline:1px solid #e0a800; }
 .bar-item .src { color:#5b6472; font-size:11px; }
 .harness { font-size:12px; margin-top:8px; white-space:pre-wrap; }
+.evidence-panel { grid-column: span 2; }
+.evidence-controls { display:flex; gap:12px; align-items:center; margin-bottom:8px; font-size:13px; }
+#evidence-canvas { width:100%; max-width:1000px; height:auto; border:1px solid var(--border); border-radius:6px; background:#0e1116; }

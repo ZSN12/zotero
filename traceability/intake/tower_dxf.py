@@ -703,6 +703,25 @@ def extract_tower_from_dxf(
             })
     df.properties["duplicate_bar_id_groups"] = len(duplicate_groups)
     df.properties["duplicate_bar_id_detail"] = duplicate_groups[:200]
+
+    # P0-2：记录视图模式，明确区分「单立面 2D-only」与「多视图可合 3D」。
+    # 国网 02 总装图只有 front 一个立面（无 side/plan/section），无法解出真 3D；
+    # 此时 view_mode=single_facade，只能做 2D + 件号率，3D 需立面/平面分文件
+    # （多 DWG 各自带 view_regions）走 merge_view_coordinates。
+    # 有 front+side(+section) 或多 plan 时 view_mode=multi_view，可参与 3D 合并。
+    view_kinds = {seg["view_type"] for seg in bar_segments
+                  if seg.get("view_type") in ("front", "side", "section", "plan", "elevation")}
+    merge_capable = bool(view_kinds & {"front", "side", "section", "elevation"}) and (
+        ("side" in view_kinds) or ("section" in view_kinds)
+    )
+    if not view_kinds:
+        view_mode = "no_view"
+    elif merge_capable:
+        view_mode = "multi_view"
+    else:
+        view_mode = "single_facade"
+    df.properties["view_mode"] = view_mode
+    df.properties["view_kinds"] = sorted(view_kinds)
     return model
 
 

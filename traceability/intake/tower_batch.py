@@ -90,15 +90,21 @@ def intake_tower_batch(
         files.append(entry)
 
     model_path: Optional[str] = None
+    cross_file_dup: Dict[str, Any] = {}
     if merge and models:
         merged = merge_tower_models(models)
+        # P0-5：多文件 ID 前缀拼接不是 110kV 式三视图解耦，不能假装合 3D；
+        # 这里额外产出「按 bar_id 跨文件去重报告」，供人工核对同一件号在
+        # 不同文件（如立面/平面分文件）是否重复出现，而不是靠 merge 臆造坐标。
+        cross_file_dup = cross_file_bar_id_report(models)
         model_path = (out_dir / "model.json").as_posix()
         from ..io import save_model
         save_model(merged, model_path)
 
     # per-file 结果写入 batch_report.json（F2 steps.json 数据源）
     (out_dir / "batch_report.json").write_text(
-        json.dumps({"ok": all_ok, "files": files, "layer_report": layer_aggregate},
+        json.dumps({"ok": all_ok, "files": files, "layer_report": layer_aggregate,
+                    "cross_file_bar_id_dup": cross_file_dup},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
@@ -107,8 +113,48 @@ def intake_tower_batch(
         "ok": all_ok,
         "files": files,
         "layer_report": layer_aggregate,
+        "cross_file_bar_id_dup": cross_file_dup,
         "model_path": model_path,
         "batch_report": (out_dir / "batch_report.json").as_posix(),
+    }
+
+
+def cross_file_bar_id_report(models: List[EngineeringModel]) -> Dict[str, Any]:
+    """P0-5：按 bar_id 跨文件去重报告。
+
+    同一件号（bar_id）出现在多个文件时，可能表示立面/平面分文件里重复标注
+    同一物理杆件，也可能只是件号巧合。这里只如实列出，不自动去重、不改号，
+    交由人工核对（r_no_duplicate_bar_id 语义在单文件内，跨文件需人工判断）。
+
+    返回 {
+        "total_bar_ids": int,
+        "cross_file_groups": [{bar_id, files: [stem], count}],
+        "duplicate_count": int,
+    }
+    """
+    from collections import defaultdict
+
+    bar_id_files: Dict[str, List[str]] = defaultdict(list)
+    for model in models:
+        stem = model.name.removeprefix("tower-") if model.name.startswith("tower-") else model.name
+        for comp in model.components.values():
+            if comp.kind != "tower_bar":
+                continue
+            bid = str(comp.properties.get("bar_id", ""))
+            if not bid or bid.startswith("UNLABELED"):
+                continue
+            if stem not in bar_id_files[bid]:
+                bar_id_files[bid].append(stem)
+
+    cross_groups = [
+        {"bar_id": bid, "files": sorted(files), "count": len(files)}
+        for bid, files in sorted(bar_id_files.items())
+        if len(files) > 1
+    ]
+    return {
+        "total_bar_ids": len(bar_id_files),
+        "cross_file_groups": cross_groups,
+        "duplicate_count": len(cross_groups),
     }
 
 
@@ -121,6 +167,10 @@ def merge_tower_models(models: List[EngineeringModel]) -> EngineeringModel:
           并写入 drawing_view = 来源文件 stem
         * 坐标不臆造：已有 x/y 保留，z 缺失保持 None（placeholder）
         * 规则与依赖在调用方 finalize 阶段重新注入
+
+    P0-5 说明：这不是 110kV 式三视图解耦，只是多文件 ID 前缀拼接；
+    跨文件同一物理杆件的 3D 合并需立面/平面分文件各自带 view_regions，
+    走 merge_view_coordinates，而非靠本函数假装合 3D。
     """
     merged = EngineeringModel(name="tower-batch-merged")
 

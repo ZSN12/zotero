@@ -226,7 +226,8 @@ class MLLMBackendMetaTest(unittest.TestCase):
                 with mock.patch("openai.OpenAI"):
                     backend._make_client()
         timeout = client_cls.call_args.kwargs["timeout"]
-        self.assertEqual(timeout.read, 90.0)
+        # 大图件号 OCR 默认 300s（MLLM_TIMEOUT 默认 300），连接超时 30s
+        self.assertEqual(timeout.read, 300.0)
         self.assertEqual(timeout.connect, 30.0)
 
 

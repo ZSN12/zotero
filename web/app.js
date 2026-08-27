@@ -1,5 +1,9 @@
 const $ = (id) => document.getElementById(id);
 let scene, camera, renderer, controls;
+let currentModel = null;       // 最近一次 renderBars 加载的 model.json
+let evidenceImg = null;        // 源图铺底（可选）
+let evidenceBounds = null;     // 所有杆件 x1/y1/x2/y2 的包围盒（用于缩放铺满）
+let highlightedBarId = null;   // 当前高亮杆件
 
 function initViewer() {
   try {
@@ -69,20 +73,121 @@ function renderSteps(steps) {
 async function renderBars(modelPath) {
   const res = await fetch(modelPath);
   const model = await res.json();
+  currentModel = model;
   const bars = Object.entries(model.components || {}).filter(([, c]) => c.kind === 'tower_bar');
   const box = $('bars');
   box.innerHTML = '';
   bars.slice(0, 500).forEach(([id, c]) => {
     const div = document.createElement('div');
     div.className = 'bar-item';
+    div.dataset.barId = id;
     const src = c.source ? `${c.source.reference || ''} · ${c.source.detail || ''} · conf=${c.source.confidence || 0}` : '无来源';
     const bid = (c.properties || {}).bar_id || id;
     div.innerHTML = `<b>${bid}</b> <span class="src">${src}</span>`;
     div.onclick = () => {
       $('status').textContent = `追溯：${id}\n${src}\n${JSON.stringify(c.properties || {}, null, 2)}`;
+      highlightBar2D(id, c);
     };
     box.appendChild(div);
   });
+  // 依据杆件坐标刷新 2D 证据层的坐标范围（即使未选源图）
+  computeEvidenceBounds();
+}
+
+// ---------- 2D 证据层（P2-10，只读双向高亮） ----------
+
+function computeEvidenceBounds() {
+  evidenceBounds = null;
+  if (!currentModel) return;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const c of Object.values(currentModel.components || {})) {
+    if (c.kind !== 'tower_bar') continue;
+    const p = c.properties || {};
+    for (const k of ['x1_px', 'x2_px']) {
+      if (typeof p[k] === 'number') { minX = Math.min(minX, p[k]); maxX = Math.max(maxX, p[k]); }
+    }
+    for (const k of ['y1_px', 'y2_px']) {
+      if (typeof p[k] === 'number') { minY = Math.min(minY, p[k]); maxY = Math.max(maxY, p[k]); }
+    }
+  }
+  if ([minX, minY, maxX, maxY].some((v) => !isFinite(v))) return;
+  evidenceBounds = { minX, minY, maxX, maxY };
+}
+
+function toCanvas(x, y) {
+  const cv = $('evidence-canvas');
+  const W = cv.width, H = cv.height;
+  if (evidenceImg) {
+    // 有源图：按源图像素坐标 1:1（源图被缩放到画布尺寸）
+    const sw = evidenceImg.naturalWidth, sh = evidenceImg.naturalHeight;
+    const scale = Math.min(W / sw, H / sh);
+    return [x * scale, y * scale];
+  }
+  // 无源图：按杆件坐标包围盒铺满画布（留 8% 边距）
+  if (!evidenceBounds) return [x, y];
+  const { minX, minY, maxX, maxY } = evidenceBounds;
+  const w = (maxX - minX) || 1, h = (maxY - minY) || 1;
+  const pad = 0.08;
+  const scale = Math.min((W * (1 - 2 * pad)) / w, (H * (1 - 2 * pad)) / h);
+  const ox = (W - w * scale) / 2, oy = (H - h * scale) / 2;
+  return [(x - minX) * scale + ox, (y - minY) * scale + oy];
+}
+
+function redrawEvidence() {
+  const cv = $('evidence-canvas');
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#0e1116';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+
+  // 铺底源图
+  if (evidenceImg) {
+    const sw = evidenceImg.naturalWidth, sh = evidenceImg.naturalHeight;
+    const scale = Math.min(cv.width / sw, cv.height / sh);
+    const dw = sw * scale, dh = sh * scale;
+    ctx.drawImage(evidenceImg, (cv.width - dw) / 2, (cv.height - dh) / 2, dw, dh);
+  }
+
+  // 画所有带坐标的杆件（灰线），当前高亮杆件（亮色粗线）
+  if (!currentModel) return;
+  const bars = Object.values(currentModel.components || {}).filter((c) => c.kind === 'tower_bar');
+  for (const c of bars) {
+    const p = c.properties || {};
+    const vals = [p.x1_px, p.y1_px, p.x2_px, p.y2_px];
+    if (vals.some((v) => typeof v !== 'number')) continue;
+    const [ax, ay] = toCanvas(p.x1_px, p.y1_px);
+    const [bx, by] = toCanvas(p.x2_px, p.y2_px);
+    const isHl = c.id === highlightedBarId;
+    ctx.strokeStyle = isHl ? '#ffd54f' : 'rgba(120,170,220,0.55)';
+    ctx.lineWidth = isHl ? 3 : 1;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    if (isHl) {
+      ctx.fillStyle = '#ffd54f';
+      [ [ax, ay], [bx, by] ].forEach(([px, py]) => {
+        ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2); ctx.fill();
+      });
+    }
+  }
+}
+
+function highlightBar2D(id, comp) {
+  highlightedBarId = id;
+  const p = comp.properties || {};
+  const hasCoords = ['x1_px', 'y1_px', 'x2_px', 'y2_px'].every((k) => typeof p[k] === 'number');
+  // 列表双向高亮
+  document.querySelectorAll('.bar-item').forEach((el) => {
+    el.classList.toggle('bar-active', el.dataset.barId === id);
+  });
+  if (hasCoords) {
+    redrawEvidence();
+    $('evidence-status').textContent = `已高亮：${id}（${p.x1_px},${p.y1_px} → ${p.x2_px},${p.y2_px}）`;
+  } else {
+    redrawEvidence();
+    $('evidence-status').textContent = `${id} 无 x1_px/y1_px/x2_px/y2_px（可能是 DXF 矢量杆件，无像素坐标）`;
+  }
 }
 
 async function run() {
@@ -137,3 +242,19 @@ async function run() {
 
 $('run').onclick = run;
 initViewer();
+
+// 2D 证据层：源图铺底 + 清空高亮
+$('source-image').onchange = (ev) => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => { evidenceImg = img; redrawEvidence(); };
+  img.src = url;
+};
+$('clear-2d').onclick = () => {
+  highlightedBarId = null;
+  document.querySelectorAll('.bar-item').forEach((el) => el.classList.remove('bar-active'));
+  redrawEvidence();
+  $('evidence-status').textContent = '已清空高亮。';
+};

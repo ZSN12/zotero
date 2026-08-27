@@ -272,6 +272,16 @@ python3 -m traceability.cli parse-report <dxf> \
 - [x] MLLM 送图前缩放（最长边 ≤2048 PNG）+ 超时/日志 meta
 - [x] benchmark/mllm_vs_scan.py 三列评测（rule-based-scan / kimi-for-coding / k3-256k）
 - [x] 扫描图多 Agent 编排（A0 版面 → A1 件号 → A2 几何 → A3 关联 → A4 编译验证，steps.json 五步可审计）
+- [x] P0-1 merge_view_coordinates/merge_view_bars/finalize_tower_model 下传 --layer-map（国网 overlay 的 view_regions 可读回来）
+- [x] P0-2 国网 02 单立面标记 view_mode=single_facade（2D+件号率；3D 靠立面/平面分文件）
+- [x] P0-4 intake_scan_batch 按 (view_type, z_level) 存模型，多 plan 不再互相覆盖
+- [x] P0-5 DWG 批量 --merge 输出 cross_file_bar_id_report（跨文件去重，不假装合 3D）
+- [x] P1-6 A2 霍夫杆按 A0 视图 bbox 打 view_type，A3 同视图过滤生效
+- [x] P1-7 parse_bars=False 短路 A1/A2 整条 agent 链
+- [x] P1-8 LABEL_AGENT_PROMPT 明确 x_px/y_px 为裁剪图左上角 (0,0) 的像素坐标
+- [x] P1-9 intake_scan_batch 返回完整 ProcessingGraph（每文件一步 + merge_scan + a4_harness）
+- [x] P2-10 web 2D 证据层（model.json + 源图 + tower_bar 双向高亮）
+- [x] P2-11 scripts/acceptance.sh 验收脚本固定化
 
 ## License
 

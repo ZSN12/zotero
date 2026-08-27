@@ -44,6 +44,16 @@
     <div id="bars"></div>
   </section>
 
+  <section class="panel evidence-panel">
+    <h2>5. 2D 证据层（点杆件在 2D 视图上高亮）</h2>
+    <div class="evidence-controls">
+      <label>源图（可选，铺底对齐）<input type="file" id="source-image" accept=".png,.jpg,.jpeg" /></label>
+      <button id="clear-2d">清空高亮</button>
+    </div>
+    <canvas id="evidence-canvas" width="800" height="600"></canvas>
+    <div id="evidence-status" class="status">点击下方杆件，若带 x1_px/y1_px/x2_px/y2_px 则在此画线高亮。</div>
+  </section>
+
   <aside class="panel neube-panel">
     <h2>5. NeuBE SR 对标</h2>
     <ul>
