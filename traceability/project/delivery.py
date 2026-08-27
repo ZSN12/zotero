@@ -1,6 +1,7 @@
 """图册级一键交付（M6 / Gap 1）。
 
 build-project → cross_file_batch → Harness → strict GLB → 交付 manifest。
+M7：图册级 Project Harness + 件号索引 + BOM 树汇总。
 """
 
 from __future__ import annotations
@@ -105,12 +106,51 @@ def deliver_project(
         layer_map_path=layer_map_path,
         out_dir=out_dir / "sheets",
     )
+    if bom_path:
+        project.metadata["master_bom_path"] = str(bom_path)
     project_path = save_project(project, out_dir / "project.json")
 
     sheet_models: Dict[str, EngineeringModel] = {}
+    sheet_model_list: List[EngineeringModel] = []
+    sheet_sources: List[str] = []
     for sid, sheet in project.sheets.items():
         if sheet.model_path and Path(sheet.model_path).exists():
-            sheet_models[sid] = load_model(sheet.model_path)
+            m = load_model(sheet.model_path)
+            m.name = sid
+            sheet_models[sid] = m
+            sheet_model_list.append(m)
+            sheet_sources.append(sid)
+
+    from ..intake.tower_batch import cross_file_bar_id_report
+    from .bar_inventory import aggregate_bar_inventory
+    from .bom_tree import aggregate_bom_tree
+    from .harness import run_project_harness
+
+    bar_inventory = aggregate_bar_inventory(
+        sheet_model_list, model_sources=sheet_sources,
+    ) if sheet_model_list else {}
+    cross_sheet_bar_id = cross_file_bar_id_report(sheet_model_list) if sheet_model_list else {}
+    bom_tree = aggregate_bom_tree(
+        sheet_model_list,
+        master_bom_path=str(bom_path) if bom_path else None,
+        model_sources=sheet_sources,
+    ) if sheet_model_list else {}
+    project_harness = run_project_harness(
+        project,
+        sheet_models=sheet_models,
+        cross_sheet_bar_id=cross_sheet_bar_id,
+        bom_tree=bom_tree,
+        bar_inventory=bar_inventory,
+    )
+    (out_dir / "bar_inventory.json").write_text(
+        json.dumps(bar_inventory, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    (out_dir / "bom_tree.json").write_text(
+        json.dumps(bom_tree, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    (out_dir / "project_harness.json").write_text(
+        json.dumps(project_harness, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
 
     cross_result: Optional[Dict[str, Any]] = None
     model_path: Optional[Path] = None
@@ -198,6 +238,21 @@ def deliver_project(
             "model_path": (assembly_info or {}).get("model_path"),
         },
         "cross_file_batch_report": (cross_result or {}).get("batch_report"),
+        "bar_inventory": bar_inventory,
+        "bom_tree_summary": {
+            "total_unique_bar_ids": bom_tree.get("total_unique_bar_ids", 0),
+            "conflict_count": bom_tree.get("conflict_count", 0),
+        },
+        "cross_sheet_bar_id": {
+            "duplicate_count": cross_sheet_bar_id.get("duplicate_count", 0),
+            "cross_file_groups": (cross_sheet_bar_id.get("cross_file_groups") or [])[:20],
+        },
+        "project_harness": project_harness,
+        "artifact_paths": {
+            "bar_inventory": str(out_dir / "bar_inventory.json"),
+            "bom_tree": str(out_dir / "bom_tree.json"),
+            "project_harness": str(out_dir / "project_harness.json"),
+        },
     }
     manifest_path = out_dir / "project_delivery.json"
     manifest_path.write_text(json.dumps(delivery, ensure_ascii=False, indent=2), encoding="utf-8")

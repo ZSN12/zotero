@@ -518,11 +518,16 @@ async function deliverProjectDemo() {
       }),
     });
     const payload = await res.json();
-    if (payload.ok) {
+    if payload.ok) {
       $('status').textContent = 'Project 交付 ✓\n' + JSON.stringify(payload.mesh_stats || {}, null, 2);
       const mr = payload.merge_report || {};
+      const ph = payload.project_harness || {};
+      const inv = payload.bar_inventory || {};
+      const phCounts = ph.counts || {};
       $('project-merge').textContent =
-        `交付完成：nodes=${mr.nodes_solved} bars=${mr.bars} GLB=${payload.glb_path}`;
+        `交付完成：nodes=${mr.nodes_solved} bars=${mr.bars} GLB=${payload.glb_path}\n` +
+        `图册 Harness: ${JSON.stringify(phCounts)} | 件号索引 ${inv.total_unique_bar_ids || 0} 个` +
+        (payload.harness_all_passed === false ? '（模型 Harness 待复核）' : '');
       if (payload.model_path) await renderBars(payload.model_path);
       if (payload.glb_path) loadGlb(payload.glb_path);
     } else {

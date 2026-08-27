@@ -445,6 +445,13 @@ def cmd_deliver_project(args):
     mr = result.get("merge_report") or {}
     print(f"  merge    -> nodes={mr.get('nodes_solved')} bars={mr.get('bars')} "
           f"gussets={mr.get('gussets_anchored')} synthetic_y={mr.get('y_synthetic_side')}")
+    ph = result.get("project_harness") or {}
+    inv = result.get("bar_inventory") or {}
+    if ph:
+        print(f"  project  -> harness={ph.get('counts')} sheets={ph.get('sheet_count')}")
+    if inv:
+        print(f"  bar_inv  -> unique={inv.get('total_unique_bar_ids')} "
+              f"cross_sheet={inv.get('cross_sheet_count', 0)}")
     if not result.get("ok"):
         sys.exit(1)
 

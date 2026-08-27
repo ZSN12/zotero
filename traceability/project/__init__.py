@@ -7,6 +7,8 @@ from .model import ProjectModel, ProjectSheet, load_project, save_project
 from .assembly import assemble_modules, ModuleBoundary
 from .delivery import deliver_project
 from .bom_tree import aggregate_bom_tree, BomTreeNode
+from .bar_inventory import aggregate_bar_inventory
+from .harness import run_project_harness
 
 __all__ = [
     "ProjectModel",
@@ -18,4 +20,6 @@ __all__ = [
     "ModuleBoundary",
     "aggregate_bom_tree",
     "BomTreeNode",
+    "aggregate_bar_inventory",
+    "run_project_harness",
 ]

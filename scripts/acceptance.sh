@@ -121,6 +121,25 @@ test -f "$OUT/project-deliver/project_delivery.json" || { echo "FAIL: project_de
 test -s "$OUT/project-deliver/tower.glb" || { echo "FAIL: deliver-project GLB 缺失"; exit 1; }
 echo "PASS: deliver-project manifest + GLB"
 
+echo "==> [3d/5] deliver-project 图册 Harness + 件号索引"
+"$PY" - "$OUT/project-deliver/project_delivery.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+ph = d.get("project_harness") or {}
+inv = d.get("bar_inventory") or {}
+if ph.get("sheet_count", 0) < 1:
+    print("FAIL: project_harness 缺少 sheet_count")
+    sys.exit(1)
+ready = [r for r in ph.get("results", []) if r.get("rule") == "r_project_sheets_ready"]
+if not ready or ready[0].get("status") != "passed":
+    print("FAIL: r_project_sheets_ready 未 passed")
+    sys.exit(1)
+if inv.get("total_unique_bar_ids", 0) < 1:
+    print("FAIL: bar_inventory 无件号")
+    sys.exit(1)
+print(f"PASS: project_harness sheets={ph['sheet_count']} bar_ids={inv['total_unique_bar_ids']}")
+PYEOF
+
 echo "==> [4/5] examples/clear/ 扫描批量（3 view_type + merged model）"
 "$PY" -m traceability.cli run-tower examples/clear/ \
   --out-dir "$OUT/clear-multi" >/dev/null 2>&1 || true
