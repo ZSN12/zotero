@@ -148,3 +148,64 @@ def view_expand(stem: str, kind: str, overlay: Optional[str | Path | dict] = Non
             if key in r:
                 return float(r[key])
     return 0.0
+
+
+def cross_file_view_manifest(overlay: Optional[str | Path | dict] = None) -> dict:
+    """读取 overlay 中的 cross_file_views 分册清单（front/plan/side 分文件映射）。"""
+    spec = load_tower_spec(overlay)
+    manifest = spec.get("cross_file_views") or {}
+    return dict(manifest) if isinstance(manifest, dict) else {}
+
+
+def parseable_view_kinds_by_stem(overlay: Optional[str | Path | dict] = None) -> Dict[str, set]:
+    """各 stem 在 overlay 中声明的可解析视图 kind 集合（须带 axes）。"""
+    spec = load_tower_spec(overlay)
+    regions_map = spec.get("view_regions") or {}
+    out: Dict[str, set] = {}
+    if not isinstance(regions_map, dict):
+        return out
+    for stem, regions in regions_map.items():
+        kinds: set = set()
+        for r in regions or []:
+            if r.get("axes"):
+                kinds.add(str(r.get("kind", "drawing")))
+        if kinds:
+            out[str(stem)] = kinds
+    return out
+
+
+def should_use_cross_file_merge(overlay: Optional[str | Path | dict] = None) -> bool:
+    """overlay 是否描述「分文件多视图」且应走 merge_cross_file_views 而非 ID 前缀假合并。"""
+    manifest = cross_file_view_manifest(overlay)
+    sheets = manifest.get("sheets") or {}
+    if isinstance(sheets, dict) and len(sheets) >= 2:
+        roles = {str(v) for v in sheets.values() if v}
+        if len(roles) >= 2:
+            return True
+    kinds_by_stem = parseable_view_kinds_by_stem(overlay)
+    if len(kinds_by_stem) < 2:
+        return False
+    all_kinds = set().union(*kinds_by_stem.values())
+    merge_sets = (
+        {"front", "plan"},
+        {"front", "side"},
+        {"front", "side", "section"},
+        {"elevation", "plan"},
+    )
+    return any(ms <= all_kinds for ms in merge_sets)
+
+
+def cross_file_z_ref(overlay: Optional[str | Path | dict] = None) -> Optional[float]:
+    """front+plan 配对时 front 节点应对齐的 Z 参考（来自 cross_file_views.view_align）。"""
+    manifest = cross_file_view_manifest(overlay)
+    align = manifest.get("view_align") or {}
+    if not isinstance(align, dict):
+        return None
+    for key, meta in align.items():
+        if not isinstance(meta, dict):
+            continue
+        if "z_ref" in meta:
+            return float(meta["z_ref"])
+        if str(key).endswith(":front") and "z_level" in meta:
+            return float(meta["z_level"])
+    return None

@@ -232,4 +232,7 @@ def extract_detail_connections(
     df = model.components.get("drawing_file")
     if df is not None:
         df.properties["detail_extract"] = report
+
+    from ..harness.tower_validators import inject_connection_rules
+    inject_connection_rules(model)
     return report

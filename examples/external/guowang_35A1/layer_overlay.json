@@ -13,6 +13,26 @@
     "M\\d{4}",
     "[GSB]\\d{1,4}"
   ],
+  "cross_file_views": {
+    "project": "guowang_35A1",
+    "sheets": {
+      "front": "35A1-JC1-02",
+      "plan": "35C2-SJG1-ML",
+      "detail": "35A1-JC1-03"
+    },
+    "view_align": {
+      "35A1-JC1-02:front": {
+        "match_axis": "x",
+        "z_ref": 0.0,
+        "normalize_x": true
+      },
+      "35C2-SJG1-ML:plan": {
+        "match_axis": "x",
+        "z_level": 0.0,
+        "normalize_x": true
+      }
+    }
+  },
   "view_regions": {
     "35A1-JC1-02": [
       {

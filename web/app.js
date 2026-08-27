@@ -70,16 +70,30 @@ function loadGlb(url) {
       if (old) scene.remove(old);
       gltf.scene.name = 'tower';
       barMeshMap.clear();
-      let meshIdx = 0;
       gltf.scene.traverse((obj) => {
         if (!obj.isMesh) return;
-        const barId = barIdList[meshIdx];
-        if (barId) {
-          obj.userData.barId = barId;
-          barMeshMap.set(obj.uuid, barId);
+        const extras = obj.userData || {};
+        const compId = extras.component_id || extras.componentId;
+        const barId = extras.bar_id || extras.barId;
+        if (compId) {
+          obj.userData.barId = compId;
+          obj.userData.bar_id = barId || compId;
+          barMeshMap.set(obj.uuid, compId);
         }
-        meshIdx += 1;
       });
+      // 回退：按 mesh 顺序对齐 barIdList（旧 GLB 无 extras 时）
+      if (barMeshMap.size === 0) {
+        let meshIdx = 0;
+        gltf.scene.traverse((obj) => {
+          if (!obj.isMesh) return;
+          const compId = barIdList[meshIdx];
+          if (compId) {
+            obj.userData.barId = compId;
+            barMeshMap.set(obj.uuid, compId);
+          }
+          meshIdx += 1;
+        });
+      }
       const box = new THREE.Box3().setFromObject(gltf.scene);
       const c = box.getCenter(new THREE.Vector3());
       const s = box.getSize(new THREE.Vector3()).length() / 2 || 1;

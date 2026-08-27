@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from ..model import Component, Dimension, EngineeringModel, SourceRef, SourceType
 from .dwg import ensure_dxf_batch
 from .tower_dxf import classify_drawing_kind, resolve_drawing_kind, extract_tower_from_dxf, layer_usage_report
+from .tower_spec import should_use_cross_file_merge
 from .tower_views import _model_stem
 
 
@@ -92,11 +93,32 @@ def intake_tower_batch(
 
     model_path: Optional[str] = None
     cross_file_dup: Dict[str, Any] = {}
+    merge_report: Dict[str, Any] = {}
     if merge and models:
-        merged = merge_tower_models(models)
-        # P0-5：多文件 ID 前缀拼接不是 110kV 式三视图解耦，不能假装合 3D；
-        # 这里额外产出「按 bar_id 跨文件去重报告」，供人工核对同一件号在
-        # 不同文件（如立面/平面分文件）是否重复出现，而不是靠 merge 臆造坐标。
+        if should_use_cross_file_merge(layer_map_path):
+            from ..intake.tower_pipeline import finalize_tower_model
+
+            merged = merge_cross_file_views(models, layer_map_path=layer_map_path)
+            merged = finalize_tower_model(
+                merged, merge=True, layer_map_path=layer_map_path,
+            )
+            merge_report = {
+                "mode": "cross_file_view",
+                "files": len(models),
+                "view_mode": (
+                    merged.components.get("drawing_file") or Component(
+                        id="drawing_file", name="", kind="drawing_file", properties={},
+                    )
+                ).properties.get("view_mode"),
+                "bars": sum(1 for c in merged.components.values() if c.kind == "tower_bar"),
+                "nodes_solved": sum(
+                    1 for c in merged.components.values()
+                    if c.kind == "tower_node" and c.properties.get("solve_status") == "solved"
+                ),
+            }
+        else:
+            merged = merge_tower_models(models)
+            merge_report = {"mode": "id_prefix_merge", "files": len(models)}
         cross_file_dup = cross_file_bar_id_report(models)
         model_path = (out_dir / "model.json").as_posix()
         from ..io import save_model
@@ -105,7 +127,8 @@ def intake_tower_batch(
     # per-file 结果写入 batch_report.json（F2 steps.json 数据源）
     (out_dir / "batch_report.json").write_text(
         json.dumps({"ok": all_ok, "files": files, "layer_report": layer_aggregate,
-                    "cross_file_bar_id_dup": cross_file_dup},
+                    "cross_file_bar_id_dup": cross_file_dup,
+                    "merge_report": merge_report},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
@@ -115,6 +138,7 @@ def intake_tower_batch(
         "files": files,
         "layer_report": layer_aggregate,
         "cross_file_bar_id_dup": cross_file_dup,
+        "merge_report": merge_report,
         "model_path": model_path,
         "batch_report": (out_dir / "batch_report.json").as_posix(),
     }
@@ -229,7 +253,7 @@ def merge_cross_file_views(
     for stem in source_files:
         regions = []
         if layer_map_path:
-            from .tower_spec import view_regions
+            from .tower_spec import view_regions, should_use_cross_file_merge
             regions = view_regions(stem, overlay=layer_map_path)
         if any(r.get("kind") == "front" for r in regions):
             primary = stem

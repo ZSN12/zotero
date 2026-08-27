@@ -152,6 +152,70 @@ def validate_no_duplicate_bar_id(model: EngineeringModel, rule_id: str) -> Optio
                             f"{len(dups)} 组重复编号：{list(dups)[:3]}", "no-dup-bar-id")
 
 
+def validate_gusset_plate(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:
+    """节点板大样：局部轮廓存在；未锚定全局坐标时为 pending。"""
+    plate_id = rule_id.removeprefix("r_gusset_")
+    cid = f"gusset_{plate_id}"
+    comp = model.components.get(cid)
+    if comp is None:
+        return ValidationResult(rule_id, ValidationStatus.FAILED,
+                                f"节点板组件 {cid} 不存在", "gusset-plate")
+    poly = comp.properties.get("polygon_local") or []
+    if len(poly) < 3:
+        return ValidationResult(rule_id, ValidationStatus.PENDING,
+                                "节点板轮廓不足 3 顶点", "gusset-plate")
+    if comp.properties.get("global_coords") == "pending_anchor":
+        return ValidationResult(rule_id, ValidationStatus.PENDING,
+                                "局部轮廓已抽取，待锚定全局坐标", "gusset-plate")
+    if comp.properties.get("solve_status") == "verified":
+        return ValidationResult(rule_id, ValidationStatus.PASSED,
+                                "节点板已锚定并输出全局坐标", "gusset-plate")
+    return ValidationResult(rule_id, ValidationStatus.PASSED,
+                            f"节点板局部轮廓 {len(poly)} 顶点", "gusset-plate")
+
+
+def validate_bolt_group_rule(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:
+    """螺栓群验算：复用 connection.bolt_verify，与 tower_detail 注入规则一致。"""
+    from ..connection.bolt_verify import BoltGroup, BoltSpec, verify_bolt_group
+
+    gid = rule_id.removeprefix("r_bolt_group_")
+    cid = f"bolt_group_{gid}"
+    comp = model.components.get(cid)
+    if comp is None:
+        return ValidationResult(rule_id, ValidationStatus.FAILED,
+                                f"螺栓群组件 {cid} 不存在", "bolt-group")
+    holes_raw = comp.properties.get("holes") or []
+    holes = [(float(h[0]), float(h[1])) for h in holes_raw if h]
+    spec = BoltSpec(
+        count=int(comp.properties.get("count") or len(holes) or 1),
+        diameter_mm=float(comp.properties.get("diameter_mm") or 16),
+        length_mm=float(comp.properties.get("length_mm") or 40),
+    )
+    outline_raw = None
+    plate_id = gid.split("_B")[0] if "_B" in gid else gid.split("_")[0]
+    gusset = model.components.get(f"gusset_{plate_id}")
+    if gusset:
+        outline_raw = gusset.properties.get("polygon_local")
+    outline = [(float(p[0]), float(p[1])) for p in (outline_raw or []) if p]
+    group = BoltGroup(group_id=gid, spec=spec, holes=holes,
+                      plate_outline=outline or None)
+    result = verify_bolt_group(group)
+    st = ValidationStatus(result["status"])
+    msg = "; ".join(result["issues"]) if result["issues"] else "passed"
+    return ValidationResult(rule_id, st, msg, "bolt-group")
+
+
+def connection_validators_for_model(model: EngineeringModel) -> dict:
+    """为模型中的 r_gusset_* / r_bolt_group_* 动态规则注册验证器。"""
+    out: dict = {}
+    for rid in model.rules:
+        if rid.startswith("r_gusset_"):
+            out[rid] = validate_gusset_plate
+        elif rid.startswith("r_bolt_group_"):
+            out[rid] = validate_bolt_group_rule
+    return out
+
+
 # 规则 ID -> 验证器
 tower_validators = {
     "r_topology_closed": validate_topology_closed,
@@ -233,4 +297,35 @@ def inject_tower_rules(model: EngineeringModel) -> EngineeringModel:
             description=spec["description"],
             applies_to=applies_to,
         ))
+    inject_connection_rules(model)
+    return model
+
+
+def inject_connection_rules(model: EngineeringModel) -> EngineeringModel:
+    """Gap 2：为节点板/螺栓群注入 Harness 规则（与 tower_detail 主链衔接）。"""
+    from ..model import Rule, ValidationStatus
+
+    for cid, comp in model.components.items():
+        if comp.kind == "gusset_plate":
+            plate_id = cid.removeprefix("gusset_")
+            rid = f"r_gusset_{plate_id}"
+            if rid in model.rules:
+                continue
+            poly = comp.properties.get("polygon_local") or []
+            if comp.properties.get("solve_status") == "verified":
+                st, msg = ValidationStatus.PASSED, "节点板已锚定"
+            elif comp.properties.get("global_coords") == "pending_anchor" and len(poly) >= 3:
+                st, msg = ValidationStatus.PENDING, "局部轮廓已抽取，待锚定全局坐标"
+            elif len(poly) >= 3:
+                st, msg = ValidationStatus.PENDING, "节点板待复核"
+            else:
+                st, msg = ValidationStatus.PENDING, "节点板轮廓不完整"
+            model.add_rule(Rule(
+                id=rid,
+                name=f"节点板验算 {plate_id}",
+                description="大样节点板轮廓与锚定状态",
+                applies_to=[cid],
+                status=st,
+                message=msg,
+            ))
     return model

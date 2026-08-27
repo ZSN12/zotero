@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from ..model import Component, EngineeringModel
-from .tower_spec import view_regions
+from .tower_spec import view_regions, cross_file_z_ref
 
 # 三视图展开系数（与 schema/tower_layer_map.json 生成器约定一致）
 DEFAULT_EXPAND = 0.08
@@ -181,7 +181,9 @@ def merge_view_coordinates(
     plan_nodes_list = nodes_by_view.get("plan", [])
     front_at_z: List[Tuple[str, Component]] = []
     plan_meta = meta.get("plan", {})
-    z_ref = plan_meta.get("z_level")
+    z_ref = cross_file_z_ref(overlay=overlay)
+    if z_ref is None:
+        z_ref = plan_meta.get("z_level")
     if z_ref is None and plan_nodes_list:
         z_ref = plan_nodes_list[0][1].properties.get("z_level")
     z_band = eps * 4

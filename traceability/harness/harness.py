@@ -98,10 +98,11 @@ def run_harness(model: EngineeringModel, rule_ids: list[str] | None = None,
                 validators: dict[str, ValidatorFn] | None = None) -> list[ValidationResult]:
     """便捷函数：用内置 + 铁塔验证器跑一次 Harness。"""
     from .validators import builtin_validators
-    from .tower_validators import tower_validators
+    from .tower_validators import tower_validators, connection_validators_for_model
 
     merged = dict(builtin_validators)
     merged.update(tower_validators)
+    merged.update(connection_validators_for_model(model))
     if validators:
         merged.update(validators)
     return AgentHarness(merged).run(model, rule_ids)

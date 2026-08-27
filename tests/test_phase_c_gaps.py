@@ -87,6 +87,7 @@ class CrossFileBatchTest(unittest.TestCase):
 
     def test_guowang_detail_gusset_and_bolt_rules(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf
+        from traceability.harness.harness import run_harness
 
         dxf = EXAMPLES / "external" / "guowang_35A1" / "35A1-JC1-03.dxf"
         if not dxf.exists():
@@ -95,9 +96,67 @@ class CrossFileBatchTest(unittest.TestCase):
         gussets = [c for c in model.components.values() if c.kind == "gusset_plate"]
         bolts = [c for c in model.components.values() if c.kind == "bolt_group"]
         rules = [r for r in model.rules.values() if r.id.startswith("r_bolt_group_")]
+        gusset_rules = [r for r in model.rules.values() if r.id.startswith("r_gusset_")]
         self.assertGreaterEqual(len(gussets), 1)
         self.assertGreaterEqual(len(bolts), 1)
         self.assertGreaterEqual(len(rules), 1)
+        self.assertGreaterEqual(len(gusset_rules), 1)
+        results = run_harness(model)
+        bolt_results = [r for r in results if r.target_id.startswith("r_bolt_group_")]
+        self.assertGreater(len(bolt_results), 0)
+        self.assertTrue(all(r.validator == "bolt-group" for r in bolt_results))
+
+    def test_run_tower_guowang_cross_file_nodes_solved(self):
+        from traceability.harness.tower_harness import run_tower
+
+        d = EXAMPLES / "external" / "guowang_35A1"
+        if not d.exists():
+            self.skipTest("国网目录不存在")
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_tower(
+                d, tmp,
+                input_dir=d,
+                merge=True,
+                layer_map_path=str(OVERLAY),
+            )
+        batch = result.get("graph")
+        batch_step = next((s for s in batch.steps if s.id == "batch"), None) if batch else None
+        nodes_solved = (batch_step.detail or {}).get("nodes_solved", 0) if batch_step else 0
+        self.assertGreater(nodes_solved, 0, "run-tower 批量应走 cross_file 合并并解出节点")
+
+    def test_glb_mesh_has_bar_id_extras(self):
+        import json
+        import tempfile
+        from traceability.io import load_model
+        from traceability.solve.tower_solver import export_tower_glb
+
+        model_path = EXAMPLES / "tower_110kv_model.json"
+        if not model_path.exists():
+            self.skipTest("110kV 模型不存在")
+        model = load_model(str(model_path))
+        with tempfile.TemporaryDirectory() as tmp:
+            glb = Path(tmp) / "tower.glb"
+            try:
+                export_tower_glb(model, glb, strict=True)
+            except Exception as exc:
+                self.skipTest(f"trimesh 不可用或导出失败: {exc}")
+            try:
+                import trimesh
+                loaded = trimesh.load(str(glb), force="scene")
+            except Exception as exc:
+                self.skipTest(f"无法读取 GLB: {exc}")
+            found = False
+            for geom in loaded.geometry.values():
+                meta = getattr(geom, "metadata", None) or {}
+                if meta.get("bar_id") and meta.get("component_id"):
+                    found = True
+                    break
+            self.assertTrue(found, "GLB mesh 应携带 bar_id/component_id extras")
+            map_path = glb.with_suffix(".bar_map.json")
+            self.assertTrue(map_path.exists())
+            rows = json.loads(map_path.read_text(encoding="utf-8"))
+            self.assertGreater(len(rows), 0)
+            self.assertIn("bar_id", rows[0])
 
 
 class ProjectModelTest(unittest.TestCase):

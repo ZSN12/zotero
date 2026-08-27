@@ -452,6 +452,7 @@ def export_tower_glb(
     }
 
     meshes: List = []
+    mesh_meta: List[Dict[str, str]] = []
     node_ids = list(nodes)
     total_bars = sum(1 for _ in _iter_bars(model))
     skipped: List[str] = []
@@ -485,7 +486,11 @@ def export_tower_glb(
         mesh.apply_transform(transform)
         color = layer_colors.get(bar.properties.get("layer", ""), [180, 180, 180, 255])
         mesh.visual.face_colors = color
+        bid = str(bar.properties.get("bar_id") or cid)
+        extras = {"bar_id": bid, "component_id": cid}
+        mesh.metadata = dict(extras)
         meshes.append(mesh)
+        mesh_meta.append(extras)
 
     if not meshes:
         raise SolveError("没有可实体化的杆件（请先完成跨视图合并 --merge）")
@@ -497,10 +502,22 @@ def export_tower_glb(
             f"跳过 {len(skipped)} 根：{skipped[:5]}"
         )
 
-    scene = trimesh.Scene(meshes)
+    scene = trimesh.Scene()
+    for mesh, extras in zip(meshes, mesh_meta):
+        scene.add_geometry(
+            mesh,
+            geom_name=extras["component_id"],
+            metadata=extras,
+        )
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     scene.export(str(out_path))
+    # 侧车索引：便于 Web 在不读 GLB extras 时回退
+    map_path = out_path.with_suffix(".bar_map.json")
+    map_path.write_text(
+        __import__("json").dumps(mesh_meta, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     return str(out_path)
 
 
