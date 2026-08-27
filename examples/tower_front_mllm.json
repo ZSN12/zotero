@@ -1,0 +1,435 @@
+{
+  "name": "tower-tower_front_hd",
+  "version": "1",
+  "components": {
+    "drawing_file": {
+      "id": "drawing_file",
+      "name": "examples/clear/tower_front_hd.png",
+      "kind": "drawing_file",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/clear/tower_front_hd.png",
+        "detail": "",
+        "confidence": 1.0,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "path": "examples/clear/tower_front_hd.png",
+        "kind": "scan",
+        "version": "1"
+      },
+      "tags": []
+    },
+    "node_001": {
+      "id": "node_001",
+      "name": "节点 CALO",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "cross-arm left outer tip; approx mm x=-6000, y=17000; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "CALO",
+        "x_px": null,
+        "y_px": null,
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "node_002": {
+      "id": "node_002",
+      "name": "节点 CARO",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "cross-arm right outer tip; approx mm x=6000, y=17000; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "CARO",
+        "x_px": null,
+        "y_px": null,
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "node_003": {
+      "id": "node_003",
+      "name": "节点 CALI",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "cross-arm left inner/head connection; approx mm x=-2600, y=17000; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "CALI",
+        "x_px": null,
+        "y_px": null,
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "node_004": {
+      "id": "node_004",
+      "name": "节点 CARI",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "cross-arm right inner/head connection; approx mm x=2600, y=17000; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "CARI",
+        "x_px": null,
+        "y_px": null,
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "node_005": {
+      "id": "node_005",
+      "name": "节点 HL",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "head lower left; approx mm x=-1600, y=19000; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "HL",
+        "x_px": null,
+        "y_px": null,
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "node_006": {
+      "id": "node_006",
+      "name": "节点 HR",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "head lower right; approx mm x=1600, y=19000; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "HR",
+        "x_px": null,
+        "y_px": null,
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "node_007": {
+      "id": "node_007",
+      "name": "节点 HT",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "head top; approx mm x=0, y=21500; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "HT",
+        "x_px": null,
+        "y_px": null,
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "bar_M0254": {
+      "id": "bar_M0254",
+      "name": "杆件 M0254",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "cross-arm left outer segment; mm length ~3400; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "M0254",
+        "section": null,
+        "length_px": null,
+        "from_node": "node_001",
+        "to_node": "node_003",
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "bar_M0256": {
+      "id": "bar_M0256",
+      "name": "杆件 M0256",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "cross-arm right outer segment; mm length ~3400; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "M0256",
+        "section": null,
+        "length_px": null,
+        "from_node": "node_004",
+        "to_node": "node_002",
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "bar_M02710": {
+      "id": "bar_M02710",
+      "name": "杆件 M02710",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "head lower left leg; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "M02710",
+        "section": null,
+        "length_px": null,
+        "from_node": "node_003",
+        "to_node": "node_005",
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "bar_M02729": {
+      "id": "bar_M02729",
+      "name": "杆件 M02729",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "head lower right leg; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "M02729",
+        "section": null,
+        "length_px": null,
+        "from_node": "node_004",
+        "to_node": "node_006",
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "bar_M02791": {
+      "id": "bar_M02791",
+      "name": "杆件 M02791",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "head upper left leg; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "M02791",
+        "section": null,
+        "length_px": null,
+        "from_node": "node_005",
+        "to_node": "node_007",
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    },
+    "bar_M02801": {
+      "id": "bar_M02801",
+      "name": "杆件 M02801",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "tower.png",
+        "detail": "head upper right leg; px not calibrated",
+        "confidence": 0.5,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "M02801",
+        "section": null,
+        "length_px": null,
+        "from_node": "node_006",
+        "to_node": "node_007",
+        "view_type": "front",
+        "solve_status": "pending_review"
+      },
+      "tags": []
+    }
+  },
+  "dimensions": {},
+  "connections": {},
+  "rules": {
+    "r_topology_closed": {
+      "id": "r_topology_closed",
+      "name": "铁塔杆件拓扑闭合",
+      "description": "每根杆件两端节点必须存在（from_node/to_node 指向 tower_node）",
+      "applies_to": [
+        "bar_M0254",
+        "bar_M0256",
+        "bar_M02710",
+        "bar_M02729",
+        "bar_M02791",
+        "bar_M02801"
+      ],
+      "status": "passed",
+      "message": "所有杆件两端节点存在"
+    },
+    "r_bom_length_match": {
+      "id": "r_bom_length_match",
+      "name": "杆件长度与 BOM 核验",
+      "description": "杆件 3D 长度 vs BOM 长度，偏差 ≤ 3%",
+      "applies_to": [
+        "bar_M0254",
+        "bar_M0256",
+        "bar_M02710",
+        "bar_M02729",
+        "bar_M02791",
+        "bar_M02801"
+      ],
+      "status": "pending",
+      "message": "无足够数据做 BOM 长度核验"
+    },
+    "r_bom_section_match": {
+      "id": "r_bom_section_match",
+      "name": "杆件截面与 BOM 核验",
+      "description": "杆件截面规格归一化后与 BOM 相等",
+      "applies_to": [
+        "bar_M0254",
+        "bar_M0256",
+        "bar_M02710",
+        "bar_M02729",
+        "bar_M02791",
+        "bar_M02801"
+      ],
+      "status": "pending",
+      "message": "无足够数据做 BOM 截面核验"
+    },
+    "r_node_fully_solved": {
+      "id": "r_node_fully_solved",
+      "name": "节点三轴坐标齐备",
+      "description": "关键节点 x/y/z 三轴坐标已知，无 placeholder",
+      "applies_to": [
+        "node_001",
+        "node_002",
+        "node_003",
+        "node_004",
+        "node_005",
+        "node_006",
+        "node_007"
+      ],
+      "status": "failed",
+      "message": "7 个节点缺坐标：['node_001', 'node_002', 'node_003', 'node_004', 'node_005']"
+    },
+    "r_no_duplicate_bar_id": {
+      "id": "r_no_duplicate_bar_id",
+      "name": "杆件编号唯一",
+      "description": "同一视图内杆件编号不重复",
+      "applies_to": [
+        "bar_M0254",
+        "bar_M0256",
+        "bar_M02710",
+        "bar_M02729",
+        "bar_M02791",
+        "bar_M02801"
+      ],
+      "status": "passed",
+      "message": "杆件编号在视图内唯一"
+    },
+    "r_scan_reviewed": {
+      "id": "r_scan_reviewed",
+      "name": "扫描图人工复核闸门",
+      "description": "扫描图候选杆件/节点必须 solve_status=verified 才可进终版 3D",
+      "applies_to": [
+        "bar_M0254",
+        "bar_M0256",
+        "bar_M02710",
+        "bar_M02729",
+        "bar_M02791",
+        "bar_M02801",
+        "node_001",
+        "node_002",
+        "node_003",
+        "node_004",
+        "node_005",
+        "node_006",
+        "node_007"
+      ],
+      "status": "failed",
+      "message": "13 个扫描候选仍待人工复核：['node_001', 'node_002', 'node_003', 'node_004', 'node_005']"
+    }
+  },
+  "dependencies": {},
+  "staleness": {
+    "drawing_file": "current",
+    "node_001": "current",
+    "node_002": "current",
+    "node_003": "current",
+    "node_004": "current",
+    "node_005": "current",
+    "node_006": "current",
+    "node_007": "current",
+    "bar_M0254": "current",
+    "bar_M0256": "current",
+    "bar_M02710": "current",
+    "bar_M02729": "current",
+    "bar_M02791": "current",
+    "bar_M02801": "current",
+    "r_topology_closed": "current",
+    "r_bom_length_match": "current",
+    "r_bom_section_match": "current",
+    "r_node_fully_solved": "current",
+    "r_no_duplicate_bar_id": "current",
+    "r_scan_reviewed": "current"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "tower-tower_front_hd",
+  "version": "1",
+  "components": {
+    "drawing_file": {
+      "id": "drawing_file",
+      "name": "examples/clear/tower_front_hd.png",
+      "kind": "drawing_file",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/clear/tower_front_hd.png",
+        "detail": "",
+        "confidence": 1.0,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "path": "examples/clear/tower_front_hd.png",
+        "kind": "scan",
+        "version": "1"
+      },
+      "tags": []
+    }
+  },
+  "dimensions": {},
+  "connections": {},
+  "rules": {},
+  "dependencies": {},
+  "staleness": {
+    "drawing_file": "current"
+  }
+}

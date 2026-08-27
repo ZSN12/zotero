@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>铁塔工程追溯 Demo</title>
+<link rel="stylesheet" href="/styles.css" />
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<header>
+  <h1>铁塔工程追溯 Demo</h1>
+  <p>上传 DXF/PNG/PDF → 一步跑完 intake → compile → cross_check → verify → export → 3D 交互</p>
+</header>
+
+<main class="layout">
+  <section class="panel upload-panel">
+    <h2>1. 上传图纸</h2>
+    <input type="file" id="file" accept=".dxf,.dwg,.png,.jpg,.jpeg,.pdf" />
+    <div class="options">
+      <label><input type="checkbox" id="merge" checked /> 跨视图合并（--merge）</label>
+      <label>BOM CSV <input type="file" id="bom" accept=".csv" /></label>
+    </div>
+    <button id="run">跑全链</button>
+    <div id="status" class="status">待命</div>
+  </section>
+
+  <section class="panel steps-panel">
+    <h2>2. 处理图（steps.json）</h2>
+    <table id="steps"><tbody><tr><td>尚无步骤</td></tr></tbody></table>
+    <div id="harness" class="harness"></div>
+  </section>
+
+  <section class="panel viewer-panel">
+    <h2>3. 3D 预览（GLB）</h2>
+    <div id="viewer"></div>
+  </section>
+
+  <section class="panel trace-panel">
+    <h2>4. 构件追溯（点杆件看 source）</h2>
+    <div id="bars"></div>
+  </section>
+
+  <aside class="panel neube-panel">
+    <h2>5. NeuBE SR 对标</h2>
+    <ul>
+      <li><b>证据链</b> → SourceRef（file/handle/confidence）</li>
+      <li><b>语义 IR</b> → Component/Dimension/Rule 结构对象</li>
+      <li><b>约束</b> → r_* 规则 + 依赖 DAG</li>
+      <li><b>复核门</b> → pending_review / placeholder / --human-review</li>
+    </ul>
+    <a href="/docs/NEUBE_ALIGNMENT.md" target="_blank">完整对标文档</a>
+  </aside>
+</main>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

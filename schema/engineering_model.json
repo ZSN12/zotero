@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "engineering-trace/engineering_model",
+  "title": "Engineering Traceability Model",
+  "type": "object",
+  "required": ["name", "components", "dimensions", "connections", "rules"],
+  "properties": {
+    "name": { "type": "string" },
+    "version": { "type": "string" },
+    "components": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["id", "name", "kind"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "kind": { "type": "string" },
+          "source": { "$ref": "#/$defs/sourceRef" },
+          "properties": { "type": "object" },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["id", "name", "value", "unit", "origin"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "value": {},
+          "unit": { "type": "string" },
+          "origin": { "enum": ["measured", "assumed", "derived", "placeholder"] },
+          "source": { "$ref": "#/$defs/sourceRef" },
+          "applies_to": { "type": "string" },
+          "status": { "enum": ["pending", "passed", "failed", "not_applicable"] }
+        }
+      }
+    },
+    "connections": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["id", "from_component", "to_component"],
+        "properties": {
+          "id": { "type": "string" },
+          "from_component": { "type": "string" },
+          "to_component": { "type": "string" },
+          "connection_type": { "type": "string" },
+          "source": { "$ref": "#/$defs/sourceRef" },
+          "validation_status": { "enum": ["pending", "passed", "failed", "not_applicable"] },
+          "rule_ids": { "type": "array", "items": { "type": "string" } },
+          "validated_at": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["id", "name", "description"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "applies_to": { "type": "array", "items": { "type": "string" } },
+          "status": { "enum": ["pending", "passed", "failed", "not_applicable"] },
+          "message": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "staleness": {
+      "type": "object",
+      "additionalProperties": { "enum": ["current", "stale"] }
+    }
+  },
+  "$defs": {
+    "sourceRef": {
+      "type": "object",
+      "required": ["source_type", "reference"],
+      "properties": {
+        "source_type": { "enum": ["drawing", "measurement", "assumption", "derived", "vendor", "unknown"] },
+        "reference": { "type": "string" },
+        "detail": { "type": ["string", "null"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "extracted_at": { "type": ["string", "null"] },
+        "extracted_by": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

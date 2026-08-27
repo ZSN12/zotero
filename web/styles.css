@@ -1,0 +1,25 @@
+:root { --border:#d9dde3; --accent:#0b6bcb; --bg:#f5f7fa; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:#1a2330; }
+header { padding:16px 20px; border-bottom:1px solid var(--border); background:#fff; }
+header h1 { margin:0 0 4px; font-size:20px; }
+header p { margin:0; color:#5b6472; font-size:13px; }
+.layout { display:grid; grid-template-columns: 340px 1fr; gap:12px; padding:12px; }
+.panel { background:#fff; border:1px solid var(--border); border-radius:8px; padding:12px; }
+.upload-panel { grid-row: span 2; }
+.viewer-panel { min-height:420px; }
+#viewer { width:100%; height:420px; background:#0e1116; border-radius:6px; }
+.options { display:flex; flex-direction:column; gap:6px; margin:8px 0; font-size:13px; }
+button { background:var(--accent); color:#fff; border:0; padding:8px 14px; border-radius:6px; cursor:pointer; }
+button:disabled { opacity:.5; cursor:not-allowed; }
+.status { margin-top:10px; font-size:13px; white-space:pre-wrap; }
+table { width:100%; border-collapse:collapse; font-size:12px; }
+td, th { border:1px solid var(--border); padding:4px 6px; }
+td.passed { color:#0a7d33; } td.failed { color:#c62828; } td.running { color:#b26a00; }
+.trace-panel { grid-column: span 2; }
+.neube-panel { grid-column: span 2; font-size:13px; }
+#bars { max-height:260px; overflow:auto; font-size:12px; }
+.bar-item { border-bottom:1px solid var(--border); padding:4px 2px; cursor:pointer; }
+.bar-item:hover { background:#eef4fb; }
+.bar-item .src { color:#5b6472; font-size:11px; }
+.harness { font-size:12px; margin-top:8px; white-space:pre-wrap; }

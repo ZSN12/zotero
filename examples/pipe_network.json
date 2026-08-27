@@ -1,0 +1,235 @@
+{
+  "name": "P-101 泵送管线示例段",
+  "version": "1",
+  "components": {
+    "c_pump_p101": {
+      "id": "c_pump_p101",
+      "name": "离心泵 P-101",
+      "kind": "pump",
+      "source": {
+        "source_type": "drawing",
+        "reference": "P&ID-102-Sheet3",
+        "detail": "坐标 (320, 1400), 符号 P-101",
+        "confidence": 0.92,
+        "extracted_at": "2025-08-01T10:00:00Z",
+        "extracted_by": "drawing-intake-v0.1"
+      },
+      "properties": {
+        "fluid": "冷却水",
+        "design_pressure_bar": 10
+      },
+      "tags": [
+        "离心泵",
+        "关键设备"
+      ]
+    },
+    "c_valve_v201": {
+      "id": "c_valve_v201",
+      "name": "闸阀 V-201",
+      "kind": "valve",
+      "source": {
+        "source_type": "drawing",
+        "reference": "P&ID-102-Sheet3",
+        "detail": "坐标 (900, 1400), 符号 V-201",
+        "confidence": 0.88,
+        "extracted_at": "2025-08-01T10:00:00Z",
+        "extracted_by": "drawing-intake-v0.1"
+      },
+      "properties": {
+        "type": "gate",
+        "nominal_diameter_mm": 100
+      },
+      "tags": [
+        "阀门"
+      ]
+    },
+    "c_pipe_seg1": {
+      "id": "c_pipe_seg1",
+      "name": "管道段 L1",
+      "kind": "pipe",
+      "source": {
+        "source_type": "drawing",
+        "reference": "P&ID-102-Sheet3",
+        "detail": "P-101 出口至 V-201",
+        "confidence": 0.95,
+        "extracted_at": "2025-08-01T10:00:00Z",
+        "extracted_by": "drawing-intake-v0.1"
+      },
+      "properties": {
+        "material": "碳钢",
+        "schedule": "40"
+      },
+      "tags": [
+        "管道"
+      ]
+    }
+  },
+  "dimensions": {
+    "d_pipe_length": {
+      "id": "d_pipe_length",
+      "name": "L1 管段长度",
+      "value": 12.5,
+      "unit": "m",
+      "origin": "measured",
+      "source": {
+        "source_type": "measurement",
+        "reference": "现场测量记录 FM-2025-081",
+        "detail": "超声波测距，两次取平均",
+        "confidence": 0.99,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "applies_to": "c_pipe_seg1",
+      "status": "passed"
+    },
+    "d_pipe_od": {
+      "id": "d_pipe_od",
+      "name": "L1 管道外径",
+      "value": 114.3,
+      "unit": "mm",
+      "origin": "assumed",
+      "source": {
+        "source_type": "assumption",
+        "reference": "工程师假设（待查厂家样本）",
+        "detail": null,
+        "confidence": 0.6,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "applies_to": "c_pipe_seg1",
+      "status": "pending"
+    },
+    "d_flow_rate": {
+      "id": "d_flow_rate",
+      "name": "设计流量",
+      "value": 30,
+      "unit": "m3/h",
+      "origin": "derived",
+      "source": {
+        "source_type": "derived",
+        "reference": "由热负荷计算得出",
+        "detail": null,
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "applies_to": "c_pump_p101",
+      "status": "passed"
+    }
+  },
+  "connections": {
+    "conn_pump_to_pipe": {
+      "id": "conn_pump_to_pipe",
+      "from_component": "c_pump_p101",
+      "to_component": "c_pipe_seg1",
+      "connection_type": "physical",
+      "source": {
+        "source_type": "drawing",
+        "reference": "P&ID-102-Sheet3",
+        "detail": "P-101 出口法兰",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "validation_status": "pending",
+      "rule_ids": [
+        "r_pressure_rating",
+        "r_flange_match"
+      ],
+      "validated_at": null
+    },
+    "conn_pipe_to_valve": {
+      "id": "conn_pipe_to_valve",
+      "from_component": "c_pipe_seg1",
+      "to_component": "c_valve_v201",
+      "connection_type": "physical",
+      "source": {
+        "source_type": "drawing",
+        "reference": "P&ID-102-Sheet3",
+        "detail": "L1 末端焊接",
+        "confidence": 0.93,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "validation_status": "pending",
+      "rule_ids": [
+        "r_weld_material"
+      ],
+      "validated_at": null
+    }
+  },
+  "rules": {
+    "r_pressure_rating": {
+      "id": "r_pressure_rating",
+      "name": "压力等级匹配",
+      "description": "阀门/管道压力等级不得低于设计压力",
+      "applies_to": [
+        "conn_pump_to_pipe"
+      ],
+      "status": "pending",
+      "message": "缺少至少两个端点的设计压力数据，待补充"
+    },
+    "r_flange_match": {
+      "id": "r_flange_match",
+      "name": "法兰匹配",
+      "description": "法兰尺寸与螺栓孔位需与泵出口一致",
+      "applies_to": [
+        "conn_pump_to_pipe"
+      ],
+      "status": "pending",
+      "message": "缺少法兰公称直径数据，待补充"
+    },
+    "r_weld_material": {
+      "id": "r_weld_material",
+      "name": "焊接材料兼容",
+      "description": "焊接材料需与管材兼容",
+      "applies_to": [
+        "conn_pipe_to_valve"
+      ],
+      "status": "pending",
+      "message": "缺少两端材料数据，待补充"
+    }
+  },
+  "dependencies": {
+    "d_pipe_length": [
+      "c_pipe_seg1"
+    ],
+    "d_pipe_od": [
+      "c_pipe_seg1"
+    ],
+    "d_flow_rate": [
+      "c_pump_p101",
+      "d_pipe_od"
+    ],
+    "conn_pump_to_pipe": [
+      "c_pipe_seg1",
+      "c_pump_p101"
+    ],
+    "conn_pipe_to_valve": [
+      "c_pipe_seg1",
+      "c_valve_v201"
+    ],
+    "r_pressure_rating": [
+      "conn_pump_to_pipe"
+    ],
+    "r_flange_match": [
+      "conn_pump_to_pipe"
+    ],
+    "r_weld_material": [
+      "conn_pipe_to_valve"
+    ]
+  },
+  "staleness": {
+    "c_pump_p101": "current",
+    "c_valve_v201": "current",
+    "c_pipe_seg1": "current",
+    "d_pipe_length": "current",
+    "d_pipe_od": "current",
+    "d_flow_rate": "current",
+    "conn_pump_to_pipe": "current",
+    "conn_pipe_to_valve": "current",
+    "r_pressure_rating": "current",
+    "r_flange_match": "current",
+    "r_weld_material": "current"
+  }
+}

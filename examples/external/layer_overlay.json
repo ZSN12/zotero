@@ -1,0 +1,5 @@
+{
+  "bar_layers": ["LEG", "HORIZ", "DIAG", "CROSS", "TOWER_EXTRA"],
+  "bar_id_patterns": ["M\\d{4}", "[GSB]\\d{1,4}"],
+  "view_regions": {}
+}

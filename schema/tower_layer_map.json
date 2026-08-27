@@ -1,0 +1,209 @@
+{
+  "$comment": "铁塔 DXF 图层/视图规范：intake 解析器与 DXF 生成器共用。",
+  "bar_layers": [
+    "TRUSS_MAIN",
+    "TRUSS",
+    "MEMBER",
+    "LEG",
+    "HORIZ",
+    "DIAG",
+    "CROSS",
+    "HEAD",
+    "KNEE",
+    "HANG",
+    "杆件"
+  ],
+  "node_layers": [
+    "NODE",
+    "TRUSS_NODE",
+    "节点"
+  ],
+  "dim_layers": [
+    "DIM",
+    "标注"
+  ],
+  "text_layers": [
+    "TEXT",
+    "文字"
+  ],
+  "bar_id_patterns": [
+    "M\\d{4}",
+    "[GSB]\\d{1,4}"
+  ],
+  "view_regions": {
+    "tower_demo": [
+      {
+        "kind": "elevation",
+        "title": "立面图",
+        "origin": [
+          8000.0,
+          6000.0
+        ],
+        "region": [
+          2000.0,
+          16000.0,
+          4000.0,
+          26000.0
+        ],
+        "axes": [
+          "x",
+          "z"
+        ],
+        "z_level": null
+      },
+      {
+        "kind": "plan",
+        "title": "平面图",
+        "origin": [
+          22000.0,
+          6000.0
+        ],
+        "region": [
+          19000.0,
+          30000.0,
+          4000.0,
+          26000.0
+        ],
+        "axes": [
+          "x",
+          "y"
+        ],
+        "z_level": 0.0
+      }
+    ],
+    "tower_110kv": [
+      {
+        "kind": "front",
+        "title": "正立面",
+        "origin": [
+          6000.0,
+          8000.0
+        ],
+        "region": [
+          -2000.0,
+          15000.0,
+          6000.0,
+          32000.0
+        ],
+        "axes": [
+          "x",
+          "z"
+        ],
+        "y_expand": 0.08,
+        "z_level": null
+      },
+      {
+        "kind": "side",
+        "title": "侧立面",
+        "origin": [
+          42000.0,
+          8000.0
+        ],
+        "region": [
+          36000.0,
+          60000.0,
+          6000.0,
+          32000.0
+        ],
+        "axes": [
+          "y",
+          "z"
+        ],
+        "x_expand": 0.08,
+        "z_level": null
+      },
+      {
+        "kind": "plan",
+        "title": "PLAN Z=0",
+        "origin": [
+          6000.0,
+          38000.0
+        ],
+        "region": [
+          2000.0,
+          20000.0,
+          32000.0,
+          52000.0
+        ],
+        "axes": [
+          "x",
+          "y"
+        ],
+        "z_level": 0.0
+      },
+      {
+        "kind": "plan",
+        "title": "PLAN Z=8100",
+        "origin": [
+          28000.0,
+          38000.0
+        ],
+        "region": [
+          22000.0,
+          40000.0,
+          32000.0,
+          52000.0
+        ],
+        "axes": [
+          "x",
+          "y"
+        ],
+        "z_level": 8100.0
+      },
+      {
+        "kind": "plan",
+        "title": "PLAN Z=16200",
+        "origin": [
+          50000.0,
+          38000.0
+        ],
+        "region": [
+          42000.0,
+          60000.0,
+          32000.0,
+          52000.0
+        ],
+        "axes": [
+          "x",
+          "y"
+        ],
+        "z_level": 16200.0
+      },
+      {
+        "kind": "section",
+        "title": "剖面",
+        "origin": [
+          72000.0,
+          38000.0
+        ],
+        "region": [
+          60000.0,
+          90000.0,
+          32000.0,
+          62000.0
+        ],
+        "axes": [
+          "x",
+          "z"
+        ],
+        "z_level": null
+      },
+      {
+        "kind": "detail",
+        "title": "节点大样",
+        "origin": [
+          72000.0,
+          8000.0
+        ],
+        "region": [
+          60000.0,
+          90000.0,
+          6000.0,
+          32000.0
+        ],
+        "axes": [],
+        "z_level": null
+      }
+    ]
+  }
+}

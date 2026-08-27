@@ -1,0 +1,51 @@
+{
+  "image": "examples/clear/tower_front_hd.png",
+  "generated_at": "2026-08-27T07:34:38+00:00",
+  "note": "评测定位用，不与矢量主路径争抢。MLLM 未配置 API 时如实记录 unavailable。",
+  "columns": [
+    {
+      "backend": "rule-based-scan",
+      "model": null,
+      "status": "ok",
+      "elapsed_s": 1.28,
+      "bars": 291,
+      "nodes": 374,
+      "views": 0,
+      "labeled_bars": 0
+    },
+    {
+      "backend": "mllm",
+      "model": "kimi-for-coding",
+      "provider": "kimi-code",
+      "status": "unavailable",
+      "elapsed_s": 0.0,
+      "meta": {
+        "model": "kimi-for-coding",
+        "provider": "kimi-code",
+        "failure_reason": "未配置 MLLM API Key"
+      },
+      "bars": null,
+      "nodes": null,
+      "views": null,
+      "labeled_bars": null,
+      "failure_reason": "未配置 MLLM API Key"
+    },
+    {
+      "backend": "mllm",
+      "model": "k3-256k",
+      "provider": "kimi-code",
+      "status": "unavailable",
+      "elapsed_s": 0.0,
+      "meta": {
+        "model": "k3-256k",
+        "provider": "kimi-code",
+        "failure_reason": "未配置 MLLM API Key"
+      },
+      "bars": null,
+      "nodes": null,
+      "views": null,
+      "labeled_bars": null,
+      "failure_reason": "未配置 MLLM API Key"
+    }
+  ]
+}

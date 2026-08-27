@@ -1,0 +1,17 @@
+# 核心（数据模型 + DXF 解析 + 三视图线性解耦匹配）
+ezdxf>=1.0
+numpy>=1.24
+scipy>=1.10
+jsonschema>=4.0
+
+# 图纸预览 / 扫描图管线（可选，但 CLI 默认会尝试导入）
+matplotlib>=3.7
+
+# 扫描图管线（Phase 4，版面分析 + 霍夫线检测）
+opencv-python-headless>=4.8
+
+# MLLM Skill 契约（可选：未配置 OPENAI_API_KEY 时走 NullBackend）
+openai>=1.0
+
+# GLB 实体导出（Phase 3，可选；未安装时 solve-tower --format glb 会提示安装）
+trimesh>=4.0

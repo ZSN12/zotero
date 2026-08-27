@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# 运行产物（out 目录、临时输出）
+out/
+*.glb
+*.obj
+
+# 敏感 / 大体积安装包
+*.dmg
+tools/oda-file-converter/ODAFileConverter.app/
+tools/oda-file-converter/tmp-input/
+
+# 系统
+.DS_Store

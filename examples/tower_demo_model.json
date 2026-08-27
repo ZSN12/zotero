@@ -1,0 +1,1847 @@
+{
+  "name": "tower-tower_demo",
+  "version": "1",
+  "components": {
+    "drawing_file": {
+      "id": "drawing_file",
+      "name": "tower_demo",
+      "kind": "drawing_file",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": null,
+        "confidence": 1.0,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "path": "examples/tower_demo.dxf"
+      },
+      "tags": []
+    },
+    "node_N01": {
+      "id": "node_N01",
+      "name": "节点 N01",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=elevation, handles=93,97",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N01",
+        "x": 6000.0,
+        "y": 6000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "elevation",
+        "view_x": -2000.0,
+        "view_y": 0.0,
+        "z_level": null
+      },
+      "tags": []
+    },
+    "node_N02": {
+      "id": "node_N02",
+      "name": "节点 N02",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=elevation, handles=93,99,9B",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N02",
+        "x": 6800.0,
+        "y": 11000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "elevation",
+        "view_x": -1200.0,
+        "view_y": 5000.0,
+        "z_level": null
+      },
+      "tags": []
+    },
+    "node_N03": {
+      "id": "node_N03",
+      "name": "节点 N03",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=elevation, handles=95,99",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N03",
+        "x": 10000.0,
+        "y": 6000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "elevation",
+        "view_x": 2000.0,
+        "view_y": 0.0,
+        "z_level": null
+      },
+      "tags": []
+    },
+    "node_N04": {
+      "id": "node_N04",
+      "name": "节点 N04",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=elevation, handles=95,97,9D",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N04",
+        "x": 9200.0,
+        "y": 11000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "elevation",
+        "view_x": 1200.0,
+        "view_y": 5000.0,
+        "z_level": null
+      },
+      "tags": []
+    },
+    "node_N05": {
+      "id": "node_N05",
+      "name": "节点 N05",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=elevation, handles=9B,9F,A3",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N05",
+        "x": 7200.0,
+        "y": 13000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "elevation",
+        "view_x": -800.0,
+        "view_y": 7000.0,
+        "z_level": null
+      },
+      "tags": []
+    },
+    "node_N06": {
+      "id": "node_N06",
+      "name": "节点 N06",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=elevation, handles=9D,A1,A7",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N06",
+        "x": 8800.0,
+        "y": 13000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "elevation",
+        "view_x": 800.0,
+        "view_y": 7000.0,
+        "z_level": null
+      },
+      "tags": []
+    },
+    "node_N07": {
+      "id": "node_N07",
+      "name": "节点 N07",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=elevation, handles=9F,A5",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N07",
+        "x": 4000.0,
+        "y": 13000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "elevation",
+        "view_x": -4000.0,
+        "view_y": 7000.0,
+        "z_level": null
+      },
+      "tags": []
+    },
+    "node_N08": {
+      "id": "node_N08",
+      "name": "节点 N08",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=elevation, handles=A1,A9",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N08",
+        "x": 12000.0,
+        "y": 13000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "elevation",
+        "view_x": 4000.0,
+        "view_y": 7000.0,
+        "z_level": null
+      },
+      "tags": []
+    },
+    "node_N09": {
+      "id": "node_N09",
+      "name": "节点 N09",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=elevation, handles=A3,A5",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N09",
+        "x": 6500.0,
+        "y": 18000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "elevation",
+        "view_x": -1500.0,
+        "view_y": 12000.0,
+        "z_level": null
+      },
+      "tags": []
+    },
+    "node_N10": {
+      "id": "node_N10",
+      "name": "节点 N10",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=elevation, handles=A7,A9",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N10",
+        "x": 9500.0,
+        "y": 18000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "elevation",
+        "view_x": 1500.0,
+        "view_y": 12000.0,
+        "z_level": null
+      },
+      "tags": []
+    },
+    "node_N11": {
+      "id": "node_N11",
+      "name": "节点 N11",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=E0,E8,F6",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N11",
+        "x": 20000.0,
+        "y": 4000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": -2000.0,
+        "view_y": -2000.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N12": {
+      "id": "node_N12",
+      "name": "节点 N12",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=E0,EA,F4,F8",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N12",
+        "x": 20800.0,
+        "y": 4800.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": -1200.0,
+        "view_y": -1200.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N13": {
+      "id": "node_N13",
+      "name": "节点 N13",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=E2,EA,EC",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N13",
+        "x": 24000.0,
+        "y": 4000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": 2000.0,
+        "view_y": -2000.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N14": {
+      "id": "node_N14",
+      "name": "节点 N14",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=E2,E8,EE,FA",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N14",
+        "x": 23200.0,
+        "y": 4800.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": 1200.0,
+        "view_y": -1200.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N15": {
+      "id": "node_N15",
+      "name": "节点 N15",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=E4,EE,F0",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N15",
+        "x": 24000.0,
+        "y": 8000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": 2000.0,
+        "view_y": 2000.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N16": {
+      "id": "node_N16",
+      "name": "节点 N16",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=E4,EC,F2,FC",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N16",
+        "x": 23200.0,
+        "y": 7200.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": 1200.0,
+        "view_y": 1200.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N17": {
+      "id": "node_N17",
+      "name": "节点 N17",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=E6,F2,F4",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N17",
+        "x": 20000.0,
+        "y": 8000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": -2000.0,
+        "view_y": 2000.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N18": {
+      "id": "node_N18",
+      "name": "节点 N18",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=E6,F0,F6,FE",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N18",
+        "x": 20800.0,
+        "y": 7200.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": -1200.0,
+        "view_y": 1200.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N19": {
+      "id": "node_N19",
+      "name": "节点 N19",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=F8,100,108",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N19",
+        "x": 21200.0,
+        "y": 5200.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": -800.0,
+        "view_y": -800.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N20": {
+      "id": "node_N20",
+      "name": "节点 N20",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=FA,104,10E",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N20",
+        "x": 22800.0,
+        "y": 5200.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": 800.0,
+        "view_y": -800.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N21": {
+      "id": "node_N21",
+      "name": "节点 N21",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=FC,106,110",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N21",
+        "x": 22800.0,
+        "y": 6800.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": 800.0,
+        "view_y": 800.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N22": {
+      "id": "node_N22",
+      "name": "节点 N22",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=FE,102,10A",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N22",
+        "x": 21200.0,
+        "y": 6800.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": -800.0,
+        "view_y": 800.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N23": {
+      "id": "node_N23",
+      "name": "节点 N23",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=100,102,10C",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N23",
+        "x": 18000.0,
+        "y": 6000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": -4000.0,
+        "view_y": 0.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N24": {
+      "id": "node_N24",
+      "name": "节点 N24",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=104,106,112",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N24",
+        "x": 26000.0,
+        "y": 6000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": 4000.0,
+        "view_y": 0.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N25": {
+      "id": "node_N25",
+      "name": "节点 N25",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=108,10A,10C",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N25",
+        "x": 20500.0,
+        "y": 6000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": -1500.0,
+        "view_y": 0.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "node_N26": {
+      "id": "node_N26",
+      "name": "节点 N26",
+      "kind": "tower_node",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "端点聚类, view=plan, handles=10E,110,112",
+        "confidence": 0.9,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "node_id": "N26",
+        "x": 23500.0,
+        "y": 6000.0,
+        "z": null,
+        "solve_status": "partial",
+        "view_type": "plan",
+        "view_x": 1500.0,
+        "view_y": 0.0,
+        "z_level": 0.0
+      },
+      "tags": []
+    },
+    "bar_G01_elevation": {
+      "id": "bar_G01_elevation",
+      "name": "杆件 G01（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=93, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G01",
+        "view_type": "elevation",
+        "length_mm": 5063.6,
+        "section": null,
+        "from_node": "node_N01",
+        "to_node": "node_N02",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G02_elevation": {
+      "id": "bar_G02_elevation",
+      "name": "杆件 G02（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=95, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G02",
+        "view_type": "elevation",
+        "length_mm": 5063.6,
+        "section": null,
+        "from_node": "node_N03",
+        "to_node": "node_N04",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G05_elevation": {
+      "id": "bar_G05_elevation",
+      "name": "杆件 G05（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=97, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G05",
+        "view_type": "elevation",
+        "length_mm": 5936.33,
+        "section": null,
+        "from_node": "node_N01",
+        "to_node": "node_N04",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G06_elevation": {
+      "id": "bar_G06_elevation",
+      "name": "杆件 G06（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=99, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G06",
+        "view_type": "elevation",
+        "length_mm": 5936.33,
+        "section": null,
+        "from_node": "node_N03",
+        "to_node": "node_N02",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G13_elevation": {
+      "id": "bar_G13_elevation",
+      "name": "杆件 G13（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=9B, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G13",
+        "view_type": "elevation",
+        "length_mm": 2039.61,
+        "section": null,
+        "from_node": "node_N02",
+        "to_node": "node_N05",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G14_elevation": {
+      "id": "bar_G14_elevation",
+      "name": "杆件 G14（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=9D, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G14",
+        "view_type": "elevation",
+        "length_mm": 2039.61,
+        "section": null,
+        "from_node": "node_N04",
+        "to_node": "node_N06",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G17_elevation": {
+      "id": "bar_G17_elevation",
+      "name": "杆件 G17（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=9F, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G17",
+        "view_type": "elevation",
+        "length_mm": 3200.0,
+        "section": null,
+        "from_node": "node_N05",
+        "to_node": "node_N07",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G19_elevation": {
+      "id": "bar_G19_elevation",
+      "name": "杆件 G19（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=A1, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G19",
+        "view_type": "elevation",
+        "length_mm": 3200.0,
+        "section": null,
+        "from_node": "node_N06",
+        "to_node": "node_N08",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G21_elevation": {
+      "id": "bar_G21_elevation",
+      "name": "杆件 G21（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=A3, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G21",
+        "view_type": "elevation",
+        "length_mm": 5048.76,
+        "section": null,
+        "from_node": "node_N05",
+        "to_node": "node_N09",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G23_elevation": {
+      "id": "bar_G23_elevation",
+      "name": "杆件 G23（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=A5, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G23",
+        "view_type": "elevation",
+        "length_mm": 5590.17,
+        "section": null,
+        "from_node": "node_N07",
+        "to_node": "node_N09",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G24_elevation": {
+      "id": "bar_G24_elevation",
+      "name": "杆件 G24（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=A7, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G24",
+        "view_type": "elevation",
+        "length_mm": 5048.76,
+        "section": null,
+        "from_node": "node_N06",
+        "to_node": "node_N10",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G26_elevation": {
+      "id": "bar_G26_elevation",
+      "name": "杆件 G26（elevation）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=A9, layer=TRUSS_MAIN, view=elevation",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G26",
+        "view_type": "elevation",
+        "length_mm": 5590.17,
+        "section": null,
+        "from_node": "node_N08",
+        "to_node": "node_N10",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G01_plan": {
+      "id": "bar_G01_plan",
+      "name": "杆件 G01（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=E0, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G01",
+        "view_type": "plan",
+        "length_mm": 1131.37,
+        "section": null,
+        "from_node": "node_N11",
+        "to_node": "node_N12",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G02_plan": {
+      "id": "bar_G02_plan",
+      "name": "杆件 G02（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=E2, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G02",
+        "view_type": "plan",
+        "length_mm": 1131.37,
+        "section": null,
+        "from_node": "node_N13",
+        "to_node": "node_N14",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G03_plan": {
+      "id": "bar_G03_plan",
+      "name": "杆件 G03（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=E4, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G03",
+        "view_type": "plan",
+        "length_mm": 1131.37,
+        "section": null,
+        "from_node": "node_N15",
+        "to_node": "node_N16",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G04_plan": {
+      "id": "bar_G04_plan",
+      "name": "杆件 G04（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=E6, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G04",
+        "view_type": "plan",
+        "length_mm": 1131.37,
+        "section": null,
+        "from_node": "node_N17",
+        "to_node": "node_N18",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G05_plan": {
+      "id": "bar_G05_plan",
+      "name": "杆件 G05（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=E8, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G05",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N11",
+        "to_node": "node_N14",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G06_plan": {
+      "id": "bar_G06_plan",
+      "name": "杆件 G06（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=EA, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G06",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N13",
+        "to_node": "node_N12",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G07_plan": {
+      "id": "bar_G07_plan",
+      "name": "杆件 G07（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=EC, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G07",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N13",
+        "to_node": "node_N16",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G08_plan": {
+      "id": "bar_G08_plan",
+      "name": "杆件 G08（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=EE, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G08",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N15",
+        "to_node": "node_N14",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G09_plan": {
+      "id": "bar_G09_plan",
+      "name": "杆件 G09（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=F0, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G09",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N15",
+        "to_node": "node_N18",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G10_plan": {
+      "id": "bar_G10_plan",
+      "name": "杆件 G10（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=F2, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G10",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N17",
+        "to_node": "node_N16",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G11_plan": {
+      "id": "bar_G11_plan",
+      "name": "杆件 G11（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=F4, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G11",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N17",
+        "to_node": "node_N12",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G12_plan": {
+      "id": "bar_G12_plan",
+      "name": "杆件 G12（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=F6, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G12",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N11",
+        "to_node": "node_N18",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G13_plan": {
+      "id": "bar_G13_plan",
+      "name": "杆件 G13（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=F8, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G13",
+        "view_type": "plan",
+        "length_mm": 565.69,
+        "section": null,
+        "from_node": "node_N12",
+        "to_node": "node_N19",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G14_plan": {
+      "id": "bar_G14_plan",
+      "name": "杆件 G14（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=FA, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G14",
+        "view_type": "plan",
+        "length_mm": 565.69,
+        "section": null,
+        "from_node": "node_N14",
+        "to_node": "node_N20",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G15_plan": {
+      "id": "bar_G15_plan",
+      "name": "杆件 G15（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=FC, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G15",
+        "view_type": "plan",
+        "length_mm": 565.69,
+        "section": null,
+        "from_node": "node_N16",
+        "to_node": "node_N21",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G16_plan": {
+      "id": "bar_G16_plan",
+      "name": "杆件 G16（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=FE, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G16",
+        "view_type": "plan",
+        "length_mm": 565.69,
+        "section": null,
+        "from_node": "node_N18",
+        "to_node": "node_N22",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G17_plan": {
+      "id": "bar_G17_plan",
+      "name": "杆件 G17（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=100, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G17",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N19",
+        "to_node": "node_N23",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G18_plan": {
+      "id": "bar_G18_plan",
+      "name": "杆件 G18（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=102, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G18",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N22",
+        "to_node": "node_N23",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G19_plan": {
+      "id": "bar_G19_plan",
+      "name": "杆件 G19（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=104, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G19",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N20",
+        "to_node": "node_N24",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G20_plan": {
+      "id": "bar_G20_plan",
+      "name": "杆件 G20（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=106, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G20",
+        "view_type": "plan",
+        "length_mm": 3298.48,
+        "section": null,
+        "from_node": "node_N21",
+        "to_node": "node_N24",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G21_plan": {
+      "id": "bar_G21_plan",
+      "name": "杆件 G21（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=108, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G21",
+        "view_type": "plan",
+        "length_mm": 1063.01,
+        "section": null,
+        "from_node": "node_N19",
+        "to_node": "node_N25",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G22_plan": {
+      "id": "bar_G22_plan",
+      "name": "杆件 G22（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=10A, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G22",
+        "view_type": "plan",
+        "length_mm": 1063.01,
+        "section": null,
+        "from_node": "node_N22",
+        "to_node": "node_N25",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G23_plan": {
+      "id": "bar_G23_plan",
+      "name": "杆件 G23（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=10C, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G23",
+        "view_type": "plan",
+        "length_mm": 2500.0,
+        "section": null,
+        "from_node": "node_N23",
+        "to_node": "node_N25",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G24_plan": {
+      "id": "bar_G24_plan",
+      "name": "杆件 G24（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=10E, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G24",
+        "view_type": "plan",
+        "length_mm": 1063.01,
+        "section": null,
+        "from_node": "node_N20",
+        "to_node": "node_N26",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G25_plan": {
+      "id": "bar_G25_plan",
+      "name": "杆件 G25（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=110, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G25",
+        "view_type": "plan",
+        "length_mm": 1063.01,
+        "section": null,
+        "from_node": "node_N21",
+        "to_node": "node_N26",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    },
+    "bar_G26_plan": {
+      "id": "bar_G26_plan",
+      "name": "杆件 G26（plan）",
+      "kind": "tower_bar",
+      "source": {
+        "source_type": "drawing",
+        "reference": "examples/tower_demo.dxf",
+        "detail": "handle=112, layer=TRUSS_MAIN, view=plan",
+        "confidence": 0.85,
+        "extracted_at": null,
+        "extracted_by": null
+      },
+      "properties": {
+        "bar_id": "G26",
+        "view_type": "plan",
+        "length_mm": 2500.0,
+        "section": null,
+        "from_node": "node_N24",
+        "to_node": "node_N26",
+        "layer": "TRUSS_MAIN"
+      },
+      "tags": []
+    }
+  },
+  "dimensions": {},
+  "connections": {},
+  "rules": {
+    "r_topology_closed": {
+      "id": "r_topology_closed",
+      "name": "铁塔杆件拓扑闭合",
+      "description": "每根杆件两端节点必须存在（from_node/to_node 指向 tower_node）",
+      "applies_to": [
+        "bar_G01_elevation",
+        "bar_G02_elevation",
+        "bar_G05_elevation",
+        "bar_G06_elevation",
+        "bar_G13_elevation",
+        "bar_G14_elevation",
+        "bar_G17_elevation",
+        "bar_G19_elevation",
+        "bar_G21_elevation",
+        "bar_G23_elevation",
+        "bar_G24_elevation",
+        "bar_G26_elevation",
+        "bar_G01_plan",
+        "bar_G02_plan",
+        "bar_G03_plan",
+        "bar_G04_plan",
+        "bar_G05_plan",
+        "bar_G06_plan",
+        "bar_G07_plan",
+        "bar_G08_plan",
+        "bar_G09_plan",
+        "bar_G10_plan",
+        "bar_G11_plan",
+        "bar_G12_plan",
+        "bar_G13_plan",
+        "bar_G14_plan",
+        "bar_G15_plan",
+        "bar_G16_plan",
+        "bar_G17_plan",
+        "bar_G18_plan",
+        "bar_G19_plan",
+        "bar_G20_plan",
+        "bar_G21_plan",
+        "bar_G22_plan",
+        "bar_G23_plan",
+        "bar_G24_plan",
+        "bar_G25_plan",
+        "bar_G26_plan"
+      ],
+      "status": "passed",
+      "message": "所有杆件两端节点存在"
+    },
+    "r_bom_length_match": {
+      "id": "r_bom_length_match",
+      "name": "杆件长度与 BOM 核验",
+      "description": "杆件 3D 长度 vs BOM 长度，偏差 ≤ 3%",
+      "applies_to": [
+        "bar_G01_elevation",
+        "bar_G02_elevation",
+        "bar_G05_elevation",
+        "bar_G06_elevation",
+        "bar_G13_elevation",
+        "bar_G14_elevation",
+        "bar_G17_elevation",
+        "bar_G19_elevation",
+        "bar_G21_elevation",
+        "bar_G23_elevation",
+        "bar_G24_elevation",
+        "bar_G26_elevation",
+        "bar_G01_plan",
+        "bar_G02_plan",
+        "bar_G03_plan",
+        "bar_G04_plan",
+        "bar_G05_plan",
+        "bar_G06_plan",
+        "bar_G07_plan",
+        "bar_G08_plan",
+        "bar_G09_plan",
+        "bar_G10_plan",
+        "bar_G11_plan",
+        "bar_G12_plan",
+        "bar_G13_plan",
+        "bar_G14_plan",
+        "bar_G15_plan",
+        "bar_G16_plan",
+        "bar_G17_plan",
+        "bar_G18_plan",
+        "bar_G19_plan",
+        "bar_G20_plan",
+        "bar_G21_plan",
+        "bar_G22_plan",
+        "bar_G23_plan",
+        "bar_G24_plan",
+        "bar_G25_plan",
+        "bar_G26_plan"
+      ],
+      "status": "pending",
+      "message": "无足够数据做 BOM 长度核验"
+    },
+    "r_bom_section_match": {
+      "id": "r_bom_section_match",
+      "name": "杆件截面与 BOM 核验",
+      "description": "杆件截面规格归一化后与 BOM 相等",
+      "applies_to": [
+        "bar_G01_elevation",
+        "bar_G02_elevation",
+        "bar_G05_elevation",
+        "bar_G06_elevation",
+        "bar_G13_elevation",
+        "bar_G14_elevation",
+        "bar_G17_elevation",
+        "bar_G19_elevation",
+        "bar_G21_elevation",
+        "bar_G23_elevation",
+        "bar_G24_elevation",
+        "bar_G26_elevation",
+        "bar_G01_plan",
+        "bar_G02_plan",
+        "bar_G03_plan",
+        "bar_G04_plan",
+        "bar_G05_plan",
+        "bar_G06_plan",
+        "bar_G07_plan",
+        "bar_G08_plan",
+        "bar_G09_plan",
+        "bar_G10_plan",
+        "bar_G11_plan",
+        "bar_G12_plan",
+        "bar_G13_plan",
+        "bar_G14_plan",
+        "bar_G15_plan",
+        "bar_G16_plan",
+        "bar_G17_plan",
+        "bar_G18_plan",
+        "bar_G19_plan",
+        "bar_G20_plan",
+        "bar_G21_plan",
+        "bar_G22_plan",
+        "bar_G23_plan",
+        "bar_G24_plan",
+        "bar_G25_plan",
+        "bar_G26_plan"
+      ],
+      "status": "pending",
+      "message": "无足够数据做 BOM 截面核验"
+    },
+    "r_node_fully_solved": {
+      "id": "r_node_fully_solved",
+      "name": "节点三轴坐标齐备",
+      "description": "关键节点 x/y/z 三轴坐标已知，无 placeholder",
+      "applies_to": [
+        "node_N01",
+        "node_N02",
+        "node_N03",
+        "node_N04",
+        "node_N05",
+        "node_N06",
+        "node_N07",
+        "node_N08",
+        "node_N09",
+        "node_N10",
+        "node_N11",
+        "node_N12",
+        "node_N13",
+        "node_N14",
+        "node_N15",
+        "node_N16",
+        "node_N17",
+        "node_N18",
+        "node_N19",
+        "node_N20",
+        "node_N21",
+        "node_N22",
+        "node_N23",
+        "node_N24",
+        "node_N25",
+        "node_N26"
+      ],
+      "status": "failed",
+      "message": "26 个节点缺坐标：['node_N01', 'node_N02', 'node_N03', 'node_N04', 'node_N05']"
+    },
+    "r_no_duplicate_bar_id": {
+      "id": "r_no_duplicate_bar_id",
+      "name": "杆件编号唯一",
+      "description": "同一视图内杆件编号不重复",
+      "applies_to": [
+        "bar_G01_elevation",
+        "bar_G02_elevation",
+        "bar_G05_elevation",
+        "bar_G06_elevation",
+        "bar_G13_elevation",
+        "bar_G14_elevation",
+        "bar_G17_elevation",
+        "bar_G19_elevation",
+        "bar_G21_elevation",
+        "bar_G23_elevation",
+        "bar_G24_elevation",
+        "bar_G26_elevation",
+        "bar_G01_plan",
+        "bar_G02_plan",
+        "bar_G03_plan",
+        "bar_G04_plan",
+        "bar_G05_plan",
+        "bar_G06_plan",
+        "bar_G07_plan",
+        "bar_G08_plan",
+        "bar_G09_plan",
+        "bar_G10_plan",
+        "bar_G11_plan",
+        "bar_G12_plan",
+        "bar_G13_plan",
+        "bar_G14_plan",
+        "bar_G15_plan",
+        "bar_G16_plan",
+        "bar_G17_plan",
+        "bar_G18_plan",
+        "bar_G19_plan",
+        "bar_G20_plan",
+        "bar_G21_plan",
+        "bar_G22_plan",
+        "bar_G23_plan",
+        "bar_G24_plan",
+        "bar_G25_plan",
+        "bar_G26_plan"
+      ],
+      "status": "passed",
+      "message": "杆件编号在视图内唯一"
+    }
+  },
+  "dependencies": {},
+  "staleness": {
+    "drawing_file": "current",
+    "node_N01": "current",
+    "node_N02": "current",
+    "node_N03": "current",
+    "node_N04": "current",
+    "node_N05": "current",
+    "node_N06": "current",
+    "node_N07": "current",
+    "node_N08": "current",
+    "node_N09": "current",
+    "node_N10": "current",
+    "node_N11": "current",
+    "node_N12": "current",
+    "node_N13": "current",
+    "node_N14": "current",
+    "node_N15": "current",
+    "node_N16": "current",
+    "node_N17": "current",
+    "node_N18": "current",
+    "node_N19": "current",
+    "node_N20": "current",
+    "node_N21": "current",
+    "node_N22": "current",
+    "node_N23": "current",
+    "node_N24": "current",
+    "node_N25": "current",
+    "node_N26": "current",
+    "bar_G01_elevation": "current",
+    "bar_G02_elevation": "current",
+    "bar_G05_elevation": "current",
+    "bar_G06_elevation": "current",
+    "bar_G13_elevation": "current",
+    "bar_G14_elevation": "current",
+    "bar_G17_elevation": "current",
+    "bar_G19_elevation": "current",
+    "bar_G21_elevation": "current",
+    "bar_G23_elevation": "current",
+    "bar_G24_elevation": "current",
+    "bar_G26_elevation": "current",
+    "bar_G01_plan": "current",
+    "bar_G02_plan": "current",
+    "bar_G03_plan": "current",
+    "bar_G04_plan": "current",
+    "bar_G05_plan": "current",
+    "bar_G06_plan": "current",
+    "bar_G07_plan": "current",
+    "bar_G08_plan": "current",
+    "bar_G09_plan": "current",
+    "bar_G10_plan": "current",
+    "bar_G11_plan": "current",
+    "bar_G12_plan": "current",
+    "bar_G13_plan": "current",
+    "bar_G14_plan": "current",
+    "bar_G15_plan": "current",
+    "bar_G16_plan": "current",
+    "bar_G17_plan": "current",
+    "bar_G18_plan": "current",
+    "bar_G19_plan": "current",
+    "bar_G20_plan": "current",
+    "bar_G21_plan": "current",
+    "bar_G22_plan": "current",
+    "bar_G23_plan": "current",
+    "bar_G24_plan": "current",
+    "bar_G25_plan": "current",
+    "bar_G26_plan": "current",
+    "r_topology_closed": "current",
+    "r_bom_length_match": "current",
+    "r_bom_section_match": "current",
+    "r_node_fully_solved": "current",
+    "r_no_duplicate_bar_id": "current"
+  }
+}
