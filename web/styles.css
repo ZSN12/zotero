@@ -35,6 +35,13 @@ td.passed { color:#0a7d33; } td.failed { color:#c62828; } td.running { color:#b2
 .project-sheet-row { border-bottom:1px solid var(--border); padding:4px 2px; cursor:pointer; }
 .project-sheet-row:hover { background:#eef4fb; }
 .project-sheet-row.active { background:#e3f2fd; }
+.project-table { width:100%; margin-top:8px; font-size:12px; }
+.project-table td.passed { color:#0a7d33; }
+.project-table td.failed { color:#c62828; }
+.project-table td.pending { color:#b26a00; }
+.project-modules { font-size:12px; margin-top:6px; color:#5b6472; }
+.project-bom { font-size:12px; margin-top:8px; max-height:160px; overflow:auto; }
+.project-bom .conflict { color:#c62828; }
 .status.derived-y-pending { color:#b26a00; }
 .status.derived-y-ok { color:#0a7d33; }
 #evidence-canvas { width:100%; max-width:1000px; height:auto; border:1px solid var(--border); border-radius:6px; background:#0e1116; }

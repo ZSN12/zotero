@@ -140,6 +140,26 @@ if inv.get("total_unique_bar_ids", 0) < 1:
 print(f"PASS: project_harness sheets={ph['sheet_count']} bar_ids={inv['total_unique_bar_ids']}")
 PYEOF
 
+echo "==> [3e/5] deliver-project master BOM + 模块装配"
+"$PY" - "$OUT/project-deliver/project_delivery.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+bs = d.get("bom_tree_summary") or {}
+if bs.get("conflict_count", 0) != 0:
+    print(f"FAIL: master BOM 冲突 {bs.get('conflict_count')}")
+    sys.exit(1)
+ph = d.get("project_harness") or {}
+bom = next((r for r in ph.get("results", []) if r.get("rule") == "r_project_bom_master"), None)
+if not bom or bom.get("status") != "passed":
+    print("FAIL: r_project_bom_master 未 passed")
+    sys.exit(1)
+asm = d.get("assembly") or {}
+if not asm.get("enabled"):
+    print("FAIL: 模块装配未启用")
+    sys.exit(1)
+print(f"PASS: master BOM ok, assembly={asm.get('mode')}")
+PYEOF
+
 echo "==> [4/5] examples/clear/ 扫描批量（3 view_type + merged model）"
 "$PY" -m traceability.cli run-tower examples/clear/ \
   --out-dir "$OUT/clear-multi" >/dev/null 2>&1 || true

@@ -5,6 +5,7 @@
     * r_project_cross_sheet_bar_id 跨 sheet 件号重复（pending 待人工）
     * r_project_bom_master         master BOM 数量冲突
     * r_project_bar_inventory      件号索引已建立
+    * r_project_module_assembly    多模块 Z 向装配（M8）
 """
 
 from __future__ import annotations
@@ -54,6 +55,7 @@ def run_project_harness(
     cross_sheet_bar_id: Optional[Dict[str, Any]] = None,
     bom_tree: Optional[Dict[str, Any]] = None,
     bar_inventory: Optional[Dict[str, Any]] = None,
+    assembly_info: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """运行图册级 Harness，返回摘要 dict。"""
     results: List[ProjectValidationResult] = []
@@ -126,10 +128,18 @@ def run_project_harness(
             f"{len(conflicts)} 个件号与 master BOM 数量不一致",
         ))
     elif master_path and int((bom_tree or {}).get("total_unique_bar_ids") or 0) > 0:
-        results.append(ProjectValidationResult(
-            "r_project_bom_master", ValidationStatus.PASSED,
-            "master BOM 数量核对通过",
-        ))
+        only_master = (bom_tree or {}).get("only_in_master") or []
+        only_model = (bom_tree or {}).get("only_in_model") or []
+        if only_master or only_model:
+            results.append(ProjectValidationResult(
+                "r_project_bom_master", ValidationStatus.PENDING,
+                f"master 核对：缺模型 {len(only_model)} / 缺 master {len(only_master)}",
+            ))
+        else:
+            results.append(ProjectValidationResult(
+                "r_project_bom_master", ValidationStatus.PASSED,
+                "master BOM 数量核对通过",
+            ))
     elif master_path:
         results.append(ProjectValidationResult(
             "r_project_bom_master", ValidationStatus.PENDING,
@@ -139,6 +149,26 @@ def run_project_harness(
         results.append(ProjectValidationResult(
             "r_project_bom_master", ValidationStatus.PASSED,
             "未指定 master BOM，跳过数量核对",
+        ))
+
+    asm = assembly_info or {}
+    if asm.get("enabled") or asm.get("model"):
+        reports = asm.get("reports") or []
+        matched = sum(int(r.get("matched") or 0) for r in reports)
+        if matched > 0:
+            results.append(ProjectValidationResult(
+                "r_project_module_assembly", ValidationStatus.PASSED,
+                f"模块装配 {matched} 对边界节点对齐（{asm.get('mode', 'assembly')}）",
+            ))
+        else:
+            results.append(ProjectValidationResult(
+                "r_project_module_assembly", ValidationStatus.PENDING,
+                "模块装配已启用但未匹配边界节点",
+            ))
+    elif (project.metadata or {}).get("module_assembly_requested"):
+        results.append(ProjectValidationResult(
+            "r_project_module_assembly", ValidationStatus.PENDING,
+            "enable_module_assembly 已开但缺少可装配模块",
         ))
 
     summary = _summarize(results)

@@ -42,6 +42,10 @@
     }
   },
   "gusset_auto_anchor": true,
+  "master_bom": "guowang_merged_bom.csv",
+  "enable_module_assembly": true,
+  "assembly_demo_z_split": 0.45,
+  "assembly_tol_mm": 15.0,
   "view_regions": {
     "35A1-JC1-02": [
       {

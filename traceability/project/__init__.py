@@ -9,6 +9,7 @@ from .delivery import deliver_project
 from .bom_tree import aggregate_bom_tree, BomTreeNode
 from .bar_inventory import aggregate_bar_inventory
 from .harness import run_project_harness
+from .module_build import physical_bar_counts, resolve_master_bom_path, try_assembly_from_merged
 
 __all__ = [
     "ProjectModel",
@@ -22,4 +23,7 @@ __all__ = [
     "BomTreeNode",
     "aggregate_bar_inventory",
     "run_project_harness",
+    "physical_bar_counts",
+    "resolve_master_bom_path",
+    "try_assembly_from_merged",
 ]

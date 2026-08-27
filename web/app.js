@@ -451,6 +451,46 @@ $('confirm-scan').onclick = confirmScan;
 $('confirm-derived-y').onclick = confirmDerivedY;
 $('export-glb').onclick = exportGlb;
 
+function renderProjectHarness(ph) {
+  const table = $('project-harness-table');
+  if (!table || !ph || !ph.results) {
+    if (table) table.querySelector('tbody').innerHTML = '';
+    return;
+  }
+  table.querySelector('tbody').innerHTML = ph.results.map((r) =>
+    `<tr><td>${r.rule}</td><td class="${r.status}">${r.status}</td><td>${r.message || ''}</td></tr>`,
+  ).join('');
+}
+
+function renderProjectBom(payload) {
+  const box = $('project-bom');
+  if (!box) return;
+  const sum = payload.bom_tree_summary || {};
+  const conflicts = payload.bom_conflicts || [];
+  let html = `<div>master BOM: ${sum.master_bom_path || '未指定'} · ` +
+    `冲突 ${sum.conflict_count || 0} · 仅 master ${sum.only_in_master || 0} · 仅模型 ${sum.only_in_model || 0}</div>`;
+  if (conflicts.length) {
+    html += conflicts.slice(0, 8).map((c) =>
+      `<div class="conflict">${c.bar_id}: 模型 ${c.aggregated_qty} vs master ${c.master_qty}</div>`,
+    ).join('');
+  }
+  box.innerHTML = html;
+}
+
+function renderProjectModules(payload) {
+  const box = $('project-modules');
+  if (!box) return;
+  const mods = payload.modules || {};
+  const asm = payload.assembly || {};
+  const lines = Object.entries(mods).map(([mid, meta]) =>
+    `${mid}=[${(meta.sheets || []).join(', ')}]`,
+  );
+  if (asm.enabled) {
+    lines.push(`装配: ${asm.mode || 'assembly'} modules=${(asm.module_ids || []).join('+')}`);
+  }
+  box.textContent = lines.length ? lines.join(' · ') : '';
+}
+
 async function loadProjectDemo() {
   const btn = $('load-project');
   if (!btn) return;
@@ -486,6 +526,9 @@ async function loadProjectDemo() {
     });
     const cf = payload.cross_file || {};
     const mr = cf.merge_report || {};
+    renderProjectModules(payload);
+    renderProjectHarness(null);
+    renderProjectBom({});
     $('project-merge').textContent =
       `cross_file: nodes=${mr.nodes_solved || '?'} bars=${mr.bars || '?'} ` +
       `gussets=${mr.gussets_anchored || 0} synthetic_y=${mr.y_synthetic_side || 0}`;
@@ -518,15 +561,20 @@ async function deliverProjectDemo() {
       }),
     });
     const payload = await res.json();
-    if payload.ok) {
+    if (payload.ok) {
       $('status').textContent = 'Project 交付 ✓\n' + JSON.stringify(payload.mesh_stats || {}, null, 2);
       const mr = payload.merge_report || {};
       const ph = payload.project_harness || {};
       const inv = payload.bar_inventory || {};
       const phCounts = ph.counts || {};
+      renderProjectHarness(ph);
+      renderProjectBom(payload);
+      renderProjectModules(payload);
       $('project-merge').textContent =
         `交付完成：nodes=${mr.nodes_solved} bars=${mr.bars} GLB=${payload.glb_path}\n` +
-        `图册 Harness: ${JSON.stringify(phCounts)} | 件号索引 ${inv.total_unique_bar_ids || 0} 个` +
+        `图册 Harness: ${JSON.stringify(phCounts)} | 件号 ${inv.total_unique_bar_ids || 0} | ` +
+        `master BOM 冲突 ${(payload.bom_tree_summary || {}).conflict_count || 0}` +
+        (payload.assembly && payload.assembly.enabled ? ` | 装配 ${payload.assembly.mode}` : '') +
         (payload.harness_all_passed === false ? '（模型 Harness 待复核）' : '');
       if (payload.model_path) await renderBars(payload.model_path);
       if (payload.glb_path) loadGlb(payload.glb_path);

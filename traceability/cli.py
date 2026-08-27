@@ -452,6 +452,13 @@ def cmd_deliver_project(args):
     if inv:
         print(f"  bar_inv  -> unique={inv.get('total_unique_bar_ids')} "
               f"cross_sheet={inv.get('cross_sheet_count', 0)}")
+    bs = result.get("bom_tree_summary") or {}
+    if bs.get("master_bom_path"):
+        print(f"  master   -> conflicts={bs.get('conflict_count', 0)} "
+              f"physical_ids={len(result.get('physical_bar_counts') or {})}")
+    asm = result.get("assembly") or {}
+    if asm.get("enabled"):
+        print(f"  assembly -> mode={asm.get('mode')} modules={asm.get('module_ids')}")
     if not result.get("ok"):
         sys.exit(1)
 

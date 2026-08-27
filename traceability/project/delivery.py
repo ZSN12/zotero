@@ -2,6 +2,7 @@
 
 build-project → cross_file_batch → Harness → strict GLB → 交付 manifest。
 M7：图册级 Project Harness + 件号索引 + BOM 树汇总。
+M8：master BOM 物理件号核对 + 模块装配 demo + Web 工作台增强。
 """
 
 from __future__ import annotations
@@ -31,53 +32,28 @@ def _harness_summary(model: EngineeringModel) -> Dict[str, Any]:
     }
 
 
-def _try_module_assembly(
-    project: ProjectModel,
-    sheet_models: Dict[str, EngineeringModel],
-    overlay: Optional[str | Path | dict],
-) -> Optional[Dict[str, Any]]:
-    """多 module_id 且 overlay.enable_module_assembly 时尝试 Z 向拼装。"""
-    from ..intake.tower_spec import load_tower_spec
-    from .assembly import assemble_modules
-
-    ov = load_tower_spec(overlay) if overlay else {}
-    if not ov.get("enable_module_assembly"):
-        return None
-    modules = [
-        mid for mid, meta in project.modules.items()
-        if len(meta.get("sheets") or []) >= 1
-    ]
-    if len(modules) < 2:
-        return None
-
-    ordered: List[EngineeringModel] = []
-    for mid in sorted(modules):
-        stems = project.modules[mid].get("sheets") or []
-        for stem in stems:
-            m = sheet_models.get(stem)
-            if m is not None:
-                m.name = f"module-{mid}-{stem}"
-                ordered.append(m)
-                break
-    if len(ordered) < 2:
-        return None
-
-    solved_counts = [
-        sum(
-            1 for c in m.components.values()
-            if c.kind == "tower_node" and c.properties.get("solve_status") == "solved"
-        )
-        for m in ordered
-    ]
-    if any(n == 0 for n in solved_counts):
-        return None
-
-    merged, reports = assemble_modules(ordered, tol_mm=float(ov.get("assembly_tol_mm") or 10.0))
-    return {
-        "model": merged,
-        "reports": reports,
-        "module_ids": modules,
+def _write_project_artifacts(
+    out_dir: Path,
+    *,
+    bar_inventory: Dict[str, Any],
+    bom_tree: Dict[str, Any],
+    project_harness: Dict[str, Any],
+) -> Dict[str, str]:
+    paths = {
+        "bar_inventory": str(out_dir / "bar_inventory.json"),
+        "bom_tree": str(out_dir / "bom_tree.json"),
+        "project_harness": str(out_dir / "project_harness.json"),
     }
+    Path(paths["bar_inventory"]).write_text(
+        json.dumps(bar_inventory, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    Path(paths["bom_tree"]).write_text(
+        json.dumps(bom_tree, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    Path(paths["project_harness"]).write_text(
+        json.dumps(project_harness, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    return paths
 
 
 def deliver_project(
@@ -90,15 +66,24 @@ def deliver_project(
     export_glb: bool = True,
 ) -> Dict[str, Any]:
     """图册级交付：ProjectModel + cross_file 合并 + Harness + GLB + manifest。"""
-    from ..intake.tower_batch import cross_file_batch, intake_tower_batch
-    from ..intake.tower_spec import should_use_cross_file_merge
+    from ..intake.tower_batch import cross_file_batch, cross_file_bar_id_report, intake_tower_batch
+    from ..intake.tower_spec import load_tower_spec, should_use_cross_file_merge
     from ..io import load_model, save_model
     from ..solve.tower_solver import export_tower_glb, SolveError
+    from .bar_inventory import aggregate_bar_inventory
+    from .bom_tree import aggregate_bom_tree
+    from .harness import run_project_harness
+    from .module_build import physical_bar_counts, resolve_master_bom_path, try_assembly_from_merged
 
     input_dir = Path(input_dir)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     pid = project_id or input_dir.name
+    ov = load_tower_spec(layer_map_path) if layer_map_path else {}
+
+    resolved_bom = resolve_master_bom_path(input_dir, layer_map_path, bom_path)
+    if bom_path is None and resolved_bom:
+        bom_path = resolved_bom
 
     project = build_project_from_directory(
         input_dir,
@@ -108,6 +93,8 @@ def deliver_project(
     )
     if bom_path:
         project.metadata["master_bom_path"] = str(bom_path)
+    if ov.get("enable_module_assembly"):
+        project.metadata["module_assembly_requested"] = True
     project_path = save_project(project, out_dir / "project.json")
 
     sheet_models: Dict[str, EngineeringModel] = {}
@@ -121,40 +108,8 @@ def deliver_project(
             sheet_model_list.append(m)
             sheet_sources.append(sid)
 
-    from ..intake.tower_batch import cross_file_bar_id_report
-    from .bar_inventory import aggregate_bar_inventory
-    from .bom_tree import aggregate_bom_tree
-    from .harness import run_project_harness
-
-    bar_inventory = aggregate_bar_inventory(
-        sheet_model_list, model_sources=sheet_sources,
-    ) if sheet_model_list else {}
-    cross_sheet_bar_id = cross_file_bar_id_report(sheet_model_list) if sheet_model_list else {}
-    bom_tree = aggregate_bom_tree(
-        sheet_model_list,
-        master_bom_path=str(bom_path) if bom_path else None,
-        model_sources=sheet_sources,
-    ) if sheet_model_list else {}
-    project_harness = run_project_harness(
-        project,
-        sheet_models=sheet_models,
-        cross_sheet_bar_id=cross_sheet_bar_id,
-        bom_tree=bom_tree,
-        bar_inventory=bar_inventory,
-    )
-    (out_dir / "bar_inventory.json").write_text(
-        json.dumps(bar_inventory, ensure_ascii=False, indent=2), encoding="utf-8",
-    )
-    (out_dir / "bom_tree.json").write_text(
-        json.dumps(bom_tree, ensure_ascii=False, indent=2), encoding="utf-8",
-    )
-    (out_dir / "project_harness.json").write_text(
-        json.dumps(project_harness, ensure_ascii=False, indent=2), encoding="utf-8",
-    )
-
     cross_result: Optional[Dict[str, Any]] = None
     model_path: Optional[Path] = None
-    assembly_info: Optional[Dict[str, Any]] = None
 
     if should_use_cross_file_merge(layer_map_path):
         cross_result = cross_file_batch(
@@ -174,18 +129,52 @@ def deliver_project(
         if batch.get("model_path"):
             model_path = Path(batch["model_path"])
 
-    assembly_info = _try_module_assembly(project, sheet_models, layer_map_path)
-    if assembly_info and assembly_info.get("model"):
-        asm_path = out_dir / "assembly_model.json"
-        save_model(assembly_info["model"], asm_path)
-        assembly_info["model_path"] = str(asm_path)
-
     merged_model: Optional[EngineeringModel] = None
     if model_path and model_path.exists():
         merged_model = load_model(str(model_path))
 
+    physical_counts: Dict[str, int] = {}
+    if merged_model is not None:
+        physical_counts = physical_bar_counts(merged_model)
+
+    bar_inventory = aggregate_bar_inventory(
+        sheet_model_list, model_sources=sheet_sources,
+    ) if sheet_model_list else {}
+    cross_sheet_bar_id = cross_file_bar_id_report(sheet_model_list) if sheet_model_list else {}
+    bom_tree = aggregate_bom_tree(
+        sheet_model_list,
+        master_bom_path=str(bom_path) if bom_path else None,
+        model_sources=sheet_sources,
+        physical_bar_counts=physical_counts or None,
+    ) if sheet_model_list or physical_counts else {}
+
+    assembly_info: Optional[Dict[str, Any]] = None
+    if merged_model is not None:
+        assembly_info = try_assembly_from_merged(merged_model, layer_map_path)
+        if assembly_info and assembly_info.get("model"):
+            asm_path = out_dir / "assembly_model.json"
+            save_model(assembly_info["model"], asm_path)
+            assembly_info["model_path"] = str(asm_path)
+            assembly_info["enabled"] = True
+
+    project_harness = run_project_harness(
+        project,
+        sheet_models=sheet_models,
+        cross_sheet_bar_id=cross_sheet_bar_id,
+        bom_tree=bom_tree,
+        bar_inventory=bar_inventory,
+        assembly_info=assembly_info,
+    )
+    artifact_paths = _write_project_artifacts(
+        out_dir,
+        bar_inventory=bar_inventory,
+        bom_tree=bom_tree,
+        project_harness=project_harness,
+    )
+
     harness: Optional[Dict[str, Any]] = None
     glb_path: Optional[Path] = None
+    assembly_glb_path: Optional[Path] = None
     glb_error: Optional[str] = None
     mesh_stats: Dict[str, int] = {}
 
@@ -214,6 +203,13 @@ def deliver_project(
             except SolveError as exc:
                 glb_error = str(exc)
 
+        if export_glb and assembly_info and assembly_info.get("model"):
+            assembly_glb_path = out_dir / "assembly.glb"
+            try:
+                export_tower_glb(assembly_info["model"], assembly_glb_path, strict=False)
+            except Exception:
+                assembly_glb_path = None
+
     mr = (cross_result or {}).get("merge_report") or {}
     nodes_solved = int(mr.get("nodes_solved") or 0)
     glb_ok = (not export_glb) or (glb_path is not None and glb_path.exists() and not glb_error)
@@ -222,10 +218,12 @@ def deliver_project(
     delivery = {
         "ok": delivery_ok,
         "harness_all_passed": harness_all_passed,
+        "project_harness_all_passed": project_harness.get("all_passed"),
         "project_id": pid,
         "project_path": str(project_path),
         "model_path": str(model_path) if model_path else None,
         "glb_path": str(glb_path) if glb_path and glb_path.exists() else None,
+        "assembly_glb_path": str(assembly_glb_path) if assembly_glb_path and assembly_glb_path.exists() else None,
         "glb_error": glb_error,
         "mesh_stats": mesh_stats,
         "sheets": [sid for sid in project.sheets],
@@ -233,26 +231,29 @@ def deliver_project(
         "merge_report": mr,
         "harness": harness,
         "assembly": {
-            "enabled": assembly_info is not None,
+            "enabled": bool(assembly_info and assembly_info.get("enabled")),
+            "mode": (assembly_info or {}).get("mode"),
             "reports": (assembly_info or {}).get("reports"),
             "model_path": (assembly_info or {}).get("model_path"),
+            "module_ids": (assembly_info or {}).get("module_ids"),
         },
         "cross_file_batch_report": (cross_result or {}).get("batch_report"),
         "bar_inventory": bar_inventory,
+        "physical_bar_counts": physical_counts,
         "bom_tree_summary": {
             "total_unique_bar_ids": bom_tree.get("total_unique_bar_ids", 0),
             "conflict_count": bom_tree.get("conflict_count", 0),
+            "only_in_master": len(bom_tree.get("only_in_master") or []),
+            "only_in_model": len(bom_tree.get("only_in_model") or []),
+            "master_bom_path": str(bom_path) if bom_path else None,
         },
+        "bom_conflicts": (bom_tree.get("conflicts") or [])[:50],
         "cross_sheet_bar_id": {
             "duplicate_count": cross_sheet_bar_id.get("duplicate_count", 0),
             "cross_file_groups": (cross_sheet_bar_id.get("cross_file_groups") or [])[:20],
         },
         "project_harness": project_harness,
-        "artifact_paths": {
-            "bar_inventory": str(out_dir / "bar_inventory.json"),
-            "bom_tree": str(out_dir / "bom_tree.json"),
-            "project_harness": str(out_dir / "project_harness.json"),
-        },
+        "artifact_paths": artifact_paths,
     }
     manifest_path = out_dir / "project_delivery.json"
     manifest_path.write_text(json.dumps(delivery, ensure_ascii=False, indent=2), encoding="utf-8")

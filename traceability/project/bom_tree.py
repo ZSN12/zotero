@@ -49,17 +49,31 @@ def aggregate_bom_tree(
     *,
     master_bom_path: Optional[str] = None,
     model_sources: Optional[List[str]] = None,
+    physical_bar_counts: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
     """汇总多模型 BOM 行，按 bar_id 去重并核对数量。
 
+    physical_bar_counts：cross_file 合并模型的物理件号根数（M8），优先于 bom_row 汇总。
+
     返回 {
         tree: [BomTreeNode...],
-        conflicts: [{bar_id, qty_by_source, master_qty}],
+        conflicts: [{bar_id, aggregated_qty, master_qty, ...}],
         total_unique_bar_ids: int,
+        only_in_master: [...],
+        only_in_model: [...],
     }
     """
     by_id: Dict[str, BomTreeNode] = {}
     qty_by_source: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    if physical_bar_counts:
+        for bid, qty in physical_bar_counts.items():
+            by_id[bid] = BomTreeNode(
+                bar_id=bid,
+                qty=int(qty),
+                sources=["merged_model"],
+            )
+            qty_by_source[bid]["merged_model"] = int(qty)
 
     sources = model_sources or [m.name for m in models]
     for i, model in enumerate(models):
@@ -81,23 +95,45 @@ def aggregate_bom_tree(
             if src not in node.sources:
                 node.sources.append(src)
 
+    for bid, node in by_id.items():
+        if "merged_model" not in node.sources:
+            node.qty = sum(qty_by_source[bid].values())
+
     master: Dict[str, Dict] = {}
     if master_bom_path:
         for row in parse_bom_csv(master_bom_path):
             master[row["bar_id"]] = row
 
     conflicts: List[Dict[str, Any]] = []
+    only_in_master: List[str] = []
+    only_in_model: List[str] = []
     tree: List[BomTreeNode] = []
-    for bid, node in sorted(by_id.items()):
-        node.qty = sum(qty_by_source[bid].values())
+
+    compare_ids = set(by_id)
+    if physical_bar_counts:
+        compare_ids = set(physical_bar_counts)
+
+    if master:
+        for bid in sorted(master):
+            if bid not in compare_ids:
+                only_in_master.append(bid)
+        for bid in sorted(compare_ids):
+            if bid not in master:
+                only_in_model.append(bid)
+
+    for bid in sorted(by_id):
+        node = by_id[bid]
+        actual_qty = int(physical_bar_counts.get(bid, node.qty)) if physical_bar_counts else node.qty
+        node.qty = actual_qty
         if bid in master:
             mqty = int(master[bid].get("qty", 1))
-            if mqty != node.qty:
+            if mqty != actual_qty:
                 conflicts.append({
                     "bar_id": bid,
-                    "aggregated_qty": node.qty,
+                    "aggregated_qty": actual_qty,
                     "master_qty": mqty,
-                    "qty_by_source": dict(qty_by_source[bid]),
+                    "qty_by_source": dict(qty_by_source.get(bid, {})),
+                    "source": "merged_model" if physical_bar_counts else "sheet_bom_row",
                 })
             node.children.append(BomTreeNode(
                 bar_id=f"master:{bid}",
@@ -111,6 +147,10 @@ def aggregate_bom_tree(
     return {
         "tree": [n.to_dict() for n in tree],
         "conflicts": conflicts,
-        "total_unique_bar_ids": len(by_id),
+        "total_unique_bar_ids": len(by_id) if by_id else len(compare_ids),
         "conflict_count": len(conflicts),
+        "only_in_master": only_in_master,
+        "only_in_model": only_in_model,
+        "master_bom_path": master_bom_path,
+        "physical_qty_source": "merged_model" if physical_bar_counts else None,
     }
