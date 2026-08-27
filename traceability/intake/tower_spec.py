@@ -16,7 +16,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 _SPEC: Optional[dict] = None
 _SPEC_PATH: Optional[Path] = None
@@ -220,6 +220,43 @@ def cross_file_infer_side_stems(overlay: Optional[str | Path | dict] = None) -> 
     manifest = cross_file_view_manifest(overlay)
     stems = manifest.get("infer_side_on_stems") or []
     return [str(s) for s in stems] if isinstance(stems, list) else []
+
+
+def cross_file_synthetic_side_from_front(overlay: Optional[str | Path | dict] = None) -> bool:
+    manifest = cross_file_view_manifest(overlay)
+    return bool(manifest.get("synthetic_side_from_front"))
+
+
+def cross_file_plan_sheets(overlay: Optional[str | Path | dict] = None) -> List[Dict[str, Any]]:
+    """多 plan 分册：cross_file_views.plan_sheets 或 sheets.plan + view_align z_level。"""
+    manifest = cross_file_view_manifest(overlay)
+    raw = manifest.get("plan_sheets")
+    if isinstance(raw, list) and raw:
+        out: List[Dict[str, Any]] = []
+        for item in raw:
+            if isinstance(item, dict) and item.get("stem"):
+                out.append({
+                    "stem": str(item["stem"]),
+                    "z_level": float(item["z_level"]) if item.get("z_level") is not None else 0.0,
+                })
+        return out
+    sheets = manifest.get("sheets") or {}
+    align = manifest.get("view_align") or {}
+    plan_stem = sheets.get("plan") if isinstance(sheets, dict) else None
+    if not plan_stem:
+        return []
+    z_level = 0.0
+    for key, meta in align.items():
+        if isinstance(meta, dict) and str(key).endswith(":plan") and "z_level" in meta:
+            z_level = float(meta["z_level"])
+            break
+    return [{"stem": str(plan_stem), "z_level": z_level}]
+
+
+def cross_file_z_band_scale(overlay: Optional[str | Path | dict] = None) -> float:
+    manifest = cross_file_view_manifest(overlay)
+    val = manifest.get("z_band_scale")
+    return float(val) if val is not None else 4.0
 
 
 def assembly_split_min_gap_ratio(overlay: Optional[str | Path | dict] = None) -> float:

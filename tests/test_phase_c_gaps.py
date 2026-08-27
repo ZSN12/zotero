@@ -120,7 +120,7 @@ class CrossFileBatchTest(unittest.TestCase):
         mr = r.get("merge_report") or {}
         self.assertEqual(mr.get("nodes_solved"), len(front_nodes))
 
-    def test_cross_file_merge_report_has_derived_y(self):
+    def test_cross_file_merge_report_has_derived_y_or_synthetic(self):
         from traceability.intake.tower_batch import cross_file_batch
 
         d = EXAMPLES / "external" / "guowang_35A1"
@@ -128,13 +128,42 @@ class CrossFileBatchTest(unittest.TestCase):
             self.skipTest("国网目录不存在")
         with tempfile.TemporaryDirectory() as tmp:
             r = cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
+            from traceability.io import load_model
+            model = load_model(str(Path(tmp) / "model.json"))
         mr = r.get("merge_report") or {}
-        self.assertGreater(mr.get("nodes_derived_y", 0), 0)
+        df = model.components.get("drawing_file") or {}
+        props = df.properties if hasattr(df, "properties") else {}
+        self.assertTrue(
+            mr.get("nodes_derived_y", 0) > 0 or props.get("y_synthetic_side", 0) > 0,
+            "M5 synthetic side 或 M3 插值 y 应至少一种生效",
+        )
 
-    def test_cross_file_derived_y_pending_before_confirm(self):
+    def test_derived_y_gate_when_synthetic_disabled(self):
+        import json
         from traceability.intake.tower_batch import cross_file_batch
-        from traceability.harness.harness import run_harness
-        from traceability.intake.tower_pipeline import derived_y_pending_nodes
+        from traceability.intake.tower_pipeline import derived_y_pending_nodes, confirm_cross_file_derived_y
+        from traceability.solve.tower_solver import export_tower_glb, SolveError
+
+        d = EXAMPLES / "external" / "guowang_35A1"
+        if not d.exists():
+            self.skipTest("国网目录不存在")
+        overlay = json.loads(OVERLAY.read_text(encoding="utf-8"))
+        overlay["cross_file_views"]["synthetic_side_from_front"] = False
+        with tempfile.TemporaryDirectory() as tmp:
+            cross_file_batch(d, tmp, layer_map_path=overlay)
+            from traceability.io import load_model
+            model = load_model(str(Path(tmp) / "model.json"))
+            self.assertGreater(len(derived_y_pending_nodes(model)), 0)
+            with self.assertRaises(SolveError):
+                export_tower_glb(model, Path(tmp) / "x.glb", strict=True)
+            model = confirm_cross_file_derived_y(model)
+            try:
+                export_tower_glb(model, Path(tmp) / "ok.glb", strict=True, allow_derived_y=True)
+            except Exception as exc:
+                self.skipTest(f"trimesh: {exc}")
+
+    def test_m5_synthetic_side_recovers_y(self):
+        from traceability.intake.tower_batch import cross_file_batch
 
         d = EXAMPLES / "external" / "guowang_35A1"
         if not d.exists():
@@ -143,22 +172,19 @@ class CrossFileBatchTest(unittest.TestCase):
             cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
             from traceability.io import load_model
             model = load_model(str(Path(tmp) / "model.json"))
-        pending = derived_y_pending_nodes(model)
-        self.assertGreater(len(pending), 0)
-        for cid in pending:
-            p = model.components[cid].properties
-            self.assertEqual(p.get("y_origin"), "z_peer_interpolate")
-            self.assertEqual(p.get("y_review"), "pending")
-        results = {r.target_id: r for r in run_harness(model)}
-        self.assertIn("r_cross_file_y_derived", results)
-        self.assertEqual(results["r_cross_file_y_derived"].status.value, "pending")
-        self.assertEqual(results["r_node_fully_solved"].status.value, "pending")
+        df = model.components.get("drawing_file")
+        self.assertGreater(df.properties.get("synthetic_side_nodes", 0), 0)
+        self.assertGreater(df.properties.get("y_synthetic_side", 0), 0)
+        syn = [
+            c for c in model.components.values()
+            if c.kind == "tower_node" and c.properties.get("y_origin") == "synthetic_side_from_front"
+        ]
+        self.assertGreater(len(syn), 0)
 
     def test_confirm_derived_y_enables_strict_export(self):
         from traceability.intake.tower_batch import cross_file_batch
-        from traceability.intake.tower_pipeline import confirm_cross_file_derived_y
         from traceability.harness.harness import run_harness
-        from traceability.solve.tower_solver import export_tower_glb, solve_tower, SolveError
+        from traceability.solve.tower_solver import export_tower_glb, solve_tower
 
         d = EXAMPLES / "external" / "guowang_35A1"
         if not d.exists():
@@ -168,21 +194,16 @@ class CrossFileBatchTest(unittest.TestCase):
             from traceability.io import load_model
             model = load_model(str(Path(tmp) / "model.json"))
             _, problems = solve_tower(model)
-            self.assertTrue(any("插值" in p or "z-peer" in p for p in problems))
-            with self.assertRaises(SolveError):
-                export_tower_glb(model, Path(tmp) / "blocked.glb", strict=True)
-            model = confirm_cross_file_derived_y(model)
+            self.assertEqual(len(problems), 0, "M5 synthetic side 后应可直接 strict 求解")
             results = {r.target_id: r for r in run_harness(model)}
-            self.assertEqual(results["r_cross_file_y_derived"].status.value, "passed")
             self.assertEqual(results["r_node_fully_solved"].status.value, "passed")
-            _, problems2 = solve_tower(model, allow_derived_y=True)
-            self.assertFalse(any("插值" in p or "z-peer" in p for p in problems2))
             try:
-                export_tower_glb(
-                    model, Path(tmp) / "tower.glb", strict=True, allow_derived_y=True,
-                )
+                export_tower_glb(model, Path(tmp) / "tower.glb", strict=True)
             except Exception as exc:
-                self.skipTest(f"trimesh 不可用或导出失败: {exc}")
+                self.skipTest(f"trimesh 不可用: {exc}")
+            import trimesh
+            scene = trimesh.load(str(Path(tmp) / "tower.glb"), force="scene")
+            self.assertGreater(len(scene.geometry), 100)
 
     def test_cross_file_gusset_auto_anchored(self):
         from traceability.intake.tower_batch import cross_file_batch
@@ -411,6 +432,12 @@ class WebSecurityTest(unittest.TestCase):
 
         self.assertIsNone(_resolve_artifact("/artifacts/../etc/passwd"))
         self.assertIsNone(_resolve_artifact("/artifacts/foo/../../etc/passwd"))
+
+    def test_safe_repo_path_rejects_traversal(self):
+        from web.server import _safe_repo_path
+
+        self.assertIsNone(_safe_repo_path("../etc/passwd"))
+        self.assertIsNotNone(_safe_repo_path("examples/external/guowang_35A1"))
 
 
 if __name__ == "__main__":

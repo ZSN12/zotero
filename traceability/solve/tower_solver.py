@@ -434,6 +434,52 @@ def _section_radius(section: Optional[str]) -> float:
     return 25.0
 
 
+def _gusset_plate_mesh(polygon_global: List, thickness_mm: float):
+    """M5：节点板薄壳实体（polygon_global XY + 沿 Z 拉伸 thickness）。"""
+    import numpy as np
+    import trimesh
+
+    if len(polygon_global) < 3:
+        raise ValueError("polygon_global 不足 3 顶点")
+    pts = np.array([[float(p[0]), float(p[1]), float(p[2]) if len(p) > 2 else 0.0]
+                    for p in polygon_global], dtype=float)
+    z_base = float(np.mean(pts[:, 2]))
+    ring_2d = [(float(x), float(y)) for x, y in pts[:, :2]]
+    thickness = max(float(thickness_mm or 8.0), 1.0)
+    try:
+        from shapely.geometry import Polygon as ShapelyPolygon
+        poly = ShapelyPolygon(ring_2d)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        mesh = trimesh.creation.extrude_polygon(poly, height=thickness)
+    except Exception:
+        n = len(ring_2d)
+        verts = []
+        for x, y in ring_2d:
+            verts.append([x, y, z_base])
+        for x, y in ring_2d:
+            verts.append([x, y, z_base + thickness])
+        verts = np.array(verts, dtype=float)
+        faces = []
+        for i in range(n):
+            j = (i + 1) % n
+            a, b, c, d = i, j, n + j, n + i
+            faces.append([a, b, c])
+            faces.append([a, c, d])
+        for k in range(1, n - 1):
+            faces.append([0, k, k + 1])
+        for k in range(1, n - 1):
+            faces.append([n, n + k + 1, n + k])
+        mesh = trimesh.Trimesh(vertices=verts, faces=np.array(faces, dtype=int), process=True)
+    return mesh
+
+
+def _iter_gussets(model: EngineeringModel):
+    for cid, comp in model.components.items():
+        if comp.kind == "gusset_plate":
+            yield cid, comp
+
+
 def export_tower_glb(
     model: EngineeringModel,
     out_path: str | Path,
@@ -511,13 +557,31 @@ def export_tower_glb(
         meshes.append(mesh)
         mesh_meta.append(extras)
 
+    gusset_count = 0
+    for cid, gusset in _iter_gussets(model):
+        poly = gusset.properties.get("polygon_global") or []
+        if len(poly) < 3:
+            continue
+        thickness = gusset.properties.get("thickness_mm") or 8.0
+        try:
+            gmesh = _gusset_plate_mesh(poly, float(thickness))
+        except Exception:
+            continue
+        gmesh.visual.face_colors = [120, 120, 200, 220]
+        plate_id = str(gusset.properties.get("detail_id") or cid)
+        extras = {"bar_id": f"gusset_{plate_id}", "component_id": cid, "kind": "gusset_plate"}
+        gmesh.metadata = dict(extras)
+        meshes.append(gmesh)
+        mesh_meta.append(extras)
+        gusset_count += 1
+
     if not meshes:
         raise SolveError("没有可实体化的杆件（请先完成跨视图合并 --merge）")
 
-    # E4：严格模式下导出杆件数必须等于模型杆件数，不允许静默丢杆件
+    # E4：严格模式下导出杆件数必须等于模型杆件数（节点板不计入杆件数）
     if strict and skipped:
         raise SolveError(
-            f"GLB 导出杆件数与模型不一致：{len(meshes)}/{total_bars}，"
+            f"GLB 导出杆件数与模型不一致：{len(meshes) - gusset_count}/{total_bars}，"
             f"跳过 {len(skipped)} 根：{skipped[:5]}"
         )
 

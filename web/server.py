@@ -214,6 +214,74 @@ def export_glb_model(
     }
 
 
+def _safe_repo_path(rel: str) -> Optional[Path]:
+    """只允许访问仓库内相对路径（Demo 预置样例）。"""
+    if not rel or ".." in rel.split("/"):
+        return None
+    target = (REPO / rel).resolve()
+    if not str(target).startswith(str(REPO.resolve())):
+        return None
+    return target
+
+
+def build_project_demo(
+    input_rel: str,
+    *,
+    layer_map_rel: Optional[str] = None,
+    reviewer: str = "web_user",
+) -> dict:
+    from traceability.project.model import build_project_from_directory, save_project
+    from traceability.intake.tower_batch import cross_file_batch
+
+    input_dir = _safe_repo_path(input_rel)
+    if input_dir is None or not input_dir.is_dir():
+        return {"ok": False, "error": "input_dir 无效或越界"}
+    layer_map = _safe_repo_path(layer_map_rel) if layer_map_rel else None
+    out_dir = Path(tempfile.gettempdir()) / f"tower-project-{uuid.uuid4().hex[:8]}"
+    project = build_project_from_directory(
+        input_dir,
+        project_id=input_dir.name,
+        layer_map_path=str(layer_map) if layer_map else None,
+        out_dir=out_dir,
+    )
+    project_path = out_dir / "project.json"
+    save_project(project, project_path)
+
+    cross = None
+    if layer_map and layer_map.exists():
+        cross_out = out_dir / "cross_file"
+        cross_out.mkdir(parents=True, exist_ok=True)
+        cross = cross_file_batch(input_dir, cross_out, layer_map_path=str(layer_map))
+
+    sheets = [
+        {
+            "sheet_id": s.sheet_id,
+            "kind": s.kind,
+            "view_kinds": s.view_kinds,
+            "evidence_count": s.evidence_count,
+            "model_path": _public_path(s.model_path) if s.model_path else None,
+        }
+        for s in project.sheets.values()
+    ]
+    _audit("build_project", reviewer=reviewer, project=str(project_path), sheets=len(sheets))
+    payload = {
+        "ok": True,
+        "project_path": _public_path(str(project_path)),
+        "project_id": project.project_id,
+        "sheets": sheets,
+        "modules": project.modules,
+        "out_dir": _public_path(str(out_dir)),
+    }
+    if cross:
+        mr = cross.get("merge_report") or {}
+        payload["cross_file"] = {
+            "model_path": _public_path(cross.get("model_path") or ""),
+            "merge_report": mr,
+            "batch_report": _public_path(cross.get("batch_report") or ""),
+        }
+    return payload
+
+
 def _public_path(path: str | None) -> str | None:
     if not path:
         return None
@@ -332,6 +400,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(code, payload)
             except Exception as exc:
                 _audit("export_glb_error", error=str(exc))
+                self._send(500, {"ok": False, "error": str(exc)})
+            return
+
+        if self.path == "/api/build-project":
+            try:
+                payload = build_project_demo(
+                    data.get("input_dir") or "examples/external/guowang_35A1",
+                    layer_map_rel=data.get("layer_map") or "examples/external/guowang_35A1/layer_overlay.json",
+                    reviewer=data.get("reviewer") or "web_user",
+                )
+                code = 200 if payload.get("ok") else 400
+                self._send(code, payload)
+            except Exception as exc:
+                _audit("build_project_error", error=str(exc))
                 self._send(500, {"ok": False, "error": str(exc)})
             return
 

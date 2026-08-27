@@ -82,8 +82,9 @@ if ns <= 0:
     print(f"FAIL: guowang cross_file nodes_solved={ns} <= 0")
     sys.exit(1)
 ndy = mr.get("nodes_derived_y", 0)
-if ndy <= 0:
-    print(f"FAIL: guowang cross_file nodes_derived_y={ndy} <= 0（应有 z-peer 插值 y）")
+ysyn = (json.load(open(sys.argv[2], encoding="utf-8")).get("components", {}).get("drawing_file", {}).get("properties") or {}).get("y_synthetic_side", 0)
+if ndy <= 0 and not ysyn:
+    print(f"FAIL: nodes_derived_y={ndy} 且 y_synthetic_side=0（应有插值 y 或 synthetic side 恢复）")
     sys.exit(1)
 front_nodes = [c for c in model.get("components", {}).values() if c.get("kind") == "tower_node" and (c.get("properties") or {}).get("view_type") == "front"]
 if front_nodes and ns < len(front_nodes):
@@ -101,16 +102,15 @@ if not bolt:
 print(f"PASS: nodes_solved={ns}/{len(front_nodes) or '?'}, derived_y={ndy}, gusset_rules={len(gusset)}, bolt_rules={len(bolt)}")
 PYEOF
 
-echo "==> [3b/5] guowang strict GLB（confirm-derived-y → export）"
+echo "==> [3b/5] guowang strict GLB（M5 synthetic side 直出）"
 "$PY" -m traceability.cli cross-file-batch \
   examples/external/guowang_35A1/ \
   --layer-map examples/external/guowang_35A1/layer_overlay.json \
   --out-dir "$OUT/guowang-glb" >/dev/null
-"$PY" -m traceability.cli confirm-derived-y "$OUT/guowang-glb/model.json"
 "$PY" -m traceability.cli solve-tower "$OUT/guowang-glb/model.json" \
-  --format glb --out "$OUT/guowang-glb/tower.glb" --allow-derived-y >/dev/null
+  --format glb --out "$OUT/guowang-glb/tower.glb" >/dev/null
 test -s "$OUT/guowang-glb/tower.glb" || { echo "FAIL: guowang strict GLB 未生成"; exit 1; }
-echo "PASS: guowang strict GLB $(wc -c < "$OUT/guowang-glb/tower.glb") bytes"
+echo "PASS: guowang strict GLB $(wc -c < "$OUT/guowang-glb/tower.glb") bytes (bars+gusset)"
 
 echo "==> [4/5] examples/clear/ 扫描批量（3 view_type + merged model）"
 "$PY" -m traceability.cli run-tower examples/clear/ \

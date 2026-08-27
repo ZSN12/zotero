@@ -85,6 +85,7 @@ def anchor_gusset_to_node(
 
     tdict = dict(gusset.properties.get("transform") or {})
     transform = _transform_from_dict(tdict)
+    transform.origin_local = (0.0, 0.0)
     transform = anchor_transform(
         transform,
         (float(nx), float(ny), float(nz)),

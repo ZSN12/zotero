@@ -347,6 +347,15 @@ def cross_file_batch(
             and c.properties.get("solve_status") == "verified"
             and c.properties.get("polygon_global")
         )
+        df = merged.components.get("drawing_file")
+        if df is not None:
+            merge_report["y_synthetic_side"] = df.properties.get("y_synthetic_side", 0)
+            merge_report["synthetic_side_nodes"] = df.properties.get("synthetic_side_nodes", 0)
+            merge_report["nodes_derived_y"] = sum(
+                1 for c in merged.components.values()
+                if c.kind == "tower_node"
+                and c.properties.get("y_origin") == "z_peer_interpolate"
+            )
     elif len(models) == 1:
         merged = finalize_tower_model(
             models[0], bom_path=bom_path, merge=True, layer_map_path=layer_map_path,

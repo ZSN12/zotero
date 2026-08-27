@@ -450,6 +450,58 @@ $('run').onclick = run;
 $('confirm-scan').onclick = confirmScan;
 $('confirm-derived-y').onclick = confirmDerivedY;
 $('export-glb').onclick = exportGlb;
+
+async function loadProjectDemo() {
+  const btn = $('load-project');
+  if (!btn) return;
+  btn.disabled = true;
+  $('project-sheets').textContent = '加载中…';
+  try {
+    const res = await fetch('/api/build-project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input_dir: 'examples/external/guowang_35A1',
+        layer_map: 'examples/external/guowang_35A1/layer_overlay.json',
+      }),
+    });
+    const payload = await res.json();
+    if (!payload.ok) {
+      $('project-sheets').textContent = '失败：' + (payload.error || '未知');
+      return;
+    }
+    const box = $('project-sheets');
+    box.innerHTML = (payload.sheets || []).map((s) =>
+      `<div class="project-sheet-row" data-model="${s.model_path || ''}">` +
+      `<b>${s.sheet_id}</b> · ${s.kind} · views=${(s.view_kinds || []).join(',')}` +
+      ` · evidence=${s.evidence_count}</div>`,
+    ).join('');
+    box.querySelectorAll('.project-sheet-row').forEach((el) => {
+      el.onclick = async () => {
+        box.querySelectorAll('.project-sheet-row').forEach((x) => x.classList.remove('active'));
+        el.classList.add('active');
+        const mp = el.dataset.model;
+        if (mp) await renderBars(mp);
+      };
+    });
+    const cf = payload.cross_file || {};
+    const mr = cf.merge_report || {};
+    $('project-merge').textContent =
+      `cross_file: nodes=${mr.nodes_solved || '?'} bars=${mr.bars || '?'} ` +
+      `gussets=${mr.gussets_anchored || 0} synthetic_y=${mr.y_synthetic_side || 0}`;
+    if (cf.model_path) {
+      await renderBars(cf.model_path);
+      await exportGlb();
+    }
+    await loadAuditLog();
+  } catch (e) {
+    $('project-sheets').textContent = '请求失败：' + e;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$('load-project').onclick = loadProjectDemo;
 initViewer();
 loadAuditLog();
 
