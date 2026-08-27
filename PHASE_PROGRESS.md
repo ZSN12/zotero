@@ -1,6 +1,47 @@
 # 铁塔管线推进记录（防丢失）
 
-> 只记录「已落地 + 已验证」的步骤。当前进度：P0 ✅ / P1 ✅ / P2 基本 ✅ / Phase 4 进行中。
+> 只记录「已落地 + 已验证」的步骤。当前进度：P0 ✅ / P1 ✅ / P2 基本 ✅ / Phase 4 进行中 / **Phase A ✅ Phase B ✅ Phase C–F 待 Cursor**。
+
+## 路线图当前状态（Phase A–F，交接给 Cursor）
+
+| Phase | 目标 | 状态 | 落地 commit |
+|---|---|---|---|
+| **A** | 验收与基线（acceptance 脚本 / `--with-mllm` 门禁 / `MLLM_MAX_IMAGE_EDGE=2048` 统一 / 交付说明） | ✅ 完成 | `dcb6244` |
+| **B** | 扫描链质量：B1 霍夫降噪 / B2 双指标 / B3 比例尺标定 / B4 OCR 兜底 | ✅ 完成 | `33b3d8c` |
+| **C** | 线重绘栅格预处理 `preprocess_for_scan` + 基准评测 | ⏳ 待 Cursor | — |
+| **D** | 多视图 DWG 扩展（闲鱼数据集）+ `cross_file_batch` 视图模式 | ⏳ 待 Cursor | — |
+| **E** | Web 工作台扩展（3D/2D 双向选择、审计日志、人工扫描确认） | ⏳ 待 Cursor | — |
+| **F** | 长期：ProjectModel + 领域 VLM 微调 | ⏳ 待 Cursor | — |
+
+### Phase B 落地明细（commit `33b3d8c`）
+
+| 项 | 内容 | 文件 |
+|---|---|---|
+| B1 | `filter_frame_and_edge_segments` 过滤图框长线/贴边线段（几何判定，不接节点 degree） | `intake/tower_layout.py` |
+| B2 | A3 双指标 `association_rate` + `label_hit_rate`，高霍夫噪声时改用件号命中率作闸门 | `intake/tower_agent_pipeline.py` |
+| B3 | `scale`/`mm_per_px` 标定接入 A0，写入 `scale_mm_per_px` + `scale_origin`（derived/placeholder） | `intake/tower_agent_pipeline.py` |
+| B4 | Tesseract OCR 兜底 `_ocr_labels_from_tesseract`，无 MLLM API 或 0 字时确定性兜底，绝不猜编号；`--no-ocr-fallback` CLI 开关 | `intake/tower_agent_pipeline.py` / `harness/tower_harness.py` / `cli.py` |
+
+### 交接协议（Cursor 云端改完 → 本地拉取续做）
+
+> 仓库纯 git 工作流，Cursor 在云端 push 后，本地可直接拉取继续。步骤：
+
+```bash
+# 1. 拉取 Cursor 在远程（https://github.com/ZSN12/zotero）的更新
+git pull origin main
+
+# 2. 验收没退化（一条命令证「没退化」）
+bash scripts/acceptance.sh              # 全绿：110kv 5/5 + 国网 ≥50% + clear 三 view_type + pytest
+bash scripts/acceptance.sh --with-mllm  # 可选：追加 Kimi 门禁（需 KIMI_API_KEY）
+
+# 3. 全量单测
+python3 -m pytest tests -q              # 当前基线 103 passed
+```
+
+- 冲突按普通 git 处理；若 Cursor 在独立分支 push，改拉对应分支或先 `git fetch` 对齐。
+- 续做时先跑上面验收命令确认无回归，再继续 Phase C–F。
+
+---
 
 ## 当前状态一句话
 
@@ -8,7 +49,8 @@
 五条验证规则 5 passed，与金标准偏差 max=0.011mm（验收限 <2%）。
 Phase 4 扫描图最小可用版已落地（版面分析 + 霍夫线检测 + 端点聚类），
 并在 P1 完成无 DXF 扫描图的 A0→A4 多 Agent 编排（每步可审计 + Harness 闸门）。
-测试 90 项全绿。
+Phase B 扫描链质量四项（B1 霍夫降噪 / B2 双指标 / B3 比例尺 / B4 OCR 兜底）已落地。
+测试 103 项全绿。
 
 ---
 
