@@ -368,6 +368,7 @@ def cmd_run_tower(args):
         scale=args.scale,
         mm_per_px=args.mm_per_px,
         input_dir=getattr(args, "input_dir", None),
+        use_ocr_fallback=not getattr(args, "no_ocr_fallback", False),
     )
     if result.get("ok"):
         print("✓ 全链完成")
@@ -606,6 +607,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--format", choices=["obj", "glb"], default="glb")
     p_run.add_argument("--scale", help="扫描图比例尺")
     p_run.add_argument("--mm-per-px", type=float, help="扫描图 mm/px")
+    p_run.add_argument("--no-ocr-fallback", action="store_true",
+                       help="扫描图 A1 件号 OCR 不用 Tesseract 兜底（B4，默认启用兜底）")
     p_run.add_argument("--input-dir", help="批量模式：目录内全部 DWG/DXF（A3）")
     p_run.set_defaults(func=cmd_run_tower)
 

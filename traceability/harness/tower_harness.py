@@ -145,6 +145,7 @@ def run_tower(
     mm_per_px: Optional[float] = None,
     input_dir: Optional[str | Path] = None,
     mllm: Optional[Any] = None,
+    use_ocr_fallback: bool = True,
 ) -> Dict[str, Any]:
     """一步命令跑完全链：intake → compile → cross_check → verify → retry → export。
 
@@ -178,6 +179,8 @@ def run_tower(
             from ..intake.tower_agent_pipeline import run_tower_agent_pipeline
             return run_tower_agent_pipeline(
                 source, out_dir, mllm=mllm,
+                scale=scale, mm_per_px=mm_per_px,
+                use_ocr_fallback=use_ocr_fallback,
             )
     else:
         # P1-2：目录识别 —— 全是位图/PDF 走扫描批量，DWG 走现有 batch

@@ -438,6 +438,101 @@ def filter_noise_segments(
     return keep, removed
 
 
+# Phase B1：图框 / 贴边过滤参数。
+# 图框长线：一条近水平/竖直的线段，长度占整图相应边长超过此比例即视为图框/边框。
+FRAME_LONG_FRACTION = 0.6
+# 贴边线段：线段两端（或中点）都贴近图像边缘（< 此比例）视为贴边噪声（图框/裁切边界）。
+EDGE_MARGIN_FRACTION = 0.02
+
+
+def filter_frame_and_edge_segments(
+    segments: List[Tuple[float, float, float, float]],
+    width: int,
+    height: int,
+    long_fraction: float = FRAME_LONG_FRACTION,
+    edge_fraction: float = EDGE_MARGIN_FRACTION,
+) -> Tuple[List[Tuple[float, float, float, float]], List[Dict]]:
+    """Phase B1 图框/贴边降噪：过滤图框长线与贴边线段。
+
+    国网扫描图常有整张图框（外边框）、裁切边界残线，被霍夫检测成一条
+    超长近水平/竖直直线，污染 A2 杆件数（拉低 labeled/bars 关联率）。
+
+    规则：
+        * 图框长线：近水平且长度 ≥ 图宽 * long_fraction，或近竖直且长度 ≥
+          图高 * long_fraction —— 视为图框/边框，过滤。
+        * 贴边线段：线段两端都落在图像边缘 margin 内（edge_fraction * 边长），
+          或线段沿边方向贴边跑 —— 视为裁切残线/边框，过滤。
+
+    返回 (保留的线段, 被过滤线段清单)。不接节点 degree 判断，纯几何判定，
+    避免把真实贯通主材误杀。
+    """
+    def near_hv(seg):
+        dx, dy = seg[2] - seg[0], seg[3] - seg[1]
+        length = math.hypot(dx, dy) or 1.0
+        cos_x = abs(dx) / length
+        cos_y = abs(dy) / length
+        return cos_x > math.cos(math.radians(10.0)), cos_y > math.cos(math.radians(10.0))
+
+    margin_x = width * edge_fraction
+    margin_y = height * edge_fraction
+
+    def near_left(x):
+        return -margin_x <= x <= margin_x
+
+    def near_right(x):
+        return width - margin_x <= x <= width + margin_x
+
+    def near_top(y):
+        return -margin_y <= y <= margin_y
+
+    def near_bottom(y):
+        return height - margin_y <= y <= height + margin_y
+
+    def runs_along_border(seg):
+        """线段是否「贴边跑」：近水平且贴近上/下边，或近竖直且贴近左/右边。
+
+        关键区分：铁塔主材腿会贯穿整图（竖直，x 在内部，y 从 0 到 height），
+        这是真实杆件；图框边框是「沿边跑」的线（水平线贴在上/下边，或竖直线
+        贴在左/右边）。因此只过滤「沿边方向贴近边框」的线，不误杀贯穿主材。
+
+        注意：边界判定用「区间」而非单边 `<=`——霍夫可能把线段延伸到画布外
+        几像素（x 略负），负得多的（如 -500）是真实斜材的延伸，不应算贴边。
+        """
+        x1, y1, x2, y2 = seg
+        ymid = (y1 + y2) / 2
+        xmid = (x1 + x2) / 2
+        is_h, is_v = near_hv(seg)
+        if is_h and (near_top(ymid) or near_bottom(ymid)):
+            return True
+        if is_v and (near_left(xmid) or near_right(xmid)):
+            return True
+        return False
+
+    keep: List[Tuple[float, float, float, float]] = []
+    removed: List[Dict] = []
+    for seg in segments:
+        x1, y1, x2, y2 = seg
+        length = math.hypot(x2 - x1, y2 - y1)
+        is_h, is_v = near_hv(seg)
+
+        # 图框长线：近水平超宽 / 近竖直超高
+        if is_h and length >= width * long_fraction:
+            removed.append({"segment": seg, "reason": "图框水平长线"})
+            continue
+        if is_v and length >= height * long_fraction:
+            removed.append({"segment": seg, "reason": "图框竖直长线"})
+            continue
+
+        # 贴边线段：沿边方向贴近上/下/左/右边框（图框边框/裁切残线），
+        # 且非斜材。贯穿整图的主材腿（竖直 x 在内部）不在此列。
+        if runs_along_border(seg) and (is_h or is_v):
+            removed.append({"segment": seg, "reason": "贴边线段"})
+            continue
+
+        keep.append(seg)
+    return keep, removed
+
+
 def _detect_scale_text(text: str) -> Optional[float]:
     """从 OCR 文本识别比例尺标注（如 `1:50` / `SCALE 1:100` / `比例 1:100`）。"""
     if not text:

@@ -116,6 +116,40 @@ class A3AssociationTest(unittest.TestCase):
         self.assertEqual(result["labeled"], 1)
         self.assertEqual(result["assignments"][0]["bar_id"], "M0001")
 
+    def test_ocr_fallback_converts_tesseract_boxes_to_labels(self):
+        """B4：Tesseract 文本框 -> A3 label 格式（件号正则过滤 + 视图归属）。"""
+        import traceability.intake.tower_agent_pipeline as tap
+        import traceability.intake.tower_layout as tl
+
+        boxes = [
+            {"text": "M0001", "bbox": [100.0, 200.0, 120.0, 220.0]},
+            {"text": "Q345", "bbox": [100.0, 200.0, 120.0, 220.0]},  # 材质排除
+            {"text": "G01", "bbox": [300.0, 400.0, 320.0, 420.0]},
+            {"text": "2M16X50", "bbox": [100.0, 200.0, 120.0, 220.0]},  # 螺栓排除
+        ]
+        orig_ocr_boxes = tl._ocr_boxes
+        tl._ocr_boxes = lambda p: boxes
+        try:
+            views = [{"view_id": "v0", "view_type": "front", "bbox": [0, 0, 500, 500]}]
+            labels = tap._ocr_labels_from_tesseract("x.png", views)
+        finally:
+            tl._ocr_boxes = orig_ocr_boxes
+
+        self.assertEqual(len(labels), 2)  # M0001 + G01；Q345/螺栓被排除
+        self.assertEqual({l["bar_id"] for l in labels}, {"M0001", "G01"})
+        self.assertTrue(all(l["ocr_source"] == "tesseract" for l in labels))
+        # 中心点 = bbox 中心
+        m1 = next(l for l in labels if l["bar_id"] == "M0001")
+        self.assertEqual((m1["x_px"], m1["y_px"]), (110.0, 210.0))
+        # view 归属：落在 view bbox 内 -> front
+        self.assertTrue(all(l["view"] == "front" for l in labels))
+
+    def test_ocr_fallback_returns_empty_without_tesseract(self):
+        """B4：pytesseract 不可用时兜底返回空列表（绝不猜编号）。"""
+        from traceability.intake.tower_agent_pipeline import _ocr_labels_from_tesseract
+        labels = _ocr_labels_from_tesseract("__nonexistent__.png", [])
+        self.assertEqual(labels, [])
+
 
 @unittest.skipUnless(_cv2_available(), "opencv-python 未安装")
 class LayoutRegionTest(unittest.TestCase):

@@ -41,6 +41,7 @@ from .tower_layout import (
     _load_image,
     _merge_collinear,
     filter_noise_segments,
+    filter_frame_and_edge_segments,
     layout_views_from_regions,
 )
 
@@ -150,8 +151,13 @@ def _detect_geometry(image_path: str, filter_noise: bool = True) -> Tuple[List[D
         if math.hypot(seg[2] - seg[0], seg[3] - seg[1]) >= MIN_BAR_PX
     ]
     removed: List[Dict] = []
+    # B1：先过滤图框长线 / 贴边线段（几何判定，不接节点 degree），再过滤孤立短噪声。
+    h, w = gray.shape[:2]
+    merged, frame_removed = filter_frame_and_edge_segments(merged, w, h)
+    removed.extend(frame_removed)
     if filter_noise:
-        merged, removed = filter_noise_segments(merged)
+        merged, noise_removed = filter_noise_segments(merged)
+        removed.extend(noise_removed)
 
     bars: List[Dict[str, Any]] = []
     for i, seg in enumerate(merged, start=1):
@@ -225,6 +231,65 @@ def _labels_to_full_image(
         lab["view"] = lab.get("view") or view_id
         out.append(lab)
     return out
+
+
+def _ocr_labels_from_tesseract(
+    image_path: str,
+    views: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """B4：A1 无 API / 0 字时的 Tesseract OCR 确定性兜底。
+
+    用 pytesseract image_to_data 在整图上产文本框，把命中件号正则的文本
+    转成 A3 期望的 label 格式（text / bar_id / x_px / y_px / view）。
+
+    与 VLM 坐标不同：Tesseract 直接跑在整图上，bbox 即整图像素坐标，
+    无需 _labels_to_full_image 的缩放/偏移还原。因此只取文本框中心作为
+    (x_px, y_px)，并按中心落在哪个 view bbox 内打 view_type（供 A3 同
+    view 过滤）。
+
+    未安装 pytesseract / tesseract 时返回空列表（绝不猜编号）。
+    """
+    from .tower_layout import _ocr_boxes
+
+    boxes = _ocr_boxes(image_path)
+    if not boxes:
+        return []
+
+    bar_id_re = _compile_bar_id_re()
+
+    # 有真实语义 bbox 的视图（whole_sheet 不参与归属）
+    bbox_views = [v for v in views
+                  if v.get("bbox") and v.get("view_id") != "whole_sheet"]
+
+    def _view_of(x: float, y: float) -> Optional[str]:
+        for v in bbox_views:
+            x0, y0, x1, y1 = [int(c) for c in v["bbox"]]
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                return v.get("view_type")
+        return None
+
+    labels: List[Dict[str, Any]] = []
+    for box in boxes:
+        text = (box.get("text") or "").strip()
+        if not text:
+            continue
+        bar_id = _extract_bar_label(text, bar_id_re)
+        if not bar_id:
+            continue
+        bbox = box.get("bbox")
+        if not bbox or len(bbox) != 4:
+            continue
+        cx = (float(bbox[0]) + float(bbox[2])) / 2.0
+        cy = (float(bbox[1]) + float(bbox[3])) / 2.0
+        labels.append({
+            "text": text,
+            "bar_id": bar_id,
+            "x_px": round(cx, 2),
+            "y_px": round(cy, 2),
+            "view": _view_of(cx, cy),
+            "ocr_source": "tesseract",
+        })
+    return labels
 
 
 def _associate_labels(
@@ -304,6 +369,14 @@ def _associate_labels(
     labeled = [a for a in assignments if not str(a["bar_id"]).startswith("UNLABELED")]
     rate = round(len(labeled) / len(assignments), 4) if assignments else 0.0
 
+    # B2 双指标：
+    #   * labeled/bars           = 已贴号杆件 / 全部候选杆（受霍夫噪声影响，基数虚高时偏低）
+    #   * labeled_labels/ocr_labels = 命中杆件的件号 / 合法件号总数（OCR 视角的命中率，
+    #     霍夫噪声多时更能反映「件号有没有成功贴对杆」）
+    ocr_labels = len(legal)
+    labeled_labels = len(used_labels)
+    label_hit_rate = round(labeled_labels / ocr_labels, 4) if ocr_labels else 0.0
+
     # 重复件号组数（同一 bar_id 贴了多根杆）
     from collections import defaultdict
     by_id: Dict[str, List[str]] = defaultdict(list)
@@ -316,6 +389,10 @@ def _associate_labels(
         "labeled": len(labeled),
         "bars": len(assignments),
         "association_rate": rate,
+        # B2 双指标
+        "labeled_labels": labeled_labels,
+        "ocr_labels": ocr_labels,
+        "label_hit_rate": label_hit_rate,
         "duplicate_bar_id_groups": len(duplicate_groups),
         "duplicate_bar_id_detail": [
             {"bar_id": k, "count": len(v), "bar_uids": v}
@@ -460,6 +537,9 @@ def run_tower_agent_pipeline(
     filter_noise: bool = True,
     label_snap_px: float = LABEL_SNAP_PX,
     min_association_rate: float = MIN_ASSOCIATION_RATE,
+    scale: Optional[str | float] = None,
+    mm_per_px: Optional[float] = None,
+    use_ocr_fallback: bool = True,
 ) -> Dict[str, Any]:
     """无 DXF 扫描图主路径：A0 版面 → A1 件号 → A2 几何 → A3 关联 → A4 编译验证。
 
@@ -502,10 +582,22 @@ def run_tower_agent_pipeline(
             if view_meta.get("z_level") is not None:
                 v["z_level"] = view_meta["z_level"]
             v["title"] = view_meta.get("title")
+        # B3 比例尺标定：--scale / OCR 比例尺 / --mm-per-px → scale_mm_per_px
+        # 写入每个 view（进而写入 model 的 drawing_view），未标定保持 placeholder。
+        if scale is not None or mm_per_px is not None:
+            from .tower_layout import calibrate_scale
+            cal = calibrate_scale(str(source), scale=scale, mm_per_px=mm_per_px)
+            scale_mm = cal.get("mm_per_px")
+            # B3：标定成功（mm_per_px 非 None）→ derived；未标定 → placeholder
+            scale_origin = "derived" if scale_mm is not None else "placeholder"
+            for v in views:
+                v["scale_mm_per_px"] = scale_mm
+                v["scale_origin"] = scale_origin
         graph.finish(drawing_views=len(views), whole_sheet=whole_sheet,
                      regions=len(regions), method="tower_layout",
                      view_type=view_meta.get("view_type"),
-                     parse_bars=view_meta.get("parse_bars", True))
+                     parse_bars=view_meta.get("parse_bars", True),
+                     scale_mm_per_px=(views[0].get("scale_mm_per_px") if views else None))
     except Exception as exc:
         graph.fail(str(exc))
 
@@ -514,13 +606,29 @@ def run_tower_agent_pipeline(
     # A4 只记 metadata。否则单文件 run-tower tower_bom_hd.png 仍会误跑 A2。
     parse_bars = bool(view_meta.get("parse_bars", True))
 
-    # ---------------- A1 件号 OCR（VLM/MLLM） ----------------
+    # ---------------- A1 件号 OCR（VLM/MLLM，B4：Tesseract 兜底） ----------------
     mllm_backend = mllm or MLLMBackend()
     if not parse_bars:
         graph.skip("a1_labels", "件号 OCR（A1）", "parse_bars=False（bom/节点大样），跳过件号 OCR")
     elif not mllm_backend.available():
-        graph.skip("a1_labels", "件号 OCR（A1）",
-                   "无 MLLM API，跳过件号 OCR（A3 只依赖 A2，全 UNLABELED）")
+        # B4：无 MLLM API 时不再直接跳过——先尝试 Tesseract 确定性 OCR 兜底，
+        # 拿到件号就进 A3 关联，拿不到才标 skip（A3 只依赖 A2，全 UNLABELED）。
+        if use_ocr_fallback:
+            try:
+                labels = _ocr_labels_from_tesseract(str(source), views)
+            except Exception as exc:
+                labels = []
+                warnings = [f"Tesseract 兜底失败：{exc}"]
+            if labels:
+                graph.start("a1_labels", "件号 OCR（A1·Tesseract 兜底）", input=str(source))
+                graph.finish(labels=len(labels), method="tesseract",
+                             note="无 MLLM API，Tesseract 确定性 OCR 兜底")
+            else:
+                graph.skip("a1_labels", "件号 OCR（A1）",
+                           "无 MLLM API 且 Tesseract 未识别到件号（A3 只依赖 A2，全 UNLABELED）")
+        else:
+            graph.skip("a1_labels", "件号 OCR（A1）",
+                       "无 MLLM API，跳过件号 OCR（A3 只依赖 A2，全 UNLABELED）")
     else:
         graph.start("a1_labels", "件号 OCR（A1）", input=str(source))
         failed_calls = 0
@@ -578,6 +686,22 @@ def run_tower_agent_pipeline(
                           labels=0, failed_calls=failed_calls,
                           warnings=warnings[:20], **mllm_detail)
 
+    # B4：MLLM 可用但 A1 没读回任何件号（0 字 / 全失败 / 全 UNLABELED）时，
+    # 用 Tesseract 确定性 OCR 再兜底一次——不覆盖已有 MLLM 结果，只在空时补。
+    if parse_bars and mllm_backend.available() and use_ocr_fallback and not labels:
+        try:
+            ocr_labels = _ocr_labels_from_tesseract(str(source), views)
+        except Exception as exc:
+            ocr_labels = []
+        if ocr_labels:
+            labels = ocr_labels
+            # a1_labels 已结束（pending/failed），兜底结果记为新步骤，不影响闸门判定。
+            graph.start("a1_labels_ocr_fallback", "件号 OCR 兜底（A1·Tesseract）",
+                        input=str(source))
+            graph.finish(labels=len(labels), method="tesseract",
+                         note="MLLM 0 字，Tesseract 确定性 OCR 兜底")
+
+
     # ---------------- A2 几何检测（霍夫为主，VLM 可选） ----------------
     if not parse_bars:
         graph.skip("a2_geom", "几何检测（A2）", "parse_bars=False（bom/节点大样），跳过杆件几何检测")
@@ -603,17 +727,30 @@ def run_tower_agent_pipeline(
     try:
         link_meta = _associate_labels(bars, labels, snap_px=label_snap_px)
         assignments = link_meta["assignments"]
+        detail = {k: v for k, v in link_meta.items() if k != "assignments"}
         if not parse_bars:
             # P1-7：bom/节点大样无杆件，A3 空跑但视为通过（不是失败），
             # A4 只记 metadata。
-            graph.finish(**{k: v for k, v in link_meta.items() if k != "assignments"},
-                         note="parse_bars=False，无杆件可关联")
-        elif link_meta["association_rate"] < min_association_rate:
-            graph.pending(
-                f"labeled/bars={link_meta['association_rate']} < {min_association_rate}",
-                **{k: v for k, v in link_meta.items() if k != "assignments"})
+            graph.finish(**detail, note="parse_bars=False，无杆件可关联")
         else:
-            graph.finish(**{k: v for k, v in link_meta.items() if k != "assignments"})
+            # B2 双指标闸门：霍夫噪声高（候选杆远多于件号）时，labeled/bars 被
+            # 噪声基数拉低无法反映真实关联质量，改以 label_hit_rate（命中件号/总件号）
+            # 作闸门。两者都不过才 pending。
+            rate = link_meta["association_rate"]
+            hit = link_meta["label_hit_rate"]
+            ocr_labels = link_meta["ocr_labels"]
+            noisy = ocr_labels > 0 and len(bars) > ocr_labels * 3
+            passed = (not noisy and rate >= min_association_rate) or \
+                     (noisy and hit >= min_association_rate)
+            if passed:
+                graph.finish(**detail)
+            else:
+                gate = "label_hit_rate" if noisy else "labeled/bars"
+                val = hit if noisy else rate
+                graph.pending(
+                    f"{gate}={val} < {min_association_rate}" +
+                    (f"（霍夫噪声高，用件号命中率作闸门）" if noisy else ""),
+                    **detail)
     except Exception as exc:
         graph.fail(str(exc))
 

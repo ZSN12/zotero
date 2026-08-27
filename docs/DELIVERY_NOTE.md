@@ -9,6 +9,7 @@
 | **矢量主路径（生产）** | 国网 DXF/DWG（`35A1-JC1-02/03` 等） | 杆件/节点/件号关联 + 2D 坐标 | **生产路径**：件号关联率、图层报告、跨文件去重 |
 | **扫描样例路径** | `examples/clear/` 位图（front/side/plan/bom） | 霍夫几何候选 + 多视图融合候选 | **样例/演示**：验证 A0→A4 编排与 merge 结构，默认 `pending_review`，不进终版 |
 | **Kimi 复核** | 清晰扫描图 | 件号 OCR 候选（A1） | **仅清晰扫描**：辅助件号识别；不替代矢量主路径 |
+| **Tesseract 兜底（B4）** | 任意扫描图 | 件号 OCR 候选（A1 兜底） | 无 MLLM API 或 MLLM 0 字时，确定性 OCR 兜底，绝不猜编号 |
 
 ## 关键结论（不要混淆）
 
@@ -57,9 +58,12 @@ bash scripts/acceptance.sh --with-mllm     # 追加 Kimi 门禁（需 KIMI_API_K
 | opencv-python-headless | 扫描图霍夫/版面分析 | 扫描路径 |
 | trimesh | GLB 实体导出 | 3D 导出 |
 | openai | MLLM 调用 | 仅 Kimi 复核 |
+| pytesseract + tesseract | 件号 OCR 兜底（B4） | 可选（未装则跳过，绝不猜编号） |
 
 ## 已知边界
 
 - 扫描候选默认 `pending_review`，需人工确认（`confirm_tower_scan` / `--allow-scan`）才进终版。
-- A3 关联率受 A2 霍夫噪声影响（图框/标注线误判为杆件会拉低 labeled/bars 比率）。
+- A3 关联率受 A2 霍夫噪声影响（图框/标注线误判为杆件会拉低 labeled/bars 比率）；
+  B1 已过滤图框长线/贴边线段，B2 双指标（labeled/bars + label_hit_rate）在高噪声时改用件号命中率作闸门。
+- A1 件号 OCR 在无 MLLM API 或 MLLM 0 字时，B4 会尝试 Tesseract 确定性 OCR 兜底（未安装则跳过）。
 - 国网单立面图纸的 3D 重构需跨文件组合，属 Phase D 范围。
