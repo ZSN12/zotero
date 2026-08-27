@@ -169,14 +169,31 @@ def verify_bolt_group(
     }
 
 
-def inject_bolt_verification_rule(model, group: BoltGroup, result: Dict[str, Any]) -> None:
+def bolt_group_detail_key(group_id: str) -> str:
+    """bolt group id → 节点板 detail key（D1_B1 → D1，兼容 cross_file 前缀）。"""
+    gid = (
+        group_id.split("__bolt_group_", 1)[-1]
+        if "__bolt_group_" in group_id
+        else group_id.removeprefix("bolt_group_")
+    )
+    return gid.rsplit("_B", 1)[0] if "_B" in gid else gid
+
+
+def inject_bolt_verification_rule(
+    model,
+    group: BoltGroup,
+    result: Dict[str, Any],
+    *,
+    component_id: Optional[str] = None,
+) -> None:
     rid = f"r_bolt_group_{group.group_id}"
     st = ValidationStatus(result["status"])
+    applies = component_id or f"bolt_group_{group.group_id}"
     model.add_rule(Rule(
         id=rid,
         name=f"螺栓群验算 {group.group_id}",
         description="边距 e1/e2 与孔距 3d0 校验",
-        applies_to=[f"bolt_group_{group.group_id}"],
+        applies_to=[applies],
         status=st,
         message="; ".join(result["issues"]) if result["issues"] else "passed",
     ))

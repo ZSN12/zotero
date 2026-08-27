@@ -422,6 +422,33 @@ def cmd_build_project(args):
     print(f"✓ ProjectModel：{len(project.sheets)} sheets -> {path}")
 
 
+def cmd_deliver_project(args):
+    """M6：图册级一键交付（Project + cross_file + Harness + GLB）。"""
+    from .project.delivery import deliver_project
+
+    result = deliver_project(
+        args.input_dir,
+        args.out_dir,
+        project_id=args.project_id,
+        layer_map_path=args.layer_map,
+        bom_path=args.bom,
+        export_glb=not args.no_glb,
+    )
+    print(f"✓ deliver-project：ok={result.get('ok')} harness_all_passed={result.get('harness_all_passed')}")
+    print(f"  manifest -> {result.get('manifest_path')}")
+    if result.get("model_path"):
+        print(f"  model    -> {result['model_path']}")
+    if result.get("glb_path"):
+        print(f"  glb      -> {result['glb_path']} meshes={result.get('mesh_stats')}")
+    if result.get("glb_error"):
+        print(f"  glb ✗    -> {result['glb_error']}")
+    mr = result.get("merge_report") or {}
+    print(f"  merge    -> nodes={mr.get('nodes_solved')} bars={mr.get('bars')} "
+          f"gussets={mr.get('gussets_anchored')} synthetic_y={mr.get('y_synthetic_side')}")
+    if not result.get("ok"):
+        sys.exit(1)
+
+
 def cmd_intake_tower_batch(args):
     """A3/B7：目录内全部 DWG 转 DXF 并逐文件 intake，输出 layer 报告。"""
     from .intake.tower_batch import intake_tower_batch
@@ -690,6 +717,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_proj.add_argument("--project-id", help="项目 ID（默认取目录名）")
     p_proj.add_argument("--layer-map", help="per-project overlay JSON")
     p_proj.set_defaults(func=cmd_build_project)
+
+    p_dproj = sub.add_parser("deliver-project", help="M6：图册级一键交付（Project+cross_file+GLB）")
+    p_dproj.add_argument("input_dir")
+    p_dproj.add_argument("--out-dir", default="out/project-delivery")
+    p_dproj.add_argument("--project-id", help="项目 ID（默认取目录名）")
+    p_dproj.add_argument("--layer-map", help="per-project overlay JSON")
+    p_dproj.add_argument("--bom", help="BOM CSV")
+    p_dproj.add_argument("--no-glb", action="store_true", help="跳过 GLB 导出")
+    p_dproj.set_defaults(func=cmd_deliver_project)
 
     p_parse = sub.add_parser("parse-report", help="输出 PARSE_RATE_REPORT 同款 JSON（F3）")
     p_parse.add_argument("file")

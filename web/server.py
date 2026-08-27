@@ -282,6 +282,33 @@ def build_project_demo(
     return payload
 
 
+def deliver_project_demo(
+    input_rel: str,
+    *,
+    layer_map_rel: Optional[str] = None,
+    reviewer: str = "web_user",
+) -> dict:
+    from traceability.project.delivery import deliver_project
+
+    input_dir = _safe_repo_path(input_rel)
+    if input_dir is None or not input_dir.is_dir():
+        return {"ok": False, "error": "input_dir 无效或越界"}
+    layer_map = _safe_repo_path(layer_map_rel) if layer_map_rel else None
+    out_dir = Path(tempfile.gettempdir()) / f"tower-deliver-{uuid.uuid4().hex[:8]}"
+    result = deliver_project(
+        input_dir,
+        out_dir,
+        layer_map_path=str(layer_map) if layer_map else None,
+    )
+    _audit("deliver_project", reviewer=reviewer, ok=result.get("ok"), out=str(out_dir))
+    payload = dict(result)
+    for key in ("project_path", "model_path", "glb_path", "manifest_path"):
+        if payload.get(key):
+            payload[key] = _public_path(str(payload[key]))
+    payload["out_dir"] = _public_path(str(out_dir))
+    return payload
+
+
 def _public_path(path: str | None) -> str | None:
     if not path:
         return None
@@ -414,6 +441,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(code, payload)
             except Exception as exc:
                 _audit("build_project_error", error=str(exc))
+                self._send(500, {"ok": False, "error": str(exc)})
+            return
+
+        if self.path == "/api/deliver-project":
+            try:
+                payload = deliver_project_demo(
+                    data.get("input_dir") or "examples/external/guowang_35A1",
+                    layer_map_rel=data.get("layer_map") or "examples/external/guowang_35A1/layer_overlay.json",
+                    reviewer=data.get("reviewer") or "web_user",
+                )
+                code = 200 if payload.get("ok") else 422
+                self._send(code, payload)
+            except Exception as exc:
+                _audit("deliver_project_error", error=str(exc))
                 self._send(500, {"ok": False, "error": str(exc)})
             return
 

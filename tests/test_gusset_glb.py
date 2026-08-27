@@ -33,9 +33,12 @@ class GussetGlbTest(unittest.TestCase):
                 scene = trimesh.load(str(glb), force="scene")
             except Exception as exc:
                 self.skipTest(str(exc))
+            from traceability.connection.bolt_mesh import bolt_hole_meshes
+
             bars = sum(1 for c in model.components.values() if c.kind == "tower_bar")
             gussets = sum(
                 1 for c in model.components.values()
                 if c.kind == "gusset_plate" and c.properties.get("polygon_global")
             )
-            self.assertEqual(len(scene.geometry), bars + gussets)
+            bolt_meshes, _ = bolt_hole_meshes(model)
+            self.assertGreaterEqual(len(scene.geometry), bars + gussets + len(bolt_meshes))

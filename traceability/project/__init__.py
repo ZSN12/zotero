@@ -5,6 +5,7 @@
 
 from .model import ProjectModel, ProjectSheet, load_project, save_project
 from .assembly import assemble_modules, ModuleBoundary
+from .delivery import deliver_project
 from .bom_tree import aggregate_bom_tree, BomTreeNode
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     "load_project",
     "save_project",
     "assemble_modules",
+    "deliver_project",
     "ModuleBoundary",
     "aggregate_bom_tree",
     "BomTreeNode",

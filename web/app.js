@@ -502,6 +502,41 @@ async function loadProjectDemo() {
 }
 
 $('load-project').onclick = loadProjectDemo;
+
+async function deliverProjectDemo() {
+  const btn = $('deliver-project');
+  if (!btn) return;
+  btn.disabled = true;
+  $('project-merge').textContent = '交付中…（cross_file + Harness + GLB）';
+  try {
+    const res = await fetch('/api/deliver-project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input_dir: 'examples/external/guowang_35A1',
+        layer_map: 'examples/external/guowang_35A1/layer_overlay.json',
+      }),
+    });
+    const payload = await res.json();
+    if (payload.ok) {
+      $('status').textContent = 'Project 交付 ✓\n' + JSON.stringify(payload.mesh_stats || {}, null, 2);
+      const mr = payload.merge_report || {};
+      $('project-merge').textContent =
+        `交付完成：nodes=${mr.nodes_solved} bars=${mr.bars} GLB=${payload.glb_path}`;
+      if (payload.model_path) await renderBars(payload.model_path);
+      if (payload.glb_path) loadGlb(payload.glb_path);
+    } else {
+      $('project-merge').textContent = '交付失败：' + (payload.glb_error || payload.error || '未知');
+    }
+    await loadAuditLog();
+  } catch (e) {
+    $('project-merge').textContent = '交付请求失败：' + e;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$('deliver-project').onclick = deliverProjectDemo;
 initViewer();
 loadAuditLog();
 

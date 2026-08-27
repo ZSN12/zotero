@@ -112,6 +112,15 @@ echo "==> [3b/5] guowang strict GLB（M5 synthetic side 直出）"
 test -s "$OUT/guowang-glb/tower.glb" || { echo "FAIL: guowang strict GLB 未生成"; exit 1; }
 echo "PASS: guowang strict GLB $(wc -c < "$OUT/guowang-glb/tower.glb") bytes (bars+gusset)"
 
+echo "==> [3c/5] deliver-project 图册级交付"
+"$PY" -m traceability.cli deliver-project \
+  examples/external/guowang_35A1/ \
+  --layer-map examples/external/guowang_35A1/layer_overlay.json \
+  --out-dir "$OUT/project-deliver" >/dev/null
+test -f "$OUT/project-deliver/project_delivery.json" || { echo "FAIL: project_delivery.json 缺失"; exit 1; }
+test -s "$OUT/project-deliver/tower.glb" || { echo "FAIL: deliver-project GLB 缺失"; exit 1; }
+echo "PASS: deliver-project manifest + GLB"
+
 echo "==> [4/5] examples/clear/ 扫描批量（3 view_type + merged model）"
 "$PY" -m traceability.cli run-tower examples/clear/ \
   --out-dir "$OUT/clear-multi" >/dev/null 2>&1 || true

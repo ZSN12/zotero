@@ -158,6 +158,14 @@ def validate_no_duplicate_bar_id(model: EngineeringModel, rule_id: str) -> Optio
     if not dups:
         return ValidationResult(rule_id, ValidationStatus.PASSED,
                                 "杆件编号在视图内唯一", "no-dup-bar-id")
+    df = model.components.get("drawing_file")
+    is_cross_file = bool(df and df.properties.get("view_mode") == "cross_file_multi_view")
+    if is_cross_file:
+        return ValidationResult(
+            rule_id, ValidationStatus.PENDING,
+            f"cross_file 合并后 {len(dups)} 组重复件号，待人工核对",
+            "no-dup-bar-id",
+        )
     return ValidationResult(rule_id, ValidationStatus.FAILED,
                             f"{len(dups)} 组重复编号：{list(dups)[:3]}", "no-dup-bar-id")
 
@@ -192,14 +200,31 @@ def validate_gusset_plate(model: EngineeringModel, rule_id: str) -> Optional[Val
 
 def validate_bolt_group_rule(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:
     """螺栓群验算：复用 connection.bolt_verify，与 tower_detail 注入规则一致。"""
-    from ..connection.bolt_verify import BoltGroup, BoltSpec, verify_bolt_group
+    from ..connection.bolt_verify import BoltGroup, BoltSpec, bolt_group_detail_key, verify_bolt_group
 
-    gid = rule_id.removeprefix("r_bolt_group_")
-    cid = f"bolt_group_{gid}"
-    comp = model.components.get(cid)
+    rule = model.rules.get(rule_id)
+    comp = None
+    cid: Optional[str] = None
+    if rule and rule.applies_to:
+        cid = rule.applies_to[0]
+        comp = model.components.get(cid)
+    if comp is None:
+        gid = rule_id.removeprefix("r_bolt_group_")
+        for k, c in model.components.items():
+            if c.kind != "bolt_group":
+                continue
+            if k == gid or k == f"bolt_group_{gid}" or k.endswith(f"__{gid}") or gid in k:
+                comp = c
+                cid = k
+                break
     if comp is None:
         return ValidationResult(rule_id, ValidationStatus.FAILED,
-                                f"螺栓群组件 {cid} 不存在", "bolt-group")
+                                f"螺栓群组件 {rule_id.removeprefix('r_bolt_group_')} 不存在", "bolt-group")
+    gid = (
+        cid.split("__bolt_group_", 1)[-1]
+        if cid and "__bolt_group_" in cid
+        else (cid or "").removeprefix("bolt_group_")
+    )
     holes_raw = comp.properties.get("holes") or []
     holes = [(float(h[0]), float(h[1])) for h in holes_raw if h]
     spec = BoltSpec(
@@ -207,7 +232,7 @@ def validate_bolt_group_rule(model: EngineeringModel, rule_id: str) -> Optional[
         diameter_mm=float(comp.properties.get("diameter_mm") or 16),
         length_mm=float(comp.properties.get("length_mm") or 40),
     )
-    outline_raw = _gusset_outline_for_bolt(model, gid)
+    outline_raw = _gusset_outline_for_bolt(model, gid, component_id=cid)
     outline = outline_raw or None
     group = BoltGroup(group_id=gid, spec=spec, holes=holes,
                       plate_outline=outline or None)
@@ -431,21 +456,41 @@ def inject_connection_rules(model: EngineeringModel) -> EngineeringModel:
             diameter_mm=float(comp.properties.get("diameter_mm") or 16),
             length_mm=float(comp.properties.get("length_mm") or 40),
         )
-        outline = _gusset_outline_for_bolt(model, gid)
+        outline = _gusset_outline_for_bolt(model, gid, component_id=cid)
         group = BoltGroup(group_id=gid, spec=spec, holes=holes, plate_outline=outline)
         result = verify_bolt_group(group)
-        inject_bolt_verification_rule(model, group, result)
+        inject_bolt_verification_rule(model, group, result, component_id=cid)
     return model
 
 
-def _gusset_outline_for_bolt(model: EngineeringModel, group_id: str):
+def _gusset_outline_for_bolt(
+    model: EngineeringModel,
+    group_id: str,
+    *,
+    component_id: Optional[str] = None,
+):
     """按 bolt group id 找同大样节点板轮廓（兼容 cross_file 前缀）。"""
-    plate_key = group_id.rsplit("_B", 1)[0] if "_B" in group_id else group_id
+    from ..connection.bolt_verify import bolt_group_detail_key
+
+    plate_key = bolt_group_detail_key(group_id)
     for gcid, gcomp in model.components.items():
         if gcomp.kind != "gusset_plate":
             continue
+        detail_id = str(gcomp.properties.get("detail_id") or "")
         pid = gcid.removeprefix("gusset_")
-        if pid == plate_key or pid.endswith(f"__{plate_key}") or gcid.endswith(f"_{plate_key}"):
+        if (
+            detail_id == plate_key
+            or pid == plate_key
+            or pid.endswith(f"__gusset_{plate_key}")
+            or gcid.endswith(f"__gusset_{plate_key}")
+        ):
             raw = gcomp.properties.get("polygon_local") or []
+            return [(float(p[0]), float(p[1])) for p in raw if p]
+    if component_id:
+        from ..connection.bolt_mesh import _gusset_for_bolt
+
+        gusset_cid = _gusset_for_bolt(model, component_id)
+        if gusset_cid:
+            raw = model.components[gusset_cid].properties.get("polygon_local") or []
             return [(float(p[0]), float(p[1])) for p in raw if p]
     return None

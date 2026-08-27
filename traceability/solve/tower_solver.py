@@ -575,6 +575,12 @@ def export_tower_glb(
         mesh_meta.append(extras)
         gusset_count += 1
 
+    from ..connection.bolt_mesh import bolt_hole_meshes
+    bolt_meshes, bolt_meta = bolt_hole_meshes(model)
+    for bmesh, extras in zip(bolt_meshes, bolt_meta):
+        meshes.append(bmesh)
+        mesh_meta.append(extras)
+
     if not meshes:
         raise SolveError("没有可实体化的杆件（请先完成跨视图合并 --merge）")
 
