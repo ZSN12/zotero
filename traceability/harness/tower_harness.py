@@ -186,9 +186,11 @@ def run_tower(
         if grouped["all_files"] and not _dir_has_cad_files(batch_source):
             from ..intake.tower_scan_views import intake_scan_batch
             result = intake_scan_batch(batch_source, out_dir, mllm=mllm)
+            # P1-9：直接复用 intake_scan_batch 产出的完整 ProcessingGraph
+            # （每文件一步 + merge_scan + a4_harness），不再返回空壳 graph。
             return {
                 "ok": result.get("ok", False),
-                "graph": ProcessingGraph(name=f"tower-scan-batch-{source_path.stem}"),
+                "graph": result.get("graph", ProcessingGraph(name=f"tower-scan-batch-{source_path.stem}")),
                 "model_path": result.get("model_path"),
                 "steps_path": result.get("steps_path"),
                 "summary_path": None,
