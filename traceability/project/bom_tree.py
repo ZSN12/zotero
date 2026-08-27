@@ -62,7 +62,8 @@ def aggregate_bom_tree(
     qty_by_source: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     sources = model_sources or [m.name for m in models]
-    for model, src in zip(models, sources):
+    for i, model in enumerate(models):
+        src = sources[i] if i < len(sources) else model.name
         for row in _bom_rows_from_model(model, src):
             bid = row.get("bar_id", "")
             if not bid:

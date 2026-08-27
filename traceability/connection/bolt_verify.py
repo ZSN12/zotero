@@ -1,13 +1,10 @@
-"""螺栓群构造与力学验算（Gap 2）。
-
-解析图纸螺栓标注（如 2M16X50），校验边距 e1/e2、孔距 3d0、螺栓干涉。
-"""
+"""螺栓群构造与力学验算（Gap 2）。"""
 
 from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..model import Component, Rule, ValidationStatus
@@ -21,7 +18,7 @@ class BoltSpec:
 
     @property
     def hole_diameter_mm(self) -> float:
-        return self.diameter_mm + 1.5  # 标准孔径近似 d+1.5
+        return self.diameter_mm + 1.5
 
 
 _BOLT_RE = re.compile(
@@ -45,7 +42,7 @@ def parse_bolt_annotation(text: str) -> Optional[BoltSpec]:
 class BoltGroup:
     group_id: str
     spec: BoltSpec
-    holes: List[Tuple[float, float]]  # 孔中心 (x, y) local or global
+    holes: List[Tuple[float, float]]
     plate_outline: Optional[List[Tuple[float, float]]] = None
 
     def to_component(self) -> Component:
@@ -72,16 +69,32 @@ def _point_to_segment_dist(px: float, py: float, ax: float, ay: float, bx: float
     return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 
 
+def _point_in_polygon(px: float, py: float, outline: List[Tuple[float, float]]) -> bool:
+    """射线法判断点是否在多边形内（含边界近似）。"""
+    if len(outline) < 3:
+        return False
+    inside = False
+    j = len(outline) - 1
+    for i in range(len(outline)):
+        xi, yi = outline[i]
+        xj, yj = outline[j]
+        if ((yi > py) != (yj > py)) and (
+            px < (xj - xi) * (py - yi) / ((yj - yi) or 1e-9) + xi
+        ):
+            inside = not inside
+        j = i
+    return inside
+
+
 def _min_edge_distance(hole: Tuple[float, float], outline: List[Tuple[float, float]]) -> float:
     if len(outline) < 2:
         return float("inf")
     px, py = hole
-    best = float("inf")
-    for i in range(len(outline)):
-        ax, ay = outline[i]
-        bx, by = outline[(i + 1) % len(outline)]
-        best = min(best, _point_to_segment_dist(px, py, ax, ay, bx, by))
-    return best
+    return min(
+        _point_to_segment_dist(px, py, outline[i][0], outline[i][1],
+                               outline[(i + 1) % len(outline)][0], outline[(i + 1) % len(outline)][1])
+        for i in range(len(outline))
+    )
 
 
 def verify_bolt_group(
@@ -90,7 +103,7 @@ def verify_bolt_group(
     min_edge_factor: float = 1.2,
     min_spacing_factor: float = 3.0,
 ) -> Dict[str, Any]:
-    """验算螺栓群：边距 e1/e2 ≥ min_edge_factor * d0，孔距 ≥ min_spacing_factor * d0。"""
+    """验算螺栓群：边距 e1/e2 ≥ 1.2·d0，孔距 ≥ 3·d0，孔须在板内。"""
     d0 = group.spec.hole_diameter_mm
     min_edge = min_edge_factor * d0
     min_spacing = min_spacing_factor * d0
@@ -98,11 +111,25 @@ def verify_bolt_group(
     edge_checks: List[Dict[str, Any]] = []
     spacing_checks: List[Dict[str, Any]] = []
 
-    if group.plate_outline:
+    outline = group.plate_outline or []
+    has_valid_outline = len(outline) >= 3
+
+    if not has_valid_outline:
+        issues.append("缺少有效节点板轮廓（≥3 顶点），边距验算 pending")
+    else:
         for i, h in enumerate(group.holes):
-            e = _min_edge_distance(h, group.plate_outline)
+            if not _point_in_polygon(h[0], h[1], outline):
+                issues.append(f"孔{i} 位于板轮廓外")
+                edge_checks.append({"hole_index": i, "inside_plate": False, "passed": False})
+                continue
+            e = _min_edge_distance(h, outline)
             ok = e >= min_edge
-            edge_checks.append({"hole_index": i, "edge_distance_mm": round(e, 2), "passed": ok})
+            edge_checks.append({
+                "hole_index": i,
+                "inside_plate": True,
+                "edge_distance_mm": round(e, 2),
+                "passed": ok,
+            })
             if not ok:
                 issues.append(f"孔{i} 边距 {e:.1f}mm < {min_edge:.1f}mm (1.2*d0)")
 
@@ -113,22 +140,27 @@ def verify_bolt_group(
                 group.holes[i][1] - group.holes[j][1],
             )
             ok = d >= min_spacing
-            spacing_checks.append({
-                "pair": [i, j],
-                "spacing_mm": round(d, 2),
-                "passed": ok,
-            })
+            spacing_checks.append({"pair": [i, j], "spacing_mm": round(d, 2), "passed": ok})
             if not ok:
                 issues.append(f"孔{i}-孔{j} 间距 {d:.1f}mm < {min_spacing:.1f}mm (3d0)")
 
-    passed = len(issues) == 0 and len(group.holes) >= group.spec.count
     if len(group.holes) < group.spec.count:
         issues.append(f"孔位数 {len(group.holes)} < 标注数量 {group.spec.count}")
+
+    if not has_valid_outline:
+        status = ValidationStatus.PENDING
+        passed = False
+    elif issues:
+        status = ValidationStatus.FAILED
+        passed = False
+    else:
+        status = ValidationStatus.PASSED
+        passed = True
 
     return {
         "group_id": group.group_id,
         "passed": passed,
-        "status": ValidationStatus.PASSED.value if passed else ValidationStatus.FAILED.value,
+        "status": status.value,
         "min_edge_required_mm": round(min_edge, 2),
         "min_spacing_required_mm": round(min_spacing, 2),
         "edge_checks": edge_checks,
@@ -139,11 +171,12 @@ def verify_bolt_group(
 
 def inject_bolt_verification_rule(model, group: BoltGroup, result: Dict[str, Any]) -> None:
     rid = f"r_bolt_group_{group.group_id}"
+    st = ValidationStatus(result["status"])
     model.add_rule(Rule(
         id=rid,
         name=f"螺栓群验算 {group.group_id}",
         description="边距 e1/e2 与孔距 3d0 校验",
         applies_to=[f"bolt_group_{group.group_id}"],
-        status=ValidationStatus.PASSED if result["passed"] else ValidationStatus.FAILED,
+        status=st,
         message="; ".join(result["issues"]) if result["issues"] else "passed",
     ))

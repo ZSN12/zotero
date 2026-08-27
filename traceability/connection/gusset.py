@@ -1,7 +1,4 @@
-"""节点板（Gusset Plate）实体模型（Gap 2）。
-
-从 DXF 大样多边形 + 厚度标注生成 gusset_plate 组件，孔位单独挂 bolt_hole 子属性。
-"""
+"""节点板（Gusset Plate）实体模型（Gap 2）。"""
 
 from __future__ import annotations
 
@@ -35,9 +32,17 @@ class GussetPlate:
         if self.transform:
             props["detail_id"] = self.transform.detail_id
             props["transform"] = self.transform.to_dict()
-            props["polygon_global"] = [
-                list(local_to_global(p[0], p[1], self.transform)) for p in self.polygon_local
-            ]
+            if self.transform.anchored:
+                global_poly = []
+                for p in self.polygon_local:
+                    gp = local_to_global(p[0], p[1], self.transform)
+                    if gp is not None:
+                        global_poly.append(list(gp))
+                if global_poly:
+                    props["polygon_global"] = global_poly
+                    props["solve_status"] = "verified"
+            else:
+                props["global_coords"] = "pending_anchor"
         return Component(
             id=f"gusset_{self.plate_id}",
             name=f"节点板 {self.plate_id}",
@@ -61,7 +66,6 @@ def parse_gusset_from_detail(
     transform: Optional[DetailViewTransform] = None,
     bolt_holes: Optional[List[Dict[str, Any]]] = None,
 ) -> GussetPlate:
-    """从大样几何 + 文字标注解析节点板（缺厚度 → placeholder）。"""
     thickness = None
     if thickness_text:
         m = _THICKNESS_RE.search(thickness_text)
@@ -79,6 +83,7 @@ def parse_gusset_from_detail(
 def add_gusset_to_model(model: EngineeringModel, plate: GussetPlate) -> Component:
     comp = plate.to_component()
     model.add_component(comp)
+    src = comp.source
     if plate.thickness_mm is not None:
         model.add_dimension(Dimension(
             id=f"dim_gusset_t_{plate.plate_id}",
@@ -86,6 +91,7 @@ def add_gusset_to_model(model: EngineeringModel, plate: GussetPlate) -> Componen
             value=plate.thickness_mm,
             unit="mm",
             origin=DimensionOrigin.MEASURED,
+            source=src,
             applies_to=comp.id,
         ))
     else:
@@ -95,6 +101,7 @@ def add_gusset_to_model(model: EngineeringModel, plate: GussetPlate) -> Componen
             value=None,
             unit="mm",
             origin=DimensionOrigin.PLACEHOLDER,
+            source=src,
             applies_to=comp.id,
         ))
     return comp

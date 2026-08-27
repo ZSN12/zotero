@@ -63,11 +63,11 @@ def _make_synthetic_png(out_dir: Path) -> Path:
 
     h, w = 800, 1200
     img = np.full((h, w), 240, dtype="uint8")
-    # 主结构线（略浅，模拟弱中心线）
+    # 主结构线（略浅，模拟弱中心线）— 线宽 2px 保证霍夫可检
     for x in range(100, w - 100, 80):
-        cv2.line(img, (x, 80), (x, h - 80), 175, 2)
+        cv2.line(img, (x, 80), (x, h - 80), 120, 2)
     for y in range(100, h - 100, 60):
-        cv2.line(img, (80, y), (w - 80, y), 175, 2)
+        cv2.line(img, (80, y), (w - 80, y), 120, 2)
     # 随机噪点
     rng = np.random.default_rng(42)
     for _ in range(400):

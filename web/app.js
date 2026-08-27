@@ -167,7 +167,9 @@ function toCanvas(x, y) {
   if (evidenceImg) {
     const sw = evidenceImg.naturalWidth, sh = evidenceImg.naturalHeight;
     const scale = Math.min(W / sw, H / sh);
-    return [x * scale, y * scale];
+    const dw = sw * scale, dh = sh * scale;
+    const ox = (W - dw) / 2, oy = (H - dh) / 2;
+    return [x * scale + ox, y * scale + oy];
   }
   if (!evidenceBounds) return [x, y];
   const { minX, minY, maxX, maxY } = evidenceBounds;

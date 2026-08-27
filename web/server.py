@@ -13,6 +13,7 @@ Phase E 扩展：
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import mimetypes
 import sys
@@ -21,12 +22,35 @@ import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 sys.path.insert(0, str(REPO))
 
 AUDIT_PATH = Path(tempfile.gettempdir()) / "tower-demo-audit.jsonl"
+ARTIFACT_ROOT = Path(tempfile.gettempdir()).resolve()
+
+
+def _resolve_artifact(rel: str) -> Optional[Path]:
+    """解析 /artifacts/ 相对路径，拒绝目录穿越。"""
+    if not rel.startswith("/artifacts/"):
+        return None
+    sub = rel[len("/artifacts/"):].replace("\\", "/").lstrip("/")
+    if not sub or ".." in sub.split("/"):
+        return None
+    target = (ARTIFACT_ROOT / sub).resolve()
+    if not str(target).startswith(str(ARTIFACT_ROOT)):
+        return None
+    return target
+
+
+def _file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()[:16]
 
 
 def _audit(event: str, **fields) -> None:
@@ -66,27 +90,40 @@ def run_pipeline(uploaded_path: Path, options: dict) -> dict:
     return payload
 
 
-def confirm_scan_model(model_path: Path) -> dict:
+def confirm_scan_model(model_path: Path, *, reviewer: str = "web_user") -> dict:
     from traceability.io import load_model, save_model
     from traceability.intake.tower_layout import confirm_tower_scan
 
+    before_hash = _file_sha256(model_path)
     model = load_model(str(model_path))
-    before = sum(
-        1 for c in model.components.values()
+    pending_ids = [
+        cid for cid, c in model.components.items()
         if c.properties.get("solve_status") == "pending_review"
-    )
+        and c.kind in ("tower_bar", "tower_node")
+    ]
     model = confirm_tower_scan(model)
     save_model(model, str(model_path))
-    after = sum(
+    after_hash = _file_sha256(model_path)
+    verified = sum(
         1 for c in model.components.values()
         if c.properties.get("solve_status") == "verified"
+        and c.kind in ("tower_bar", "tower_node")
     )
-    _audit("confirm_scan", model=str(model_path), verified=after, was_pending=before)
+    _audit(
+        "confirm_scan",
+        reviewer=reviewer,
+        model=str(model_path),
+        verified=verified,
+        pending_count=len(pending_ids),
+        model_hash_before=before_hash,
+        model_hash_after=after_hash,
+    )
     return {
         "ok": True,
-        "verified_components": after,
-        "was_pending_review": before,
+        "verified_components": verified,
+        "was_pending_review": len(pending_ids),
         "model_path": _public_path(str(model_path)),
+        "model_hash": after_hash,
     }
 
 
@@ -128,11 +165,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, f.read_bytes(), "text/markdown; charset=utf-8")
             return self._send(404, {"error": "not found"})
         if path.startswith("/artifacts/"):
-            rel = path[len("/artifacts/"):]
-            f = Path(tempfile.gettempdir()) / rel
-            if f.exists() and f.is_file():
-                ctype = mimetypes.guess_type(str(f))[0] or "application/octet-stream"
-                return self._send(200, f.read_bytes(), ctype)
+            target = _resolve_artifact(path)
+            if target and target.is_file():
+                ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+                return self._send(200, target.read_bytes(), ctype)
             return self._send(404, {"error": "not found"})
         return self._send(404, {"error": "not found"})
 
@@ -163,13 +199,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/api/confirm-scan":
             rel = data.get("model_path", "")
-            if not rel.startswith("/artifacts/"):
-                return self._send(400, {"ok": False, "error": "model_path 无效"})
-            f = Path(tempfile.gettempdir()) / rel[len("/artifacts/"):]
-            if not f.exists():
+            target = _resolve_artifact(rel)
+            if target is None:
+                return self._send(400, {"ok": False, "error": "model_path 无效或越界"})
+            if not target.exists():
                 return self._send(404, {"ok": False, "error": "model 不存在"})
             try:
-                payload = confirm_scan_model(f)
+                payload = confirm_scan_model(target, reviewer=data.get("reviewer") or "web_user")
                 self._send(200, payload)
             except Exception as exc:
                 _audit("confirm_error", error=str(exc))

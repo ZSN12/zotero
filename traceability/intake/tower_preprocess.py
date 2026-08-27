@@ -2,15 +2,14 @@
 
 在 A2 霍夫线检测前增强弱中心线、抑制底纹噪声：
     1. 对比度拉伸（百分位 clip + CLAHE）
-    2. 去斑（连通域面积过滤）
-    3. 线重绘（形态学骨架化，强调中心线）
+    2. 去斑（连通域面积过滤，不做开运算以免抹掉 1–2px 细线）
+    3. 可选线重绘（骨架化后与原始墨迹取并集，避免细线消失）
 
-原则：只做确定性图像处理，不引入随机性；meta 记录各步参数供基准评测。
+原则：只做确定性图像处理；若骨架化导致墨迹损失过大则自动回退。
 """
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -49,7 +48,7 @@ def denoise_spots(binary, cv2, np, min_area: int = 12):
 
 
 def skeletonize(binary, cv2, np):
-    """形态学骨架化（Zhang-Suen 近似：迭代腐蚀+开运算）。"""
+    """形态学骨架化（迭代腐蚀+开运算）。"""
     skel = np.zeros(binary.shape, dtype="uint8")
     element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
     img = binary.copy()
@@ -70,13 +69,11 @@ def preprocess_for_scan(
     ink_threshold: int = 160,
     min_spot_area: int = 12,
     skeletonize_lines: bool = True,
+    min_retain_ratio: float = 0.15,
     cv2=None,
     np=None,
 ) -> Tuple[Any, Dict[str, Any]]:
-    """对灰度图做线重绘预处理，返回 (preprocessed_gray, meta)。
-
-    preprocessed_gray 可直接传给霍夫线检测（深色内容为白）。
-    """
+    """对灰度图做线重绘预处理，返回 (preprocessed_gray, meta)。"""
     if cv2 is None or np is None:
         cv2, np = _require_cv2()
 
@@ -90,25 +87,29 @@ def preprocess_for_scan(
     stretched = contrast_stretch(gray, cv2, np)
     meta["contrast"] = "percentile_2_98+clahe"
 
-    # 深色墨迹 -> 白，浅色底 -> 黑（与 tower_layout 霍夫输入一致）
+    # 深色墨迹 -> 白；不做 MORPH_OPEN（3×3 开运算会抹掉 1–2px 中心线）
     binary = (stretched < ink_threshold).astype("uint8") * 255
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-    cleaned = denoise_spots(opened, cv2, np, min_area=min_spot_area)
-    meta["spots_removed"] = int(cv2.countNonZero(opened) - cv2.countNonZero(cleaned))
+    orig_ink = int(cv2.countNonZero(binary))
+    cleaned = denoise_spots(binary, cv2, np, min_area=min_spot_area)
+    meta["spots_removed"] = int(cv2.countNonZero(binary) - cv2.countNonZero(cleaned))
 
-    if skeletonize_lines:
+    work = cleaned
+    if skeletonize_lines and cv2.countNonZero(cleaned) > 0:
         skel = skeletonize(cleaned, cv2, np)
-        # 轻微膨胀恢复霍夫可检线宽（骨架过细会漏检）
-        dilated = cv2.dilate(skel, kernel, iterations=1)
-        work = dilated
+        cross = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+        skel_boost = cv2.dilate(skel, cross, iterations=1)
+        # 骨架中心线 OR 原始墨迹：增强弱线召回，同时保留已有线段
+        work = cv2.bitwise_or(cleaned, skel_boost)
         meta["skeleton_pixels"] = int(cv2.countNonZero(skel))
-    else:
-        work = cleaned
+        if orig_ink > 0 and cv2.countNonZero(work) < orig_ink * min_retain_ratio:
+            work = cleaned
+            meta["fallback"] = "skeleton_removed_too_much"
 
     # 转回灰度：白线黑底 -> 深色线浅色底（与 _detect_line_segments 输入一致）
     out = np.where(work > 0, 0, 255).astype("uint8")
     meta["ink_pixels"] = int(cv2.countNonZero(work))
+    meta["orig_ink_pixels"] = orig_ink
+    meta["retain_ratio"] = round(meta["ink_pixels"] / orig_ink, 4) if orig_ink else 1.0
     meta["shape"] = [int(out.shape[0]), int(out.shape[1])]
     return out, meta
 

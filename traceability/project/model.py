@@ -42,8 +42,16 @@ class ProjectModel:
     def add_sheet(self, sheet: ProjectSheet) -> None:
         self.sheets[sheet.sheet_id] = sheet
 
-    def register_module(self, module_id: str, **meta: Any) -> None:
-        self.modules[module_id] = {"module_id": module_id, **meta}
+    def register_module(self, module_id: str, sheet_id: str, **meta: Any) -> None:
+        """登记模块段；同 module_id 下累积多张 sheet，不覆盖。"""
+        mod = self.modules.setdefault(module_id, {"module_id": module_id, "sheets": []})
+        sheets: List[str] = mod.setdefault("sheets", [])
+        if sheet_id not in sheets:
+            sheets.append(sheet_id)
+        for k, v in meta.items():
+            if k == "sheets":
+                continue
+            mod[k] = v
 
     def aggregate_evidence(self, model: EngineeringModel, sheet_id: str) -> int:
         """统计并标记某 sheet 模型上的 SourceRef 数量。"""
@@ -123,7 +131,7 @@ def build_project_from_directory(
         if sheet.module_id:
             project.register_module(
                 sheet.module_id,
-                sheets=[stem],
+                stem,
                 kind=kind["kind"],
             )
     return project

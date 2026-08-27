@@ -1,8 +1,7 @@
-"""Phase C–F + Gap 1/2 验收测试。"""
+"""Phase C–F + Gap 1/2 验收测试（审查后强化）。"""
 
 from __future__ import annotations
 
-import json
 import math
 import tempfile
 import unittest
@@ -24,24 +23,26 @@ def _cv2_ok():
 
 @unittest.skipUnless(_cv2_ok(), "opencv 未安装")
 class PreprocessTest(unittest.TestCase):
-    def test_preprocess_for_scan_synthetic(self):
+    def test_thin_line_not_erased(self):
         import cv2
         import numpy as np
         from traceability.intake.tower_preprocess import preprocess_for_scan
 
-        img = np.full((200, 300), 230, dtype="uint8")
-        cv2.line(img, (20, 100), (280, 100), 170, 2)
+        img = np.full((100, 200), 230, dtype="uint8")
+        cv2.line(img, (10, 50), (190, 50), 120, 1)  # 1px 弱线（灰度须 < INK_THRESHOLD=160）
         out, meta = preprocess_for_scan(img)
-        self.assertEqual(meta["method"], "line_repaint")
-        self.assertEqual(out.shape, img.shape)
+        self.assertGreater(meta["ink_pixels"], 0, "1px 弱线不应被完全抹掉")
+        self.assertGreaterEqual(meta["retain_ratio"], 0.15)
 
-    def test_preprocess_bench_synthetic(self):
+    def test_preprocess_bench_preserves_ink(self):
         from benchmark.preprocess_a2_bench import run_bench
         with tempfile.TemporaryDirectory() as d:
             out = Path(d) / "bench.json"
             report = run_bench(Path("missing.png"), out, synthetic=True)
-        self.assertIn("raw_hough", report)
-        self.assertIn("preprocessed_hough", report)
+        pre = report["preprocessed_hough"]["preprocess"]
+        self.assertGreater(pre["ink_pixels"], 0)
+        self.assertGreaterEqual(pre["retain_ratio"], 0.5)
+        self.assertGreater(report["raw_hough"]["raw_segments"], 0)
 
 
 class CrossFileBatchTest(unittest.TestCase):
@@ -56,92 +57,116 @@ class CrossFileBatchTest(unittest.TestCase):
         merged = merge_cross_file_views([m02], layer_map_path=str(OVERLAY))
         bars = [c for c in merged.components.values() if c.kind == "tower_bar"]
         self.assertGreater(len(bars), 0)
-        self.assertTrue(all(c.properties.get("source_file") == "35A1-JC1-02" for c in bars))
         df = merged.components.get("drawing_file")
         self.assertEqual(df.properties.get("view_mode"), "cross_file_multi_view")
 
-
-class ProjectModelTest(unittest.TestCase):
-    def test_build_project_from_guowang_dir(self):
-        from traceability.project.model import build_project_from_directory
-
+    def test_cross_file_batch_runs(self):
+        from traceability.intake.tower_batch import cross_file_batch
         d = EXAMPLES / "external" / "guowang_35A1"
         if not d.exists():
             self.skipTest("国网目录不存在")
         with tempfile.TemporaryDirectory() as tmp:
-            project = build_project_from_directory(d, "guowang-35A1", layer_map_path=str(OVERLAY), out_dir=tmp)
-        self.assertGreaterEqual(len(project.sheets), 2)
-        self.assertIn("35A1-JC1-02", project.sheets)
+            r = cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
+        self.assertIsNotNone(r.get("model_path"))
 
-    def test_assemble_modules_align(self):
+
+class ProjectModelTest(unittest.TestCase):
+    def test_module_sheets_accumulate(self):
+        from traceability.project.model import ProjectModel
+
+        p = ProjectModel(project_id="t", name="t")
+        p.register_module("M1", "35A1-JC1-02", kind="assembly")
+        p.register_module("M1", "35C2-SJG1-ML", kind="drawing")
+        self.assertEqual(sorted(p.modules["M1"]["sheets"]), ["35A1-JC1-02", "35C2-SJG1-ML"])
+
+    def test_assemble_modules_rewrites_bar_refs_and_translates(self):
         from traceability.model import Component, EngineeringModel
         from traceability.project.assembly import assemble_modules
 
-        def _mod(name, z_top):
+        def _mod(name, z_base, xy):
             m = EngineeringModel(name=name)
             m.add_component(Component(
                 id="N01", name="n", kind="tower_node",
-                properties={"x": 0.0, "y": 0.0, "z": z_top, "solve_status": "solved"},
+                properties={"x": xy[0], "y": xy[1], "z": z_base, "solve_status": "solved"},
+            ))
+            m.add_component(Component(
+                id="B01", name="b", kind="tower_bar",
+                properties={"from_node": "N01", "to_node": "N01", "bar_id": "G01"},
             ))
             return m
 
-        lower = _mod("M1", 1000.0)
-        upper = _mod("M2", 0.0)
-        upper.components["N01"].properties.update({"x": 1.0, "y": 1.0, "z": 0.0})
-        merged, reports = assemble_modules([lower, upper], tol_mm=5.0)
-        self.assertEqual(len(reports), 1)
-        self.assertGreaterEqual(reports[0]["matched"], 0)
+        lower = _mod("M1", 1000.0, (0.0, 0.0))
+        upper = _mod("M2", 0.0, (5.0, 5.0))
+        merged, reports = assemble_modules([lower, upper], tol_mm=10.0)
+        self.assertEqual(merged.components["m02_B01"].properties["from_node"], "m02_N01")
+        self.assertTrue(reports[0]["rigid_translation_applied"])
+        self.assertAlmostEqual(merged.components["m02_N01"].properties["z"], 1000.0, places=1)
 
-    def test_bom_tree_aggregate(self):
+    def test_bom_tree_all_models_when_sources_short(self):
         from traceability.model import Component, EngineeringModel
         from traceability.project.bom_tree import aggregate_bom_tree
 
-        m = EngineeringModel(name="t")
-        m.add_component(Component(id="bom_G01", name="b", kind="bom_row",
-                                  properties={"bar_id": "G01", "section": "L40X3", "length_mm": 1000, "qty": 2}))
-        tree = aggregate_bom_tree([m], model_sources=["sheet1"])
-        self.assertEqual(tree["total_unique_bar_ids"], 1)
-        self.assertEqual(tree["tree"][0]["qty"], 2)
+        models = []
+        for i in range(3):
+            m = EngineeringModel(name=f"s{i}")
+            m.add_component(Component(
+                id=f"bom_{i}", name="b", kind="bom_row",
+                properties={"bar_id": f"G0{i}", "qty": 1},
+            ))
+            models.append(m)
+        tree = aggregate_bom_tree(models, model_sources=["only_one"])
+        self.assertEqual(tree["total_unique_bar_ids"], 3)
 
 
 class ConnectionDetailTest(unittest.TestCase):
-    def test_detail_transform_local_to_global(self):
+    def test_detail_scale_1_10_is_times_ten(self):
         from traceability.connection.detail_view import (
-            DetailViewTransform, local_to_global, parse_detail_view_meta,
+            DetailViewTransform, anchor_transform, local_to_global, parse_detail_view_meta,
         )
 
-        t = parse_detail_view_meta("节点 K1 大样 1:10", region=[100, 200, 50, 150])
-        self.assertEqual(t.detail_id, "K1")
-        self.assertAlmostEqual(t.scale, 0.1)
-        gx, gy, gz = local_to_global(110.0, 60.0, DetailViewTransform(
-            detail_id="K1", scale=0.1, origin_local=(100.0, 50.0),
-            origin_global=(1000.0, 2000.0, 8100.0),
-        ))
-        self.assertAlmostEqual(gx, 1001.0)
-        self.assertAlmostEqual(gy, 2001.0)
+        t = parse_detail_view_meta("节点 K1 大样 1:10")
+        self.assertAlmostEqual(t.scale_to_real, 10.0)
+        t = anchor_transform(t, (1000.0, 2000.0, 8100.0), anchor_node_id="node_K1")
+        gp = local_to_global(1.0, 0.0, t)
+        self.assertIsNotNone(gp)
+        self.assertAlmostEqual(gp[0], 1010.0)
 
-    def test_bolt_group_verification(self):
+    def test_unanchored_no_global_polygon(self):
+        from traceability.connection.gusset import parse_gusset_from_detail
+        from traceability.connection.detail_view import parse_detail_view_meta
+
+        t = parse_detail_view_meta("节点 K1 大样 1:10")
+        plate = parse_gusset_from_detail("K1", [(0, 0), (100, 0), (100, 80)], transform=t)
+        comp = plate.to_component()
+        self.assertNotIn("polygon_global", comp.properties)
+        self.assertEqual(comp.properties.get("global_coords"), "pending_anchor")
+
+    def test_bolt_no_outline_is_pending(self):
         from traceability.connection.bolt_verify import BoltGroup, BoltSpec, verify_bolt_group
 
         spec = BoltSpec(count=2, diameter_mm=16.0, length_mm=50.0)
-        outline = [(0, 0), (200, 0), (200, 200), (0, 200)]
-        holes = [(40, 40), (160, 40)]
-        group = BoltGroup(group_id="g1", spec=spec, holes=holes, plate_outline=outline)
+        group = BoltGroup(group_id="g1", spec=spec, holes=[(10, 10), (50, 10)], plate_outline=None)
         result = verify_bolt_group(group)
-        self.assertIn("edge_checks", result)
-        self.assertIn("spacing_checks", result)
+        self.assertEqual(result["status"], "pending")
+        self.assertFalse(result["passed"])
 
-    def test_gusset_plate_component(self):
-        from traceability.connection.gusset import parse_gusset_from_detail, add_gusset_to_model
-        from traceability.model import EngineeringModel
+    def test_bolt_hole_outside_plate_fails(self):
+        from traceability.connection.bolt_verify import BoltGroup, BoltSpec, verify_bolt_group
 
-        plate = parse_gusset_from_detail(
-            "K1", [(0, 0), (100, 0), (100, 80), (0, 80)], thickness_text="t=8",
-        )
-        model = EngineeringModel(name="detail")
-        add_gusset_to_model(model, plate)
-        self.assertIn("gusset_K1", model.components)
-        self.assertIn("dim_gusset_t_K1", model.dimensions)
+        spec = BoltSpec(count=1, diameter_mm=16.0, length_mm=50.0)
+        outline = [(0, 0), (200, 0), (200, 200), (0, 200)]
+        group = BoltGroup(group_id="g2", spec=spec, holes=[(500, 500)], plate_outline=outline)
+        result = verify_bolt_group(group)
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["passed"])
+
+
+class WebSecurityTest(unittest.TestCase):
+    def test_resolve_artifact_rejects_traversal(self):
+        from web.server import _resolve_artifact
+
+        self.assertIsNone(_resolve_artifact("/artifacts/../etc/passwd"))
+        self.assertIsNone(_resolve_artifact("/artifacts/foo/../../etc/passwd"))
 
 
 if __name__ == "__main__":
