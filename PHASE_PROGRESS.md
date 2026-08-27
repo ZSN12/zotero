@@ -342,5 +342,49 @@ python -m traceability.cli compile-drawing examples/clear/tower_side_hd.png --to
    「OCR 件号中成功关联比例」而非「labeled/全部候选杆」。
 3. **`MLLM_MAX_IMAGE_EDGE` 默认值不一致**：`mllm_backend.py` docstring 写 1536、
    实际代码默认 2048，建议统一。
-4. **git 管理**：本轮 `git init` 并提交 `371b5b5`（本地 main，无远程）；如需推送
-   gitee/github 需 `git remote add`。
+4. **git 管理**：已推送远程 `https://github.com/ZSN12/zotero`（`main` 分支，见下「发布与验收」）。
+
+---
+
+## 缺陷清单修复收尾 + 发布（2026-08，commit 44db5c3）
+
+> 本轮按用户 P0/P1/P2 缺陷清单逐条核对并补齐缺口，最终推送到 GitHub。
+
+### P0 收尾
+
+| # | 项 | 落地 |
+|---|---|---|
+| P0-1 | `merge_view_coordinates` 读不到 overlay | `merge_view_coordinates/merge_view_bars/finalize_tower_model` 增加 `overlay`/`layer_map_path` 并全链路下传（`tower_harness.run_tower`、`cli.py` 的 `finalize_tower_model` 调用点）；`_region_meta(stem, overlay=...)` 透传给 `view_regions` |
+| P0-2 | 国网 02 只有 front 无法真 3D | `extract_tower_from_dxf` 末尾写 `view_mode`（single_facade/multi_view/no_view）+ `view_kinds` 到 `drawing_file`，明确「02 只做 2D+件号率，3D 靠立面/平面分文件」；实测 02 parse-rate 0.5684 ≥ 0.50 |
+| P0-3 | 扫描关联率验收 | 默认 `k3-256k`（kimi-code preset）已确认；`--backend mllm` 单 PNG 路径验证可跑（无 API 时 A1 skip）；「≥15%」需真实 API key，命令固化进验收脚本 |
+| P0-4 | 多 plan 互相覆盖 | `intake_scan_batch` 改按 `(view_type, z_level)` 存模型；新增 `_attach_plan_nodes` 把各 plan 节点 `view_x/view_y/z_level` 并入合并模型 |
+| P0-5 | DWG 批量 --merge 不做视图合并 | 新增 `cross_file_bar_id_report`，多文件 merge 输出「按 bar_id 跨文件去重报告」而非假装合 3D；steps.json `batch` 步骤暴露 `cross_file_duplicate_count` |
+
+### P1 收尾
+
+| # | 项 | 落地 |
+|---|---|---|
+| P1-6 | A2 霍夫杆未写 view_type | 新增 `_assign_view_by_bbox`：A2 后按 A0 视图 bbox 给杆/节点归属 view_type，A3 同视图过滤对多 region 单图生效 |
+| P1-7 | parse_bars=False 未短路 | bom/node/大样短路 A1/A2，A3 空跑记 passed，A4 只记 metadata |
+| P1-8 | LABEL_AGENT_PROMPT 坐标说明 | 明确 `x_px/y_px` 是裁剪缩放图左上角 (0,0) 的像素坐标 |
+| P1-9 | 扫描批量与 Harness 对齐 | `intake_scan_batch` 返回完整 `ProcessingGraph`（每文件一步 + merge_scan + a4_harness），`run_tower` 复用 |
+
+### P2 收尾
+
+| # | 项 | 落地 |
+|---|---|---|
+| P2-10 | web 2D 证据层 | `web/index.html`+`app.js`+`styles.css` 新增 2D 面板：点 `tower_bar` 用 `x1_px/y1_px/x2_px/y2_px` 画线高亮 + 列表双向高亮，可选源图铺底 |
+| P2-11 | 验收脚本固定化 | `scripts/acceptance.sh`：110kv 5/5 + 金标准、guowang02 ≥50%、clear 扫描批量 3 view_type + merged model、pytest 全量 |
+
+### 发布
+
+- 修复陈旧测试 `test_timeout_env_default_is_90`（90s → 300s）。
+- 新增 `tests/test_p0_p1_fixes.py`（7 项回归）。
+- 全量测试 **100 passed**；`scripts/acceptance.sh` 4 项全绿。
+- 已推送远程 `https://github.com/ZSN12/zotero`（`main` 分支，HEAD=44db5c3）。
+
+### 遗留（待外部依赖）
+
+- **P0-3 关联率 ≥15%**：需配置 `MLLM_PROVIDER=kimi-code KIMI_API_KEY=sk-...` 后跑
+  `run-tower examples/clear/tower_front_hd.png --backend mllm`；当前环境无 key，A1 会
+  skip 致关联率 0.0。代码与验收命令均已就绪。
