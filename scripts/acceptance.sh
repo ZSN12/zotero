@@ -50,7 +50,7 @@ if failed:
 print(f"PASS: 五条规则 {len(rules)}/{len(rules)} passed")
 PYEOF
 
-echo "==> [2/4] guowang 02 parse-rate >= 50%"
+echo "==> [2/5] guowang 02 parse-rate >= 50%"
 "$PY" -m traceability.cli parse-report \
   examples/external/guowang_35A1/35A1-JC1-02.dxf \
   --layer-map examples/external/guowang_35A1/layer_overlay.json \
@@ -66,7 +66,101 @@ if rate < 0.50:
 print(f"PASS: guowang 02 parse-rate {rate:.4f} >= 0.50")
 PYEOF
 
-echo "==> [3/4] examples/clear/ 扫描批量（3 view_type + merged model）"
+echo "==> [3/5] guowang cross_file front+plan（nodes_solved > 0 + 连接规则）"
+"$PY" -m traceability.cli cross-file-batch \
+  examples/external/guowang_35A1/ \
+  --layer-map examples/external/guowang_35A1/layer_overlay.json \
+  --out-dir "$OUT/guowang-cross" >/dev/null
+
+"$PY" - "$OUT/guowang-cross/batch_report.json" "$OUT/guowang-cross/model.json" <<'PYEOF'
+import json, sys
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+model = json.load(open(sys.argv[2], encoding="utf-8"))
+mr = report.get("merge_report") or {}
+ns = mr.get("nodes_solved", 0)
+if ns <= 0:
+    print(f"FAIL: guowang cross_file nodes_solved={ns} <= 0")
+    sys.exit(1)
+ndy = mr.get("nodes_derived_y", 0)
+ysyn = (json.load(open(sys.argv[2], encoding="utf-8")).get("components", {}).get("drawing_file", {}).get("properties") or {}).get("y_synthetic_side", 0)
+if ndy <= 0 and not ysyn:
+    print(f"FAIL: nodes_derived_y={ndy} 且 y_synthetic_side=0（应有插值 y 或 synthetic side 恢复）")
+    sys.exit(1)
+front_nodes = [c for c in model.get("components", {}).values() if c.get("kind") == "tower_node" and (c.get("properties") or {}).get("view_type") == "front"]
+if front_nodes and ns < len(front_nodes):
+    print(f"FAIL: nodes_solved={ns} < front_nodes={len(front_nodes)}")
+    sys.exit(1)
+rules = model.get("rules") or {}
+bolt = [k for k in rules if k.startswith("r_bolt_group_")]
+gusset = [k for k in rules if k.startswith("r_gusset_")]
+if not gusset:
+    print("FAIL: 合并模型缺少 r_gusset_* 规则")
+    sys.exit(1)
+if not bolt:
+    print("FAIL: 合并模型缺少 r_bolt_group_* 规则")
+    sys.exit(1)
+print(f"PASS: nodes_solved={ns}/{len(front_nodes) or '?'}, derived_y={ndy}, gusset_rules={len(gusset)}, bolt_rules={len(bolt)}")
+PYEOF
+
+echo "==> [3b/5] guowang strict GLB（M5 synthetic side 直出）"
+"$PY" -m traceability.cli cross-file-batch \
+  examples/external/guowang_35A1/ \
+  --layer-map examples/external/guowang_35A1/layer_overlay.json \
+  --out-dir "$OUT/guowang-glb" >/dev/null
+"$PY" -m traceability.cli solve-tower "$OUT/guowang-glb/model.json" \
+  --format glb --out "$OUT/guowang-glb/tower.glb" >/dev/null
+test -s "$OUT/guowang-glb/tower.glb" || { echo "FAIL: guowang strict GLB 未生成"; exit 1; }
+echo "PASS: guowang strict GLB $(wc -c < "$OUT/guowang-glb/tower.glb") bytes (bars+gusset)"
+
+echo "==> [3c/5] deliver-project 图册级交付"
+"$PY" -m traceability.cli deliver-project \
+  examples/external/guowang_35A1/ \
+  --layer-map examples/external/guowang_35A1/layer_overlay.json \
+  --out-dir "$OUT/project-deliver" >/dev/null
+test -f "$OUT/project-deliver/project_delivery.json" || { echo "FAIL: project_delivery.json 缺失"; exit 1; }
+test -s "$OUT/project-deliver/tower.glb" || { echo "FAIL: deliver-project GLB 缺失"; exit 1; }
+echo "PASS: deliver-project manifest + GLB"
+
+echo "==> [3d/5] deliver-project 图册 Harness + 件号索引"
+"$PY" - "$OUT/project-deliver/project_delivery.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+ph = d.get("project_harness") or {}
+inv = d.get("bar_inventory") or {}
+if ph.get("sheet_count", 0) < 1:
+    print("FAIL: project_harness 缺少 sheet_count")
+    sys.exit(1)
+ready = [r for r in ph.get("results", []) if r.get("rule") == "r_project_sheets_ready"]
+if not ready or ready[0].get("status") != "passed":
+    print("FAIL: r_project_sheets_ready 未 passed")
+    sys.exit(1)
+if inv.get("total_unique_bar_ids", 0) < 1:
+    print("FAIL: bar_inventory 无件号")
+    sys.exit(1)
+print(f"PASS: project_harness sheets={ph['sheet_count']} bar_ids={inv['total_unique_bar_ids']}")
+PYEOF
+
+echo "==> [3e/5] deliver-project master BOM + 模块装配"
+"$PY" - "$OUT/project-deliver/project_delivery.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+bs = d.get("bom_tree_summary") or {}
+if bs.get("conflict_count", 0) != 0:
+    print(f"FAIL: master BOM 冲突 {bs.get('conflict_count')}")
+    sys.exit(1)
+ph = d.get("project_harness") or {}
+bom = next((r for r in ph.get("results", []) if r.get("rule") == "r_project_bom_master"), None)
+if not bom or bom.get("status") != "passed":
+    print("FAIL: r_project_bom_master 未 passed")
+    sys.exit(1)
+asm = d.get("assembly") or {}
+if not asm.get("enabled"):
+    print("FAIL: 模块装配未启用")
+    sys.exit(1)
+print(f"PASS: master BOM ok, assembly={asm.get('mode')}")
+PYEOF
+
+echo "==> [4/5] examples/clear/ 扫描批量（3 view_type + merged model）"
 "$PY" -m traceability.cli run-tower examples/clear/ \
   --out-dir "$OUT/clear-multi" >/dev/null 2>&1 || true
 
@@ -90,7 +184,7 @@ if not model.exists():
 print(f"PASS: view_type={sorted(vts)} + merged model 存在")
 PYEOF
 
-echo "==> [4/4] pytest 全量单测"
+echo "==> [5/5] pytest 全量单测"
 "$PY" -m pytest tests -q
 
 if [ "$WITH_MLLM" = "1" ]; then

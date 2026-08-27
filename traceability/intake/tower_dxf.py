@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 
 # 完整 demo 生成器（16 节点 26 杆件，立面+平面+BOM）在 tower_demo_dxf.py
 from .tower_demo_dxf import make_demo_tower_dxf  # noqa: F401  (复用完整版)
-from .tower_spec import layer_names, bar_id_patterns, view_regions
+from .tower_spec import layer_names, layer_names_for_stem, bar_id_patterns, view_regions, cross_file_infer_side_stems, assembly_split_min_gap_ratio
 
 from ..model import (
     Component,
@@ -94,6 +94,24 @@ def classify_drawing_kind(stem: str) -> dict:
                 "parse_bars": s.startswith("02"),
                 "reason": "文件名前导序号判定"}
     return {"kind": "drawing", "parse_bars": True, "reason": "默认按杆件图解析"}
+
+
+def resolve_drawing_kind(stem: str, overlay: Optional[str | Path | dict] = None) -> dict:
+    """按文件名分流，并允许 overlay view_regions 覆盖 BOM/图签等跳过规则（M3）。"""
+    kind = classify_drawing_kind(stem)
+    if kind["parse_bars"]:
+        return kind
+    for region in view_regions(stem, overlay=overlay):
+        axes = list(region.get("axes") or [])
+        if not axes:
+            continue
+        vk = region.get("kind", "drawing")
+        return {
+            "kind": vk if vk in ("plan", "front", "side", "section", "elevation", "drawing") else "drawing",
+            "parse_bars": True,
+            "reason": f"overlay view_regions[{vk}] 覆盖 {kind['reason']}",
+        }
+    return kind
 
 
 def _layer_hit(layer: str, names: List[str]) -> bool:
@@ -227,7 +245,11 @@ def _extract_bar_label(text: str, bar_id_re: re.Pattern) -> Optional[str]:
 
 
 def _in_region(x: float, y: float, region: dict) -> bool:
-    x0, x1, y0, y1 = region["region"]
+    reg = region.get("region")
+    if reg is None:
+        # overlay 未写 region 时视为整图有效（M3：闲鱼/国网分册平面图）
+        return bool(region.get("axes"))
+    x0, x1, y0, y1 = reg
     return x0 <= x <= x1 and y0 <= y <= y1
 
 
@@ -254,6 +276,7 @@ def _region_axes(region: dict) -> List[str]:
 def _infer_assembly_views(
     raw_segments: List[Dict],
     drawing_kind: str,
+    min_gap_ratio: float = 0.5,
 ) -> List[dict]:
     """无 overlay view_regions 时，按图面结构推断视图区域（P0）。
 
@@ -294,7 +317,7 @@ def _infer_assembly_views(
         if left and right:
             gap = right[0] - left[-1]
             inner = max(max(left) - min(left), max(right) - min(right))
-            if gap > inner * 0.5:
+            if gap > inner * min_gap_ratio:
                 return [
                     {
                         "kind": "front",
@@ -344,10 +367,12 @@ def extract_tower_from_dxf(
 
     dxf_path = str(dxf_path)
     stem = Path(dxf_path).stem
-    drawing_kind = classify_drawing_kind(stem)
+    drawing_kind = resolve_drawing_kind(stem, overlay=layer_map_path)
 
     lm = {
-        "bar_layers": layer_names("bar_layers", DEFAULT_LAYER_MAP["bar_layers"], overlay=layer_map_path),
+        "bar_layers": layer_names_for_stem(
+            stem, "bar_layers", DEFAULT_LAYER_MAP["bar_layers"], overlay=layer_map_path,
+        ),
         "node_layers": layer_names("node_layers", DEFAULT_LAYER_MAP["node_layers"], overlay=layer_map_path),
         "dim_layers": layer_names("dim_layers", DEFAULT_LAYER_MAP["dim_layers"], overlay=layer_map_path),
         "text_layers": layer_names("text_layers", DEFAULT_LAYER_MAP["text_layers"], overlay=layer_map_path),
@@ -403,6 +428,24 @@ def extract_tower_from_dxf(
                     "layer": layer,
                 })
 
+    # M3+ side POC：overlay 声明 infer_side_on_stems 时，尝试从总装图双簇推断侧立面 region
+    if stem in cross_file_infer_side_stems(layer_map_path):
+        gap_ratio = assembly_split_min_gap_ratio(layer_map_path)
+        inferred = _infer_assembly_views(
+            raw_segments, drawing_kind["kind"], min_gap_ratio=gap_ratio,
+        )
+        existing_kinds = {r.get("kind") for r in regions}
+        side_regions = [r for r in inferred if r.get("kind") == "side"]
+        df_side = model.components.get("drawing_file")
+        if side_regions and "side" not in existing_kinds:
+            regions = list(regions) + side_regions
+            if df_side:
+                df_side.properties["side_infer"] = "split"
+        elif df_side:
+            df_side.properties["side_infer"] = "single_facade_no_split"
+        if df_side:
+            df_side.properties["side_infer_gap_ratio"] = gap_ratio
+
     # B2：图签 / BOM 页不进入杆件解析，也不误报「解析失败」
     if not drawing_kind["parse_bars"]:
         _add_dimensions_from_dxf_entities(model, msp, lm, dxf_path, bar_id_re)
@@ -428,7 +471,10 @@ def extract_tower_from_dxf(
         #     * assembly 总装图 -> 左右两簇切 front/side，或单一 front 立面
         #     * node_detail 节点大样 -> detail（空 axes，不参与 merge）
         #     * 其它 -> 单一 drawing 视图（axes=[x,y]，保留旧行为）
-        inferred = _infer_assembly_views(raw_segments, drawing_kind["kind"])
+        inferred = _infer_assembly_views(
+            raw_segments, drawing_kind["kind"],
+            min_gap_ratio=assembly_split_min_gap_ratio(layer_map_path),
+        )
         if inferred:
             regions = inferred
             for seg in raw_segments:
@@ -722,6 +768,16 @@ def extract_tower_from_dxf(
         view_mode = "single_facade"
     df.properties["view_mode"] = view_mode
     df.properties["view_kinds"] = sorted(view_kinds)
+
+    # M3：节点大样（03+ 图纸）→ 节点板 + 螺栓群（Gap 2 主链接入）
+    if drawing_kind["kind"] == "node_detail":
+        detail_regions = [r for r in regions if r.get("kind") == "detail"] or regions
+        from .tower_detail import extract_detail_connections
+
+        extract_detail_connections(
+            model, msp, detail_regions, stem, dxf_path, overlay=layer_map_path,
+        )
+
     return model
 
 

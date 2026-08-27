@@ -140,6 +140,7 @@ def run_tower(
     retry: bool = False,
     human_review: bool = False,
     allow_scan: bool = False,
+    allow_derived_y: bool = False,
     format: str = "glb",
     scale: Optional[str] = None,
     mm_per_px: Optional[float] = None,
@@ -237,11 +238,16 @@ def run_tower(
                     unidentified_layers=(f.get("layers") or {}).get("unidentified_layers"),
                 )
         graph.start("batch", "批量接入（DWG→DXF→intake）", input=str(batch_source))
-        # P0-5：多文件 merge 不做 110kV 式三视图解耦，只在报告里给出
-        # 「按 bar_id 跨文件去重」信息，供人工核对，不假装合 3D。
+        merge_report = batch.get("merge_report") or {}
         cross_dup = batch.get("cross_file_bar_id_dup") or {}
-        graph.finish(files=len(batch["files"]), ok=batch["ok"],
-                     cross_file_duplicate_count=cross_dup.get("duplicate_count", 0))
+        graph.finish(
+            files=len(batch["files"]),
+            ok=batch["ok"],
+            cross_file_duplicate_count=cross_dup.get("duplicate_count", 0),
+            merge_mode=merge_report.get("mode"),
+            nodes_solved=merge_report.get("nodes_solved", 0),
+            nodes_derived_y=merge_report.get("nodes_derived_y", 0),
+        )
 
         model = None
         if merge:
@@ -252,10 +258,24 @@ def run_tower(
                 try:
                     graph.start("compile", "模型编译（规则注入）")
                     from ..intake.tower_pipeline import finalize_tower_model
-                    model = finalize_tower_model(model, bom_path=bom_path, merge=False,
-                                                 allow_scan=allow_scan,
-                                                 layer_map_path=layer_map_path)
-                    graph.finish(rules=len(model.rules), bars=_n(model, "tower_bar"))
+                    # cross_file 路径已在 intake_tower_batch 内 finalize(merge=True)；
+                    # 此处只做 BOM 注入 + 连接详图 Harness 规则，避免重复 merge。
+                    already_merged = (batch.get("merge_report") or {}).get("mode") == "cross_file_view"
+                    model = finalize_tower_model(
+                        model,
+                        bom_path=bom_path,
+                        merge=not already_merged,
+                        allow_scan=allow_scan,
+                        layer_map_path=layer_map_path,
+                    )
+                    graph.finish(
+                        rules=len(model.rules),
+                        bars=_n(model, "tower_bar"),
+                        nodes_solved=sum(
+                            1 for c in model.components.values()
+                            if c.kind == "tower_node" and c.properties.get("solve_status") == "solved"
+                        ),
+                    )
                 except Exception as exc:
                     graph.fail(str(exc))
             else:
@@ -404,7 +424,9 @@ def run_tower(
         graph.start("solve", "3D 约束求解", input=model_path.as_posix())
         try:
             from ..solve.tower_solver import solve_tower, compare_to_golden
-            nodes, problems = solve_tower(model)
+            nodes, problems = solve_tower(
+                model, allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+            )
             golden = None
             if golden_path:
                 golden = compare_to_golden(nodes, golden_path)
@@ -432,10 +454,16 @@ def run_tower(
             try:
                 from ..solve.tower_solver import export_tower_glb, export_tower_obj, SolveError
                 if format == "obj":
-                    export_tower_obj(model, out_dir / "tower.obj", strict=True)
+                    export_tower_obj(
+                        model, out_dir / "tower.obj", strict=True,
+                        allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+                    )
                     exported_glb = (out_dir / "tower.obj").as_posix()
                 else:
-                    export_tower_glb(model, glb_path, strict=True)
+                    export_tower_glb(
+                        model, glb_path, strict=True,
+                        allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+                    )
                     exported_glb = glb_path.as_posix()
             except SolveError as exc:
                 graph.finish(error=str(exc), glb_exported=None)

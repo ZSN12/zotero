@@ -80,7 +80,11 @@ def missing_axes(nodes: Dict[str, Dict]) -> List[str]:
     return missing
 
 
-def solve_tower(model: EngineeringModel, allow_scan: bool = False) -> Tuple[Dict[str, Dict], List[str]]:
+def solve_tower(
+    model: EngineeringModel,
+    allow_scan: bool = False,
+    allow_derived_y: bool = False,
+) -> Tuple[Dict[str, Dict], List[str]]:
     """求解铁塔 3D 节点坐标。
 
     返回 (nodes, problems)。nodes 的坐标已尽量补齐：
@@ -90,6 +94,9 @@ def solve_tower(model: EngineeringModel, allow_scan: bool = False) -> Tuple[Dict
 
     P2-5 闸门：solve_status=pending_review 的扫描候选默认阻断，
     除非 allow_scan=True 且已人工确认（verified）。
+
+    cross_file 插值 y 闸门：y_origin=z_peer_interpolate 且 y_review!=verified
+    默认阻断终版导出，须 confirm-derived-y 后以 --allow-derived-y 导出。
     """
     nodes = collect_nodes(model)
 
@@ -103,6 +110,15 @@ def solve_tower(model: EngineeringModel, allow_scan: bool = False) -> Tuple[Dict
         if unreviewed:
             problems.append(f"{len(unreviewed)} 个扫描候选未人工确认（solve_status=pending_review）；"
                             "请先 confirm-scan 后以 --allow-scan 导出")
+
+    if not allow_derived_y:
+        from ..intake.tower_pipeline import derived_y_pending_nodes
+        pending_y = derived_y_pending_nodes(model)
+        if pending_y:
+            problems.append(
+                f"{len(pending_y)} 个节点 y 为 z-peer 插值且待复核（y_review=pending）；"
+                "请先 confirm-derived-y 后以 --allow-derived-y 导出"
+            )
 
     # 杆件拓扑校验：两端节点必须存在
     node_ids = set(nodes)
@@ -418,11 +434,58 @@ def _section_radius(section: Optional[str]) -> float:
     return 25.0
 
 
+def _gusset_plate_mesh(polygon_global: List, thickness_mm: float):
+    """M5：节点板薄壳实体（polygon_global XY + 沿 Z 拉伸 thickness）。"""
+    import numpy as np
+    import trimesh
+
+    if len(polygon_global) < 3:
+        raise ValueError("polygon_global 不足 3 顶点")
+    pts = np.array([[float(p[0]), float(p[1]), float(p[2]) if len(p) > 2 else 0.0]
+                    for p in polygon_global], dtype=float)
+    z_base = float(np.mean(pts[:, 2]))
+    ring_2d = [(float(x), float(y)) for x, y in pts[:, :2]]
+    thickness = max(float(thickness_mm or 8.0), 1.0)
+    try:
+        from shapely.geometry import Polygon as ShapelyPolygon
+        poly = ShapelyPolygon(ring_2d)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        mesh = trimesh.creation.extrude_polygon(poly, height=thickness)
+    except Exception:
+        n = len(ring_2d)
+        verts = []
+        for x, y in ring_2d:
+            verts.append([x, y, z_base])
+        for x, y in ring_2d:
+            verts.append([x, y, z_base + thickness])
+        verts = np.array(verts, dtype=float)
+        faces = []
+        for i in range(n):
+            j = (i + 1) % n
+            a, b, c, d = i, j, n + j, n + i
+            faces.append([a, b, c])
+            faces.append([a, c, d])
+        for k in range(1, n - 1):
+            faces.append([0, k, k + 1])
+        for k in range(1, n - 1):
+            faces.append([n, n + k + 1, n + k])
+        mesh = trimesh.Trimesh(vertices=verts, faces=np.array(faces, dtype=int), process=True)
+    return mesh
+
+
+def _iter_gussets(model: EngineeringModel):
+    for cid, comp in model.components.items():
+        if comp.kind == "gusset_plate":
+            yield cid, comp
+
+
 def export_tower_glb(
     model: EngineeringModel,
     out_path: str | Path,
     strict: bool = True,
     allow_scan: bool = False,
+    allow_derived_y: bool = False,
 ) -> str:
     """从模型求解并把杆件实体化导出 GLB（Phase 3）。
 
@@ -434,7 +497,9 @@ def export_tower_glb(
     except ImportError as e:  # pragma: no cover
         raise SolveError("导出 GLB 需要 trimesh：pip install trimesh") from e
 
-    nodes, problems = solve_tower(model, allow_scan=allow_scan)
+    nodes, problems = solve_tower(
+        model, allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+    )
     if strict and problems:
         raise SolveError(
             "存在未求解/待补测项，拒绝终版导出：\n  - " + "\n  - ".join(problems)
@@ -452,6 +517,7 @@ def export_tower_glb(
     }
 
     meshes: List = []
+    mesh_meta: List[Dict[str, str]] = []
     node_ids = list(nodes)
     total_bars = sum(1 for _ in _iter_bars(model))
     skipped: List[str] = []
@@ -485,22 +551,62 @@ def export_tower_glb(
         mesh.apply_transform(transform)
         color = layer_colors.get(bar.properties.get("layer", ""), [180, 180, 180, 255])
         mesh.visual.face_colors = color
+        bid = str(bar.properties.get("bar_id") or cid)
+        extras = {"bar_id": bid, "component_id": cid}
+        mesh.metadata = dict(extras)
         meshes.append(mesh)
+        mesh_meta.append(extras)
+
+    gusset_count = 0
+    for cid, gusset in _iter_gussets(model):
+        poly = gusset.properties.get("polygon_global") or []
+        if len(poly) < 3:
+            continue
+        thickness = gusset.properties.get("thickness_mm") or 8.0
+        try:
+            gmesh = _gusset_plate_mesh(poly, float(thickness))
+        except Exception:
+            continue
+        gmesh.visual.face_colors = [120, 120, 200, 220]
+        plate_id = str(gusset.properties.get("detail_id") or cid)
+        extras = {"bar_id": f"gusset_{plate_id}", "component_id": cid, "kind": "gusset_plate"}
+        gmesh.metadata = dict(extras)
+        meshes.append(gmesh)
+        mesh_meta.append(extras)
+        gusset_count += 1
+
+    from ..connection.bolt_mesh import bolt_hole_meshes
+    bolt_meshes, bolt_meta = bolt_hole_meshes(model)
+    for bmesh, extras in zip(bolt_meshes, bolt_meta):
+        meshes.append(bmesh)
+        mesh_meta.append(extras)
 
     if not meshes:
         raise SolveError("没有可实体化的杆件（请先完成跨视图合并 --merge）")
 
-    # E4：严格模式下导出杆件数必须等于模型杆件数，不允许静默丢杆件
+    # E4：严格模式下导出杆件数必须等于模型杆件数（节点板不计入杆件数）
     if strict and skipped:
         raise SolveError(
-            f"GLB 导出杆件数与模型不一致：{len(meshes)}/{total_bars}，"
+            f"GLB 导出杆件数与模型不一致：{len(meshes) - gusset_count}/{total_bars}，"
             f"跳过 {len(skipped)} 根：{skipped[:5]}"
         )
 
-    scene = trimesh.Scene(meshes)
+    scene = trimesh.Scene()
+    for mesh, extras in zip(meshes, mesh_meta):
+        scene.add_geometry(
+            mesh,
+            geom_name=extras["component_id"],
+            metadata=extras,
+        )
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     scene.export(str(out_path))
+    # 侧车索引：便于 Web 在不读 GLB extras 时回退
+    map_path = out_path.with_suffix(".bar_map.json")
+    map_path.write_text(
+        __import__("json").dumps(mesh_meta, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     return str(out_path)
 
 
@@ -563,6 +669,7 @@ def export_tower_step(
     out_path: str | Path,
     strict: bool = True,
     allow_scan: bool = False,
+    allow_derived_y: bool = False,
 ) -> str:
     """E3：STEP 导出（骨架线框或 L 截面实体）。
 
@@ -572,7 +679,9 @@ def export_tower_step(
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    nodes, problems = solve_tower(model, allow_scan=allow_scan)
+    nodes, problems = solve_tower(
+        model, allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+    )
     if strict and problems:
         raise SolveError(
             "存在未求解/待补测项，拒绝 STEP 导出：\n  - " + "\n  - ".join(problems)
@@ -625,12 +734,15 @@ def export_tower_obj(
     out_path: str | Path,
     strict: bool = True,
     allow_scan: bool = False,
+    allow_derived_y: bool = False,
 ) -> str:
     """从模型求解并导出 OBJ。
 
     strict=True 时，任何缺失轴都会阻断导出（沿用「placeholder 阻断终版」原则）。
     """
-    nodes, problems = solve_tower(model, allow_scan=allow_scan)
+    nodes, problems = solve_tower(
+        model, allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+    )
     if strict and problems:
         raise SolveError(
             "存在未求解/待补测项，拒绝终版导出：\n  - " + "\n  - ".join(problems)

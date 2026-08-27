@@ -231,7 +231,9 @@ def cmd_intake_tower(args):
 
 def cmd_solve_tower(args):
     model = load_model(args.file)
-    nodes, problems = solve_tower(model, allow_scan=args.allow_scan)
+    nodes, problems = solve_tower(
+        model, allow_scan=args.allow_scan, allow_derived_y=args.allow_derived_y,
+    )
     print(f"节点 {len(nodes)} 个，待补测/拓扑问题 {len(problems)} 项")
     origin_summary = axis_origin_summary(nodes)
     print("坐标来源（measured/derived/placeholder）：")
@@ -247,9 +249,15 @@ def cmd_solve_tower(args):
     fmt = args.format or Path(args.out).suffix.lstrip(".").lower() or "obj"
     try:
         if fmt == "glb":
-            export_tower_glb(model, args.out, strict=not args.force, allow_scan=args.allow_scan)
+            export_tower_glb(
+                model, args.out, strict=not args.force,
+                allow_scan=args.allow_scan, allow_derived_y=args.allow_derived_y,
+            )
         else:
-            export_tower_obj(model, args.out, strict=not args.force, allow_scan=args.allow_scan)
+            export_tower_obj(
+                model, args.out, strict=not args.force,
+                allow_scan=args.allow_scan, allow_derived_y=args.allow_derived_y,
+            )
     except SolveError as e:
         print(f"✗ {e}")
         sys.exit(1)
@@ -364,6 +372,7 @@ def cmd_run_tower(args):
         retry=args.retry,
         human_review=args.human_review,
         allow_scan=args.allow_scan,
+        allow_derived_y=args.allow_derived_y,
         format=args.format,
         scale=args.scale,
         mm_per_px=args.mm_per_px,
@@ -379,6 +388,77 @@ def cmd_run_tower(args):
     print(f"  Harness 摘要 -> {result.get('summary_path')}")
     if result.get("glb_path"):
         print(f"  3D -> {result.get('glb_path')}")
+    if not result.get("ok"):
+        sys.exit(1)
+
+
+def cmd_cross_file_batch(args):
+    """Phase D：多 DWG 分文件真 3D 视图合并（merge_view_coordinates）。"""
+    from .intake.tower_batch import cross_file_batch
+    result = cross_file_batch(
+        args.input_dir,
+        args.out_dir,
+        layer_map_path=args.layer_map,
+        bom_path=args.bom,
+    )
+    print(f"✓ cross_file_batch：{len(result['files'])} 个文件，mode={result.get('merge_report', {}).get('mode')}")
+    if result.get("model_path"):
+        print(f"  合并模型 -> {result['model_path']}")
+    print(f"  报告 -> {result['batch_report']}")
+    if not result.get("ok"):
+        sys.exit(1)
+
+
+def cmd_build_project(args):
+    """Gap 1：构建图册级 ProjectModel 索引。"""
+    from .project.model import build_project_from_directory, save_project
+    project = build_project_from_directory(
+        args.input_dir,
+        args.project_id or Path(args.input_dir).name,
+        layer_map_path=args.layer_map,
+        out_dir=args.out_dir,
+    )
+    path = save_project(project, Path(args.out_dir) / "project.json")
+    print(f"✓ ProjectModel：{len(project.sheets)} sheets -> {path}")
+
+
+def cmd_deliver_project(args):
+    """M6：图册级一键交付（Project + cross_file + Harness + GLB）。"""
+    from .project.delivery import deliver_project
+
+    result = deliver_project(
+        args.input_dir,
+        args.out_dir,
+        project_id=args.project_id,
+        layer_map_path=args.layer_map,
+        bom_path=args.bom,
+        export_glb=not args.no_glb,
+    )
+    print(f"✓ deliver-project：ok={result.get('ok')} harness_all_passed={result.get('harness_all_passed')}")
+    print(f"  manifest -> {result.get('manifest_path')}")
+    if result.get("model_path"):
+        print(f"  model    -> {result['model_path']}")
+    if result.get("glb_path"):
+        print(f"  glb      -> {result['glb_path']} meshes={result.get('mesh_stats')}")
+    if result.get("glb_error"):
+        print(f"  glb ✗    -> {result['glb_error']}")
+    mr = result.get("merge_report") or {}
+    print(f"  merge    -> nodes={mr.get('nodes_solved')} bars={mr.get('bars')} "
+          f"gussets={mr.get('gussets_anchored')} synthetic_y={mr.get('y_synthetic_side')}")
+    ph = result.get("project_harness") or {}
+    inv = result.get("bar_inventory") or {}
+    if ph:
+        print(f"  project  -> harness={ph.get('counts')} sheets={ph.get('sheet_count')}")
+    if inv:
+        print(f"  bar_inv  -> unique={inv.get('total_unique_bar_ids')} "
+              f"cross_sheet={inv.get('cross_sheet_count', 0)}")
+    bs = result.get("bom_tree_summary") or {}
+    if bs.get("master_bom_path"):
+        print(f"  master   -> conflicts={bs.get('conflict_count', 0)} "
+              f"physical_ids={len(result.get('physical_bar_counts') or {})}")
+    asm = result.get("assembly") or {}
+    if asm.get("enabled"):
+        print(f"  assembly -> mode={asm.get('mode')} modules={asm.get('module_ids')}")
     if not result.get("ok"):
         sys.exit(1)
 
@@ -460,6 +540,7 @@ def cmd_deliver_tower(args):
         retry=args.retry,
         human_review=args.human_review,
         allow_scan=args.allow_scan,
+        allow_derived_y=args.allow_derived_y,
         format=args.format,
     )
     if not result.get("ok"):
@@ -493,6 +574,20 @@ def cmd_confirm_scan(args):
     save_model(model, args.file)
     print(f"✓ 扫描候选已人工确认（solve_status=verified）-> {args.file}")
     print("  现在可用：solve-tower --allow-scan 进行 strict 导出")
+
+
+def cmd_confirm_derived_y(args):
+    """cross_file z-peer 插值 y：人工复核后 y_review=verified。"""
+    from .intake.tower_pipeline import confirm_cross_file_derived_y, derived_y_pending_nodes
+    model = load_model(args.file)
+    pending = derived_y_pending_nodes(model)
+    if not pending:
+        print(f"✓ 无待复核插值 y 节点 -> {args.file}")
+        return
+    model = confirm_cross_file_derived_y(model)
+    save_model(model, args.file)
+    print(f"✓ 插值 y 已人工复核（{len(pending)} 个节点 y_review=verified）-> {args.file}")
+    print("  现在可用：solve-tower --allow-derived-y 进行 strict GLB 导出")
 
 
 def cmd_merge_scans(args):
@@ -590,6 +685,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_solve.add_argument("--force", action="store_true", help="存在缺失轴时仍强制导出（仅供预览）")
     p_solve.add_argument("--golden", help="金标准 JSON 路径（验收：坐标偏差 2%% 以内）")
     p_solve.add_argument("--allow-scan", action="store_true", help="允许已人工确认的扫描候选导出（P2-5）")
+    p_solve.add_argument("--allow-derived-y", action="store_true",
+                         help="允许已人工复核的 z-peer 插值 y 导出（cross_file）")
     p_solve.set_defaults(func=cmd_solve_tower)
 
     # ---- P0/P1/P2 编排与交付命令 ----
@@ -604,6 +701,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--retry", action="store_true", help="失败步骤重试")
     p_run.add_argument("--human-review", action="store_true", help="pending/failed 标记人工复核")
     p_run.add_argument("--allow-scan", action="store_true", help="允许扫描候选进入求解链（P2-5）")
+    p_run.add_argument("--allow-derived-y", action="store_true",
+                       help="允许已复核的 z-peer 插值 y 进入 GLB 导出")
     p_run.add_argument("--format", choices=["obj", "glb"], default="glb")
     p_run.add_argument("--scale", help="扫描图比例尺")
     p_run.add_argument("--mm-per-px", type=float, help="扫描图 mm/px")
@@ -618,6 +717,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_batch.add_argument("--layer-map", help="per-project overlay JSON（P1-5）")
     p_batch.add_argument("--merge", action="store_true", help="多文件合并为单个 EngineeringModel（B7）")
     p_batch.set_defaults(func=cmd_intake_tower_batch)
+
+    p_cross = sub.add_parser("cross-file-batch", help="Phase D：多 DWG 分文件真 3D 视图合并")
+    p_cross.add_argument("input_dir")
+    p_cross.add_argument("--out-dir", default="out/cross-file")
+    p_cross.add_argument("--layer-map", help="per-project overlay JSON")
+    p_cross.add_argument("--bom", help="BOM CSV")
+    p_cross.set_defaults(func=cmd_cross_file_batch)
+
+    p_proj = sub.add_parser("build-project", help="Gap 1：构建图册级 ProjectModel")
+    p_proj.add_argument("input_dir")
+    p_proj.add_argument("--out-dir", default="out/project")
+    p_proj.add_argument("--project-id", help="项目 ID（默认取目录名）")
+    p_proj.add_argument("--layer-map", help="per-project overlay JSON")
+    p_proj.set_defaults(func=cmd_build_project)
+
+    p_dproj = sub.add_parser("deliver-project", help="M6：图册级一键交付（Project+cross_file+GLB）")
+    p_dproj.add_argument("input_dir")
+    p_dproj.add_argument("--out-dir", default="out/project-delivery")
+    p_dproj.add_argument("--project-id", help="项目 ID（默认取目录名）")
+    p_dproj.add_argument("--layer-map", help="per-project overlay JSON")
+    p_dproj.add_argument("--bom", help="BOM CSV")
+    p_dproj.add_argument("--no-glb", action="store_true", help="跳过 GLB 导出")
+    p_dproj.set_defaults(func=cmd_deliver_project)
 
     p_parse = sub.add_parser("parse-report", help="输出 PARSE_RATE_REPORT 同款 JSON（F3）")
     p_parse.add_argument("file")
@@ -636,12 +758,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_deliver.add_argument("--retry", action="store_true")
     p_deliver.add_argument("--human-review", action="store_true")
     p_deliver.add_argument("--allow-scan", action="store_true")
+    p_deliver.add_argument("--allow-derived-y", action="store_true",
+                           help="允许已复核的 z-peer 插值 y 进入 GLB 导出")
     p_deliver.add_argument("--format", choices=["obj", "glb"], default="glb")
     p_deliver.set_defaults(func=cmd_deliver_tower)
 
     p_confirm = sub.add_parser("confirm-scan", help="人工确认扫描候选（P2-5）")
     p_confirm.add_argument("file")
     p_confirm.set_defaults(func=cmd_confirm_scan)
+
+    p_confirm_y = sub.add_parser("confirm-derived-y", help="人工复核 cross_file z-peer 插值 y")
+    p_confirm_y.add_argument("file")
+    p_confirm_y.set_defaults(func=cmd_confirm_derived_y)
 
     p_mscan = sub.add_parser("merge-scans", help="front+side 扫描图融合（P2-4）")
     p_mscan.add_argument("--front", required=True)

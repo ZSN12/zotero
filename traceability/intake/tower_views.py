@@ -22,7 +22,14 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from ..model import Component, EngineeringModel
-from .tower_spec import view_regions
+from .tower_spec import (
+    view_regions,
+    cross_file_z_ref,
+    cross_file_allow_z_peer_interpolate,
+    cross_file_synthetic_side_from_front,
+    cross_file_plan_sheets,
+    cross_file_z_band_scale,
+)
 
 # 三视图展开系数（与 schema/tower_layer_map.json 生成器约定一致）
 DEFAULT_EXPAND = 0.08
@@ -112,6 +119,327 @@ def _hungarian(cost: List[List[float]]) -> List[Tuple[int, int]]:
         return _linear_sum_assignment_fallback(cost)
 
 
+def _norm_view_x(val: float, items: List[Component]) -> float:
+    xs = [float(c.properties["view_x"]) for c in items if c.properties.get("view_x") is not None]
+    if not xs:
+        return 0.5
+    lo, hi = min(xs), max(xs)
+    return (val - lo) / (hi - lo) if hi - lo > 1e-6 else 0.5
+
+
+def _propagate_front_y_via_bar_id(
+    model: EngineeringModel,
+    nodes_by_view: Dict[str, List[Tuple[str, Component]]],
+    merged: Dict[str, Dict[str, Optional[float]]],
+    eps: float,
+) -> None:
+    """同 bar_id 的 plan 杆件端点 y → front 杆件端点（cross_file 提升解算率）。"""
+    from collections import defaultdict
+
+    node_index = {cid: comp for cid, comp in _tower_nodes(model)}
+
+    plan_bars: Dict[str, List[Component]] = defaultdict(list)
+    front_bars: Dict[str, List[Component]] = defaultdict(list)
+    for _, bar in _tower_bars(model):
+        bid = str(bar.properties.get("bar_id") or "")
+        if not bid or bid.startswith("UNLABELED"):
+            continue
+        vt = bar.properties.get("view_type")
+        if vt == "plan":
+            plan_bars[bid].append(bar)
+        elif vt == "front":
+            front_bars[bid].append(bar)
+
+    def _match_endpoints(plan_bar: Component, front_bar: Component) -> List[Tuple[Component, Component]]:
+        pairs: List[Tuple[Component, Component]] = []
+        plan_ends: List[Component] = []
+        front_ends: List[Component] = []
+        for end in ("from_node", "to_node"):
+            pnid = plan_bar.properties.get(end)
+            fnid = front_bar.properties.get(end)
+            if pnid and pnid in node_index:
+                plan_ends.append(node_index[pnid])
+            if fnid and fnid in node_index:
+                front_ends.append(node_index[fnid])
+        if not plan_ends or not front_ends:
+            return pairs
+        used: set = set()
+        for pe in plan_ends:
+            px = pe.properties.get("view_x")
+            if px is None:
+                continue
+            best_f, best_d = None, float("inf")
+            for fe in front_ends:
+                if fe.id in used:
+                    continue
+                fx = fe.properties.get("view_x")
+                if fx is None:
+                    continue
+                d = abs(
+                    _norm_view_x(float(px), plan_ends) - _norm_view_x(float(fx), front_ends)
+                )
+                if d < best_d:
+                    best_d, best_f = d, fe
+            if best_f is not None and best_d <= 0.4:
+                pairs.append((best_f, pe))
+                used.add(best_f.id)
+        return pairs
+
+    for bid in set(plan_bars) & set(front_bars):
+        for pbar in plan_bars[bid]:
+            for fbar in front_bars[bid]:
+                for fnode, pnode in _match_endpoints(pbar, fbar):
+                    if fnode.properties.get("solve_status") == "solved":
+                        continue
+                    fx = fnode.properties.get("view_x")
+                    fz = fnode.properties.get("view_y")
+                    py = pnode.properties.get("view_y")
+                    if fx is None or fz is None or py is None:
+                        continue
+                    solved = {
+                        "x": round(float(fx), 2),
+                        "y": round(float(py), 2),
+                        "z": round(float(fz), 2),
+                    }
+                    fnode.properties.update({**solved, "solve_status": "solved"})
+                    merged[fnode.id] = dict(solved)
+
+
+def _interpolate_front_y_from_z_peers(
+    model: EngineeringModel,
+    merged: Dict[str, Dict[str, Optional[float]]],
+    eps: float,
+) -> None:
+    """同 Z 带内已解算节点的 y，对剩余 front 节点按 view_x 线性插值（cross_file 补全）。"""
+    front_nodes = [
+        comp for _, comp in _tower_nodes(model)
+        if comp.properties.get("view_type") == "front"
+    ]
+    solved = [
+        c for c in front_nodes
+        if c.properties.get("solve_status") == "solved" and c.properties.get("y") is not None
+    ]
+    for comp in front_nodes:
+        if comp.properties.get("solve_status") == "solved":
+            continue
+        ux = comp.properties.get("view_x")
+        uz = comp.properties.get("view_y")
+        if ux is None or uz is None:
+            continue
+        peers = [
+            s for s in solved
+            if abs(float(s.properties.get("view_y") or 0) - float(uz)) <= eps
+        ]
+        if len(peers) < 2:
+            continue
+        peers.sort(key=lambda s: float(s.properties.get("view_x") or 0))
+        left = [s for s in peers if float(s.properties.get("view_x") or 0) <= float(ux)]
+        right = [s for s in peers if float(s.properties.get("view_x") or 0) >= float(ux)]
+        if left and right:
+            s1 = max(left, key=lambda s: float(s.properties.get("view_x") or 0))
+            s2 = min(right, key=lambda s: float(s.properties.get("view_x") or 0))
+            if s1.id == s2.id:
+                s1, s2 = sorted(peers, key=lambda s: abs(float(s.properties.get("view_x") or 0) - float(ux)))[:2]
+        else:
+            s1, s2 = sorted(peers, key=lambda s: abs(float(s.properties.get("view_x") or 0) - float(ux)))[:2]
+        x1, y1 = float(s1.properties["view_x"]), float(s1.properties["y"])
+        x2, y2 = float(s2.properties["view_x"]), float(s2.properties["y"])
+        if abs(x2 - x1) < 1e-6:
+            y = y1
+        else:
+            t = (float(ux) - x1) / (x2 - x1)
+            y = y1 + t * (y2 - y1)
+        solved_dict = {
+            "x": round(float(ux), 2),
+            "y": round(float(y), 2),
+            "z": round(float(uz), 2),
+        }
+        comp.properties.update({
+            **solved_dict,
+            "solve_status": "solved",
+            "y_origin": "z_peer_interpolate",
+            "y_review": "pending",
+        })
+        ao = dict(comp.properties.get("axis_origin") or {})
+        ao["y"] = "derived"
+        comp.properties["axis_origin"] = ao
+        merged[comp.id] = dict(solved_dict)
+
+
+def _synthesize_side_nodes_from_front(
+    model: EngineeringModel,
+    overlay: Optional[str | Path | dict] = None,
+) -> int:
+    """M5：无 side 分册时，从 front 1:1 生成 synthetic side 节点（供 front+side 解 y）。"""
+    if not cross_file_synthetic_side_from_front(overlay=overlay):
+        return 0
+    if any(
+        c.properties.get("view_type") == "side"
+        for c in model.components.values()
+        if c.kind == "tower_node"
+    ):
+        return 0
+
+    from ..model import Component
+
+    count = 0
+    for cid, comp in list(model.components.items()):
+        if comp.kind != "tower_node" or comp.properties.get("view_type") != "front":
+            continue
+        p = comp.properties
+        if p.get("view_x") is None or p.get("view_y") is None:
+            continue
+        nid = p.get("node_id") or cid.split("__")[-1]
+        side_id = f"{cid.rsplit('__', 1)[0]}__side_syn_{nid}" if "__" in cid else f"side_syn_{nid}"
+        if side_id in model.components:
+            continue
+        model.add_component(Component(
+            id=side_id,
+            name=f"[syn-side] {comp.name}",
+            kind="tower_node",
+            source=comp.source,
+            properties={
+                "node_id": nid,
+                "view_type": "side",
+                "view_x": p.get("view_x"),
+                "view_y": p.get("view_y"),
+                "source_file": p.get("source_file"),
+                "drawing_view": p.get("drawing_view"),
+                "synthetic_pair": cid,
+                "y_origin": "synthetic_side_from_front",
+                "solve_status": "partial",
+                "axis_origin": dict(p.get("axis_origin") or {}),
+            },
+        ))
+        count += 1
+    df = model.components.get("drawing_file")
+    if df is not None and count:
+        df.properties["synthetic_side_nodes"] = count
+    return count
+
+
+def _recover_y_via_synthetic_side(
+    model: EngineeringModel,
+    merged: Dict[str, Dict[str, Optional[float]]],
+    overlay: Optional[str | Path | dict] = None,
+) -> int:
+    """M5：front+synthetic side 同 view_x 时，用展开线性解耦恢复 y。"""
+    if not cross_file_synthetic_side_from_front(overlay=overlay):
+        return 0
+    front_meta = _region_meta(_model_stem(model), overlay=overlay).get("front", {})
+    a = float(front_meta.get("y_expand", DEFAULT_EXPAND)) if front_meta else DEFAULT_EXPAND
+    side_by_pair: Dict[str, Component] = {}
+    for cid, comp in model.components.items():
+        if comp.kind != "tower_node" or comp.properties.get("view_type") != "side":
+            continue
+        pair = comp.properties.get("synthetic_pair")
+        if pair:
+            side_by_pair[str(pair)] = comp
+
+    recovered = 0
+    for fcid, fcomp in list(model.components.items()):
+        if fcomp.kind != "tower_node" or fcomp.properties.get("view_type") != "front":
+            continue
+        if fcomp.properties.get("solve_status") == "solved" and fcomp.properties.get("y") is not None:
+            continue
+        scomp = side_by_pair.get(fcid)
+        if scomp is None:
+            continue
+        fp, sp = fcomp.properties, scomp.properties
+        xp, yp = fp.get("view_x"), sp.get("view_x")
+        z = fp.get("view_y")
+        if xp is None or yp is None or z is None:
+            continue
+        try:
+            x, y = _linear_solve(float(xp), float(yp), a)
+        except (ZeroDivisionError, ValueError):
+            continue
+        solved = {
+            "x": round(float(x), 2),
+            "y": round(float(y), 2),
+            "z": round(float(z), 2),
+        }
+        fp.update({
+            **solved,
+            "solve_status": "solved",
+            "y_origin": "synthetic_side_from_front",
+            "y_review": "verified",
+        })
+        ao = dict(fp.get("axis_origin") or {})
+        ao["y"] = "derived"
+        fp["axis_origin"] = ao
+        merged[fcid] = dict(solved)
+        recovered += 1
+    return recovered
+
+
+def _pair_front_plan_at_z(
+    model: EngineeringModel,
+    nodes_by_view: Dict[str, List[Tuple[str, Component]]],
+    merged: Dict[str, Dict[str, Optional[float]]],
+    *,
+    z_ref: Optional[float],
+    z_band: float,
+    cost_threshold: float = 0.35,
+) -> int:
+    """front+plan 匈牙利配对（单 z 带），返回新解算节点数。"""
+    plan_nodes_list = nodes_by_view.get("plan", [])
+    front_at_z: List[Tuple[str, Component]] = []
+    for cid, comp in nodes_by_view.get("front", []):
+        if comp.properties.get("solve_status") == "solved":
+            continue
+        p = comp.properties
+        z = p.get("view_y")
+        if z is None:
+            continue
+        if z_ref is not None and abs(float(z) - float(z_ref)) > z_band:
+            continue
+        if p.get("view_x") is not None:
+            front_at_z.append((cid, comp))
+
+    if not front_at_z or not plan_nodes_list:
+        return 0
+
+    def _norm_x(val: float, items: List[Tuple[str, Component]]) -> float:
+        xs = [c.properties["view_x"] for _, c in items if c.properties.get("view_x") is not None]
+        if not xs:
+            return 0.5
+        lo, hi = min(xs), max(xs)
+        return (val - lo) / (hi - lo) if hi - lo > 1e-6 else 0.5
+
+    n_f, n_p = len(front_at_z), len(plan_nodes_list)
+    n = max(n_f, n_p)
+    cost = [[1.0] * n for _ in range(n)]
+    for i, (_, fc) in enumerate(front_at_z):
+        fx = fc.properties["view_x"]
+        for j, (_, pc) in enumerate(plan_nodes_list):
+            px = pc.properties.get("view_x")
+            if px is None:
+                cost[i][j] = float("inf")
+                continue
+            cost[i][j] = abs(_norm_x(float(fx), front_at_z) - _norm_x(float(px), plan_nodes_list))
+    pairs = _hungarian(cost)
+    paired = 0
+    for i, j in pairs:
+        if i >= n_f or j >= n_p:
+            continue
+        if cost[i][j] > cost_threshold:
+            continue
+        fcid, fcomp = front_at_z[i]
+        _, pcomp = plan_nodes_list[j]
+        fp, pp = fcomp.properties, pcomp.properties
+        x = fp.get("view_x")
+        z = fp.get("view_y")
+        y = pp.get("view_y")
+        if x is None or z is None or y is None:
+            continue
+        solved = {"x": round(float(x), 2), "y": round(float(y), 2), "z": round(float(z), 2)}
+        merged[fcid] = dict(solved)
+        fp.update({**solved, "solve_status": "solved"})
+        paired += 1
+    return paired
+
+
 def merge_view_coordinates(
     model: EngineeringModel,
     overlay: Optional[str | Path | dict] = None,
@@ -174,6 +502,46 @@ def merge_view_coordinates(
             p["x"], p["y"], p["z"] = round(x, 2), round(float(y_plan), 2), round(float(z), 2)
             p["solve_status"] = "solved"
             merged[cid] = {"x": x, "y": y_plan, "z": z}
+
+    # ---- front + plan 跨文件配对（M3/M5：多 z 平面 plan_sheets）----
+    z_band = eps * cross_file_z_band_scale(overlay=overlay)
+    plan_specs = cross_file_plan_sheets(overlay=overlay)
+    plan_nodes_all = nodes_by_view.get("plan", [])
+    paired_total = 0
+    if plan_specs and plan_nodes_all:
+        for spec in plan_specs:
+            z_ref = spec.get("z_level")
+            if z_ref is None:
+                z_ref = cross_file_z_ref(overlay=overlay)
+            plan_at_z = [
+                (cid, comp) for cid, comp in plan_nodes_all
+                if z_ref is None
+                or comp.properties.get("z_level") is None
+                or abs(float(comp.properties.get("z_level", 0)) - float(z_ref)) <= z_band
+            ]
+            if not plan_at_z:
+                plan_at_z = list(plan_nodes_all)
+            nodes_by_view_plan = dict(nodes_by_view)
+            nodes_by_view_plan["plan"] = plan_at_z
+            paired_total += _pair_front_plan_at_z(
+                model, nodes_by_view_plan, merged, z_ref=z_ref, z_band=z_band,
+            )
+    df = model.components.get("drawing_file")
+    if df is not None and paired_total:
+        df.properties["plan_pairings"] = paired_total
+
+    # ---- M5：synthetic side → front+side 解 y ----
+    _synthesize_side_nodes_from_front(model, overlay=overlay)
+    syn_recovered = _recover_y_via_synthetic_side(model, merged, overlay=overlay)
+    if df is not None and syn_recovered:
+        df.properties["y_synthetic_side"] = syn_recovered
+
+    # ---- front + plan bar_id 端点传播 y（共享件号杆件）----
+    _propagate_front_y_via_bar_id(model, nodes_by_view, merged, eps)
+
+    # ---- cross_file：同 Z 带 y 插值（需 overlay 显式开启）----
+    if cross_file_allow_z_peer_interpolate(overlay=overlay):
+        _interpolate_front_y_from_z_peers(model, merged, eps)
 
     # ---- front + side + section 三视图线性解耦 ----
     front_meta = meta.get("front", {})
@@ -278,7 +646,11 @@ def merge_view_bars(
 
     primary_nodes = {cid for cid, c in _tower_nodes(model)
                      if c.properties.get("view_type") == primary}
-    primary_bars = [c for c in bars if c.properties.get("view_type") == primary]
+    primary_bars = [
+        c for c in bars
+        if c.properties.get("view_type") == primary
+        and c.properties.get("from_node") != c.properties.get("to_node")
+    ]
 
     # BOM 长度表（dim_bom_length_*）与截面表
     bom_len: Dict[str, float] = {}
@@ -325,10 +697,13 @@ def merge_view_bars(
             bar.properties["section"] = bom_sec.get(bid)
             used_ids.add(bid)
 
-    # 重建组件：只保留主视图节点/杆件 + 图纸上下文 + BOM 行
+    # 重建组件：保留主视图节点/杆件 + 图纸上下文 + BOM + 连接详图
+    _KEEP_KINDS = frozenset({
+        "drawing_file", "bom_row", "gusset_plate", "bolt_group", "detail_view",
+    })
     keep_components = {}
     for cid, c in model.components.items():
-        if c.kind == "drawing_file" or c.kind == "bom_row":
+        if c.kind in _KEEP_KINDS:
             keep_components[cid] = c
     for cid in sorted(primary_nodes):
         keep_components[cid] = model.components[cid]

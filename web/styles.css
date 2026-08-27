@@ -25,5 +25,23 @@ td.passed { color:#0a7d33; } td.failed { color:#c62828; } td.running { color:#b2
 .bar-item .src { color:#5b6472; font-size:11px; }
 .harness { font-size:12px; margin-top:8px; white-space:pre-wrap; }
 .evidence-panel { grid-column: span 2; }
-.evidence-controls { display:flex; gap:12px; align-items:center; margin-bottom:8px; font-size:13px; }
+.audit-panel { grid-column: span 2; font-size:12px; }
+.audit-log { max-height:180px; overflow:auto; background:#f8f9fb; border:1px solid var(--border); border-radius:6px; padding:8px; }
+.audit-row { border-bottom:1px solid var(--border); padding:3px 0; }
+.audit-ts { color:#5b6472; font-size:11px; }
+.evidence-controls { display:flex; gap:12px; align-items:center; margin-bottom:8px; font-size:13px; flex-wrap:wrap; }
+.project-panel { grid-column: span 2; }
+.project-sheets { max-height:200px; overflow:auto; font-size:12px; margin-top:8px; }
+.project-sheet-row { border-bottom:1px solid var(--border); padding:4px 2px; cursor:pointer; }
+.project-sheet-row:hover { background:#eef4fb; }
+.project-sheet-row.active { background:#e3f2fd; }
+.project-table { width:100%; margin-top:8px; font-size:12px; }
+.project-table td.passed { color:#0a7d33; }
+.project-table td.failed { color:#c62828; }
+.project-table td.pending { color:#b26a00; }
+.project-modules { font-size:12px; margin-top:6px; color:#5b6472; }
+.project-bom { font-size:12px; margin-top:8px; max-height:160px; overflow:auto; }
+.project-bom .conflict { color:#c62828; }
+.status.derived-y-pending { color:#b26a00; }
+.status.derived-y-ok { color:#0a7d33; }
 #evidence-canvas { width:100%; max-width:1000px; height:auto; border:1px solid var(--border); border-radius:6px; background:#0e1116; }

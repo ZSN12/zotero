@@ -45,17 +45,37 @@
   </section>
 
   <section class="panel evidence-panel">
-    <h2>5. 2D 证据层（点杆件在 2D 视图上高亮）</h2>
+    <h2>5. 2D 证据层（3D↔2D 双向高亮）</h2>
     <div class="evidence-controls">
       <label>源图（可选，铺底对齐）<input type="file" id="source-image" accept=".png,.jpg,.jpeg" /></label>
       <button id="clear-2d">清空高亮</button>
+      <button id="confirm-scan" disabled>人工扫描确认</button>
+      <button id="confirm-derived-y" disabled>插值 Y 复核</button>
+      <button id="export-glb" disabled>导出 GLB（strict）</button>
     </div>
     <canvas id="evidence-canvas" width="800" height="600"></canvas>
-    <div id="evidence-status" class="status">点击下方杆件，若带 x1_px/y1_px/x2_px/y2_px 则在此画线高亮。</div>
+    <div id="evidence-status" class="status">点击 3D 杆件或下方列表，若带像素坐标则在此画线高亮。</div>
+    <div id="derived-y-status" class="status">加载模型后显示插值 y 复核状态。</div>
+  </section>
+
+  <section class="panel audit-panel">
+    <h2>6. 审计日志</h2>
+    <div id="audit-log" class="audit-log">加载中…</div>
+  </section>
+
+  <section class="panel project-panel">
+    <h2>7. 图册 ProjectModel（多 sheet）</h2>
+    <button id="load-project">加载国网 Project + cross_file</button>
+    <button id="deliver-project">一键交付 Project（M6–M8）</button>
+    <div id="project-sheets" class="project-sheets">尚未加载 ProjectModel</div>
+    <div id="project-modules" class="project-modules"></div>
+    <table id="project-harness-table" class="project-table"><tbody></tbody></table>
+    <div id="project-bom" class="project-bom"></div>
+    <div id="project-merge" class="status"></div>
   </section>
 
   <aside class="panel neube-panel">
-    <h2>5. NeuBE SR 对标</h2>
+    <h2>NeuBE SR 对标</h2>
     <ul>
       <li><b>证据链</b> → SourceRef（file/handle/confidence）</li>
       <li><b>语义 IR</b> → Component/Dimension/Rule 结构对象</li>

@@ -1,5 +1,8 @@
 {
   "bar_layers": ["1", "2", "3", "4", "5", "7", "8", "DRAW", "DRAW-XI"],
+  "bar_layers_by_stem": {
+    "35C2-SJG1-ML": ["0"]
+  },
   "node_layers": ["1", "2", "3", "4", "5", "7", "8"],
   "dim_layers": ["0", "2", "3", "DIM"],
   "text_layers": ["0", "2", "3"],
@@ -10,6 +13,39 @@
     "M\\d{4}",
     "[GSB]\\d{1,4}"
   ],
+  "cross_file_views": {
+    "project": "guowang_35A1",
+    "sheets": {
+      "front": "35A1-JC1-02",
+      "plan": "35C2-SJG1-ML",
+      "side": null,
+      "detail": "35A1-JC1-03"
+    },
+    "infer_side_on_stems": ["35A1-JC1-02"],
+    "assembly_split_min_gap_ratio": 0.5,
+    "allow_z_peer_y_interpolate": true,
+    "synthetic_side_from_front": true,
+    "plan_sheets": [
+      {"stem": "35C2-SJG1-ML", "z_level": 0.0}
+    ],
+    "view_align": {
+      "35A1-JC1-02:front": {
+        "match_axis": "x",
+        "z_ref": 0.0,
+        "normalize_x": true
+      },
+      "35C2-SJG1-ML:plan": {
+        "match_axis": "x",
+        "z_level": 0.0,
+        "normalize_x": true
+      }
+    }
+  },
+  "gusset_auto_anchor": true,
+  "master_bom": "guowang_merged_bom.csv",
+  "enable_module_assembly": true,
+  "assembly_demo_z_split": 0.45,
+  "assembly_tol_mm": 15.0,
   "view_regions": {
     "35A1-JC1-02": [
       {
@@ -19,6 +55,16 @@
         "region": [34350.0, 34886.0, -7678.0, -7244.0],
         "axes": ["x", "z"],
         "z_level": null
+      }
+    ],
+    "35C2-SJG1-ML": [
+      {
+        "kind": "plan",
+        "title": "平面图",
+        "origin": [2437.98, 2363.73],
+        "region": [2437.98, 2647.98, 2363.73, 2660.73],
+        "axes": ["x", "y"],
+        "z_level": 0.0
       }
     ],
     "35A1-JC1-03": [

@@ -16,7 +16,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 _SPEC: Optional[dict] = None
 _SPEC_PATH: Optional[Path] = None
@@ -79,6 +79,20 @@ def layer_names(group: str, default: List[str], overlay: Optional[str | Path | d
     return list(default)
 
 
+def layer_names_for_stem(
+    stem: str,
+    group: str,
+    default: List[str],
+    overlay: Optional[str | Path | dict] = None,
+) -> List[str]:
+    """按文件 stem 读取图层组；overlay 中 `{group}_by_stem` 可覆盖单张图。"""
+    spec = load_tower_spec(overlay)
+    by_stem = spec.get(f"{group}_by_stem") or {}
+    if stem in by_stem and isinstance(by_stem[stem], list) and by_stem[stem]:
+        return [str(v) for v in by_stem[stem]]
+    return layer_names(group, default, overlay)
+
+
 def bar_id_patterns(default: List[str], overlay: Optional[str | Path | dict] = None) -> List[str]:
     spec = load_tower_spec(overlay)
     val = spec.get("bar_id_patterns")
@@ -134,3 +148,118 @@ def view_expand(stem: str, kind: str, overlay: Optional[str | Path | dict] = Non
             if key in r:
                 return float(r[key])
     return 0.0
+
+
+def cross_file_view_manifest(overlay: Optional[str | Path | dict] = None) -> dict:
+    """读取 overlay 中的 cross_file_views 分册清单（front/plan/side 分文件映射）。"""
+    spec = load_tower_spec(overlay)
+    manifest = spec.get("cross_file_views") or {}
+    return dict(manifest) if isinstance(manifest, dict) else {}
+
+
+def parseable_view_kinds_by_stem(overlay: Optional[str | Path | dict] = None) -> Dict[str, set]:
+    """各 stem 在 overlay 中声明的可解析视图 kind 集合（须带 axes）。"""
+    spec = load_tower_spec(overlay)
+    regions_map = spec.get("view_regions") or {}
+    out: Dict[str, set] = {}
+    if not isinstance(regions_map, dict):
+        return out
+    for stem, regions in regions_map.items():
+        kinds: set = set()
+        for r in regions or []:
+            if r.get("axes"):
+                kinds.add(str(r.get("kind", "drawing")))
+        if kinds:
+            out[str(stem)] = kinds
+    return out
+
+
+def should_use_cross_file_merge(overlay: Optional[str | Path | dict] = None) -> bool:
+    """overlay 是否描述「分文件多视图」且应走 merge_cross_file_views 而非 ID 前缀假合并。"""
+    manifest = cross_file_view_manifest(overlay)
+    sheets = manifest.get("sheets") or {}
+    if isinstance(sheets, dict) and len(sheets) >= 2:
+        roles = {str(v) for v in sheets.values() if v}
+        if len(roles) >= 2:
+            return True
+    kinds_by_stem = parseable_view_kinds_by_stem(overlay)
+    if len(kinds_by_stem) < 2:
+        return False
+    all_kinds = set().union(*kinds_by_stem.values())
+    merge_sets = (
+        {"front", "plan"},
+        {"front", "side"},
+        {"front", "side", "section"},
+        {"elevation", "plan"},
+    )
+    return any(ms <= all_kinds for ms in merge_sets)
+
+
+def cross_file_z_ref(overlay: Optional[str | Path | dict] = None) -> Optional[float]:
+    """front+plan 配对时 front 节点应对齐的 Z 参考（来自 cross_file_views.view_align）。"""
+    manifest = cross_file_view_manifest(overlay)
+    align = manifest.get("view_align") or {}
+    if not isinstance(align, dict):
+        return None
+    for key, meta in align.items():
+        if not isinstance(meta, dict):
+            continue
+        if "z_ref" in meta:
+            return float(meta["z_ref"])
+        if str(key).endswith(":front") and "z_level" in meta:
+            return float(meta["z_level"])
+    return None
+
+
+def cross_file_allow_z_peer_interpolate(overlay: Optional[str | Path | dict] = None) -> bool:
+    manifest = cross_file_view_manifest(overlay)
+    return bool(manifest.get("allow_z_peer_y_interpolate"))
+
+
+def cross_file_infer_side_stems(overlay: Optional[str | Path | dict] = None) -> List[str]:
+    manifest = cross_file_view_manifest(overlay)
+    stems = manifest.get("infer_side_on_stems") or []
+    return [str(s) for s in stems] if isinstance(stems, list) else []
+
+
+def cross_file_synthetic_side_from_front(overlay: Optional[str | Path | dict] = None) -> bool:
+    manifest = cross_file_view_manifest(overlay)
+    return bool(manifest.get("synthetic_side_from_front"))
+
+
+def cross_file_plan_sheets(overlay: Optional[str | Path | dict] = None) -> List[Dict[str, Any]]:
+    """多 plan 分册：cross_file_views.plan_sheets 或 sheets.plan + view_align z_level。"""
+    manifest = cross_file_view_manifest(overlay)
+    raw = manifest.get("plan_sheets")
+    if isinstance(raw, list) and raw:
+        out: List[Dict[str, Any]] = []
+        for item in raw:
+            if isinstance(item, dict) and item.get("stem"):
+                out.append({
+                    "stem": str(item["stem"]),
+                    "z_level": float(item["z_level"]) if item.get("z_level") is not None else 0.0,
+                })
+        return out
+    sheets = manifest.get("sheets") or {}
+    align = manifest.get("view_align") or {}
+    plan_stem = sheets.get("plan") if isinstance(sheets, dict) else None
+    if not plan_stem:
+        return []
+    z_level = 0.0
+    for key, meta in align.items():
+        if isinstance(meta, dict) and str(key).endswith(":plan") and "z_level" in meta:
+            z_level = float(meta["z_level"])
+            break
+    return [{"stem": str(plan_stem), "z_level": z_level}]
+
+
+def cross_file_z_band_scale(overlay: Optional[str | Path | dict] = None) -> float:
+    manifest = cross_file_view_manifest(overlay)
+    val = manifest.get("z_band_scale")
+    return float(val) if val is not None else 4.0
+
+
+def assembly_split_min_gap_ratio(overlay: Optional[str | Path | dict] = None) -> float:
+    manifest = cross_file_view_manifest(overlay)
+    val = manifest.get("assembly_split_min_gap_ratio")
+    return float(val) if val is not None else 0.5

@@ -40,6 +40,9 @@ def finalize_tower_model(
     if merge:
         merge_view_coordinates(model, overlay=layer_map_path)
         model = merge_view_bars(model, overlay=layer_map_path)
+        if layer_map_path:
+            from ..connection.gusset_anchor import auto_anchor_gussets
+            auto_anchor_gussets(model, overlay=layer_map_path)
     inject_tower_rules(model)
     if allow_scan:
         # 只做「允许进入求解链」的标记；是否 verified 仍由 r_scan_reviewed 规则判定
@@ -49,6 +52,44 @@ def finalize_tower_model(
 
 def _allow_scan(model: EngineeringModel) -> EngineeringModel:
     """把扫描候选标记为允许进终版（不改 solve_status，规则负责把关）。"""
+    return model
+
+
+def derived_y_pending_nodes(model: EngineeringModel) -> List[str]:
+    """cross_file z-peer 插值 y 且尚未人工复核的节点。"""
+    out: List[str] = []
+    for cid, comp in model.components.items():
+        if comp.kind != "tower_node":
+            continue
+        p = comp.properties
+        if p.get("y_origin") == "z_peer_interpolate" and p.get("y_review") != "verified":
+            out.append(cid)
+    return out
+
+
+def count_derived_y_nodes(model: EngineeringModel) -> int:
+    """cross_file z-peer 插值 y 节点总数（含已复核）。"""
+    return sum(
+        1 for c in model.components.values()
+        if c.kind == "tower_node" and c.properties.get("y_origin") == "z_peer_interpolate"
+    )
+
+
+def confirm_cross_file_derived_y(model: EngineeringModel) -> EngineeringModel:
+    """人工确认 cross_file z-peer 插值 y（y_review=verified，axis_origin.y=verified）。"""
+    for cid, comp in model.components.items():
+        if comp.kind != "tower_node":
+            continue
+        p = comp.properties
+        if p.get("y_origin") != "z_peer_interpolate":
+            continue
+        p["y_review"] = "verified"
+        ao = dict(p.get("axis_origin") or {})
+        ao["y"] = "verified"
+        p["axis_origin"] = ao
+    df = model.components.get("drawing_file")
+    if df is not None:
+        df.properties["derived_y_confirmed"] = True
     return model
 
 
