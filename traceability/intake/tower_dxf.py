@@ -22,7 +22,19 @@ from typing import Dict, List, Optional, Tuple
 
 # 完整 demo 生成器（16 节点 26 杆件，立面+平面+BOM）在 tower_demo_dxf.py
 from .tower_demo_dxf import make_demo_tower_dxf  # noqa: F401  (复用完整版)
-from .tower_spec import layer_names, layer_names_for_stem, bar_id_patterns, view_regions, cross_file_infer_side_stems, assembly_split_min_gap_ratio
+from .tower_spec import (
+    layer_names,
+    layer_names_for_stem,
+    bar_id_patterns,
+    view_regions,
+    cross_file_infer_side_stems,
+    assembly_split_min_gap_ratio,
+    min_bar_length_mm,
+    cluster_eps_mm,
+    region_scale_ratio,
+    region_scale_xy,
+    double_line_merge_config,
+)
 
 from ..model import (
     Component,
@@ -174,6 +186,249 @@ def _dimension_value(e) -> Tuple[Any, str]:
 
 def _dist(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
     return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
+
+
+def _merge_double_line_segments(raw_segments: List[Dict], cfg: Optional[dict]) -> List[Dict]:
+    """P0-1：把「同一构件画成两条近似平行线」合并为一条中心线。
+
+    国网角钢构件常用 layer1/layer4 各画一肢（两线中点偏移约 0.5~3 图纸单位），
+    不合并会造成双线碎片 + self-loop。配对条件（全部满足）：
+        * 方向角差 <= max_angle_rad（含 pi 翻转）
+        * 中点距离 < max_offset_units
+        * 长度差 <= max_length_diff_ratio * max(len)
+        * 两线长度 >= min_length_units
+    贪心配对，每条线最多配一次；配对后线段取两线端点均值，layer/handle 保留。
+    """
+    if not cfg or not raw_segments:
+        return raw_segments
+    max_off = float(cfg.get("max_offset_units", 3.0))
+    max_len_ratio = float(cfg.get("max_length_diff_ratio", 0.25))
+    max_ang = float(cfg.get("max_angle_rad", 0.25))
+    min_len = float(cfg.get("min_length_units", 3.0))
+
+    def _ang(seg):
+        dx = seg["end"][0] - seg["start"][0]
+        dy = seg["end"][1] - seg["start"][1]
+        return math.atan2(dy, dx)
+
+    def _mid(seg):
+        return ((seg["start"][0] + seg["end"][0]) / 2,
+                (seg["start"][1] + seg["end"][1]) / 2)
+
+    segs = list(raw_segments)
+    used = [False] * len(segs)
+    merged: List[Dict] = []
+    for i, a in enumerate(segs):
+        if used[i]:
+            continue
+        la = _dist(a["start"], a["end"])
+        if la < min_len:
+            merged.append(a)
+            continue
+        aa = _ang(a)
+        best_j, best_d = None, max_off
+        for j in range(i + 1, len(segs)):
+            if used[j]:
+                continue
+            b = segs[j]
+            lb = _dist(b["start"], b["end"])
+            if lb < min_len:
+                continue
+            if abs(la - lb) / max(la, lb) > max_len_ratio:
+                continue
+            da = abs(aa - _ang(b))
+            if da > max_ang and abs(da - math.pi) > max_ang:
+                continue
+            d = _dist(_mid(a), _mid(b))
+            if d < best_d:
+                best_d, best_j = d, j
+        if best_j is not None:
+            b = segs[best_j]
+            used[best_j] = True
+            merged.append({
+                "handle": a["handle"],
+                "start": ((a["start"][0] + b["start"][0]) / 2,
+                          (a["start"][1] + b["start"][1]) / 2),
+                "end": ((a["end"][0] + b["end"][0]) / 2,
+                        (a["end"][1] + b["end"][1]) / 2),
+                "layer": a["layer"],
+            })
+        else:
+            merged.append(a)
+    return merged
+
+
+
+def _merge_collinear_fragments(
+    raw_segments: List[Dict],
+    colinear_tol: float = 2.0,
+    gap_tol: float = 8.0,
+) -> List[Dict]:
+    """P1 共线碎段合并：把同一物理杆件被拆成的小段拼成整根。
+
+    真实国网图（如 35A1-JC1-02）把一根角钢画成大量短碎段（median 长度 1 单位），
+    必须按「同向 + 共线 + 端点相接/相邻」合并，否则 158 根杆里 150 根是 <100mm
+    的碎片（大量 self-loop），件号被贴 10 次，Precision/Recall 全失真。
+
+    算法（贪心链式合并）：
+        * 方向角差 <= ~8°（含 pi 翻转）视为同向
+        * 点到对方所在直线的垂直距离 <= colinear_tol 视为共线
+        * 端点沿方向投影间距 <= gap_tol 视为可拼接（相接/近邻/少量重叠）
+    合并后线段取整条链的端到端 span，handles 保留为列表（可审计来源）。
+
+    不做相交切分（那是拓扑层 P2 的事）；本函数只拼「本属同一杆」的碎段。
+    """
+    def _ang(s):
+        dx = s["end"][0] - s["start"][0]
+        dy = s["end"][1] - s["start"][1]
+        return math.atan2(dy, dx)
+
+    def _span(s):
+        x1, y1 = s["start"]
+        x2, y2 = s["end"]
+        return math.hypot(x2 - x1, y2 - y1)
+
+    segs = list(raw_segments)
+    merged: List[Dict] = []
+    used = [False] * len(segs)
+    ang_tol = math.radians(8.0)
+
+    for i in range(len(segs)):
+        if used[i]:
+            continue
+        # 以 i 为起点做链式延伸
+        chain = [segs[i]]
+        used[i] = True
+        grew = True
+        while grew:
+            grew = False
+            base = chain[-1]
+            ba = _ang(base)
+            # 用整条链的方向（首尾连线）做主轴，避免逐段漂移
+            ax = base["end"][0] - base["start"][0]
+            ay = base["end"][1] - base["start"][1]
+            bl = math.hypot(ax, ay)
+            if bl <= 0:
+                break
+            ux, uy = ax / bl, ay / bl  # 主轴单位向量
+            best_j, best_dist = None, gap_tol
+            for j in range(len(segs)):
+                if used[j]:
+                    continue
+                cand = segs[j]
+                da = abs(_ang(cand) - ba)
+                if da > ang_tol and abs(da - math.pi) > ang_tol:
+                    continue
+                # 候选起点到主轴直线的垂直距离
+                cx, cy = cand["start"]
+                perp = abs((cx - base["start"][0]) * uy - (cy - base["start"][1]) * ux)
+                if perp > colinear_tol:
+                    continue
+                # 候选沿主轴投影，取离当前端点最近的一端
+                proj_cur = (base["end"][0] - base["start"][0]) * ux + (base["end"][1] - base["start"][1]) * uy
+                proj_c_start = (cand["start"][0] - base["start"][0]) * ux + (cand["start"][1] - base["start"][1]) * uy
+                proj_c_end = (cand["end"][0] - base["start"][0]) * ux + (cand["end"][1] - base["start"][1]) * uy
+                gap = min(abs(proj_c_start - proj_cur), abs(proj_c_end - proj_cur))
+                if gap < best_dist:
+                    best_dist, best_j = gap, j
+            if best_j is not None:
+                chain.append(segs[best_j])
+                used[best_j] = True
+                grew = True
+
+        if len(chain) == 1:
+            merged.append(chain[0])
+            continue
+        # 整条链的 span：所有端点在主轴方向上的投影极值
+        pts = [p for s in chain for p in (s["start"], s["end"])]
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        # 主轴方向投影极值
+        origin = chain[0]["start"]
+        ux, uy = None, None
+        ax = chain[-1]["end"][0] - origin[0]
+        ay = chain[-1]["end"][1] - origin[1]
+        if math.hypot(ax, ay) > 0:
+            ux, uy = ax / math.hypot(ax, ay), ay / math.hypot(ax, ay)
+        if ux is None:
+            merged.append(chain[0])
+            continue
+        projs = [(p[0] - origin[0]) * ux + (p[1] - origin[1]) * uy for p in pts]
+        t0, t1 = min(projs), max(projs)
+        start = (origin[0] + ux * t0, origin[1] + uy * t0)
+        end = (origin[0] + ux * t1, origin[1] + uy * t1)
+        merged.append({
+            "handle": chain[0]["handle"],  # 保 str 兼容下游 handle 索引
+            "start": start,
+            "end": end,
+            "layer": chain[0]["layer"],
+            "fragments": len(chain),
+            "fragments_handles": [s["handle"] for s in chain],
+        })
+    return merged
+
+
+def _filter_non_member_segments(
+    raw_segments: List[Dict],
+    dim_layers: List[str],
+    bar_layers: List[str],
+    bbox: Optional[Tuple[float, float, float, float]] = None,
+) -> Tuple[List[Dict], List[Dict]]:
+    """P1 图元分类：把尺寸线/图框线从杆件候选中剔除。
+
+    「一条 LINE 不等于一根物理杆件」——真实国网图混有大量尺寸标注线、
+    图框边框。这些若是直接进 tower_bar 会污染件号关联与拓扑。
+    此函数只做**删除**（噪声过滤），不新增杆件：
+
+        * dim_layers 上的线段（尺寸线/标注线）——图层级剔除，
+          但**仅在「不在 bar_layers」时**才按 dim 剔除：国网数字图层
+          0/2/3 既可能是杆件也可能是尺寸线（如 35C2 plan 的杆件就在
+          图层 0），bar_layers 精确映射必须优先。
+        * 图框线：近水平/竖直且长度接近整图相应边（bbox 长边的一定比例）
+
+    返回 (保留的 segments, 被剔除的 segments)。被剔除段保留 reason 供审计。
+    """
+    dim_set = {str(n).strip().lower() for n in dim_layers if n}
+    bar_set = {str(n).strip().lower() for n in bar_layers if n}
+    keep: List[Dict] = []
+    removed: List[Dict] = []
+
+    # 图框线判定：需要整图 bbox
+    frame_h = frame_v = None
+    if bbox:
+        minx, maxx, miny, maxy = bbox
+        w, h = (maxx - minx), (maxy - miny)
+        frame_h, frame_v = w, h
+
+    def _is_frame(seg) -> bool:
+        if frame_h is None or frame_v is None:
+            return False
+        dx = seg["end"][0] - seg["start"][0]
+        dy = seg["end"][1] - seg["start"][1]
+        length = math.hypot(dx, dy)
+        if length <= 0:
+            return False
+        cos_x = abs(dx) / length
+        cos_y = abs(dy) / length
+        # 近水平且长度占整图宽 ≥80%，或近竖直且占整图高 ≥80% -> 图框
+        if cos_x > math.cos(math.radians(5)) and length >= frame_h * 0.8:
+            return True
+        if cos_y > math.cos(math.radians(5)) and length >= frame_v * 0.8:
+            return True
+        return False
+
+    for seg in raw_segments:
+        layer = str(seg.get("layer", "")).strip().lower()
+        # 1) 尺寸线/标注线图层剔除（bar_layers 优先，避免数字图层重叠误杀杆件）
+        if layer not in bar_set and layer in dim_set:
+            removed.append({**seg, "reason": f"dim_layer:{layer}"})
+            continue
+        # 2) 图框线剔除
+        if _is_frame(seg):
+            removed.append({**seg, "reason": "frame"})
+            continue
+        keep.append(seg)
+    return keep, removed
 
 
 def _point_seg_dist(p: Tuple[float, float], a: Tuple[float, float],
@@ -382,6 +637,9 @@ def extract_tower_from_dxf(
 
     bar_id_re = _compile_bar_id_re(bar_id_patterns(DEFAULT_BAR_ID_PATTERNS, overlay=layer_map_path))
     regions = view_regions(stem, overlay=layer_map_path)
+    min_bar_len = min_bar_length_mm(stem, overlay=layer_map_path)
+    if eps == EPS:
+        eps = cluster_eps_mm(stem, overlay=layer_map_path)
 
     doc = ezdxf.readfile(dxf_path)
     msp = doc.modelspace()
@@ -428,6 +686,20 @@ def extract_tower_from_dxf(
                     "layer": layer,
                 })
 
+    # P1 图元分类：尺寸线/图框线从杆件候选中剔除（"一条 LINE ≠ 一根杆件"）。
+    if raw_segments:
+        xs = [c for seg in raw_segments for c in (seg["start"][0], seg["end"][0])]
+        ys = [c for seg in raw_segments for c in (seg["start"][1], seg["end"][1])]
+        bbox = (min(xs), max(xs), min(ys), max(ys))
+        raw_segments, non_member = _filter_non_member_segments(
+            raw_segments, lm["dim_layers"], lm["bar_layers"], bbox=bbox,
+        )
+
+    # P0-1：国网双线角钢 → 中心线（减少双线碎片与 self-loop）
+    raw_segments = _merge_double_line_segments(
+        raw_segments, double_line_merge_config(stem, overlay=layer_map_path),
+    )
+
     # M3+ side POC：overlay 声明 infer_side_on_stems 时，尝试从总装图双簇推断侧立面 region
     if stem in cross_file_infer_side_stems(layer_map_path):
         gap_ratio = assembly_split_min_gap_ratio(layer_map_path)
@@ -463,8 +735,13 @@ def extract_tower_from_dxf(
             # 无轴视图（节点大样）不产出杆件
             if not _region_axes(region):
                 continue
+            scale = region_scale_ratio(region)
+            length_mm = _dist(seg["start"], seg["end"]) * scale
+            if min_bar_len > 0 and length_mm < min_bar_len:
+                continue
             seg["region"] = region
             seg["view_type"] = _region_kind(region)
+            seg["scale_ratio"] = scale
             bar_segments.append(seg)
     else:
         # B6 兜底：没有视图规范时，按图面结构推断视图区域（P0）：
@@ -482,11 +759,18 @@ def extract_tower_from_dxf(
                 my = (seg["start"][1] + seg["end"][1]) / 2
                 region = _find_region(mx, my, regions)
                 if region is None:
-                    region = regions[0]
+                    # P0-2 严格区域过滤：推断出的视图间间隙 / 图框区线段直接丢弃，
+                    # 绝不 fallback 到 regions[0]（会把侧立面/详图混进正立面）。
+                    continue
                 if not _region_axes(region):
+                    continue
+                scale = region_scale_ratio(region)
+                length_mm = _dist(seg["start"], seg["end"]) * scale
+                if min_bar_len > 0 and length_mm < min_bar_len:
                     continue
                 seg["region"] = region
                 seg["view_type"] = _region_kind(region)
+                seg["scale_ratio"] = scale
                 bar_segments.append(seg)
         elif raw_segments:
             xs = [c for seg in raw_segments for c in (seg["start"][0], seg["end"][0])]
@@ -502,11 +786,19 @@ def extract_tower_from_dxf(
             # 让后续的 _find_region 走 fallback 视图
             regions = [fallback_view]
             for seg in raw_segments:
+                length_mm = _dist(seg["start"], seg["end"])
+                if min_bar_len > 0 and length_mm < min_bar_len:
+                    continue
                 seg["region"] = fallback_view
                 seg["view_type"] = "drawing"
+                seg["scale_ratio"] = 1.0
                 bar_segments.append(seg)
 
     # ---- 2) 节点：按视图区域各自聚类（视图在图纸上空间分离）----
+    # 聚类阈值 eps 是「真实 mm」；而端点坐标是图纸单位。有 scale_ratio 的视图
+    # （如 35A1-JC1-02 正立面 1:10）必须把 eps 换算回图纸单位，否则 8mm 会
+    # 被当成 8 图纸单位 = 80mm，短杆两端仍会被吸进同一节点 → 退化杆雪崩。
+    region_by_kind = {_region_kind(r): r for r in regions}
     view_nodes: Dict[str, List[Dict]] = {}
     for seg in bar_segments:
         vk = seg["view_type"] or "_all"
@@ -516,11 +808,16 @@ def extract_tower_from_dxf(
 
     all_clustered: List[Tuple[str, Dict]] = []  # (view_type, node_dict)
     for vk, pts in view_nodes.items():
-        for node in _cluster_points(pts, eps=eps):
+        view_eps = eps
+        region = region_by_kind.get(vk)
+        if region is not None:
+            scale = region_scale_ratio(region)
+            if scale and scale > 0:
+                view_eps = eps / scale
+        for node in _cluster_points(pts, eps=view_eps):
             all_clustered.append((vk, node))
 
     # 全局连续编号（保持旧版 node_Nxx 命名习惯）
-    region_by_kind = {_region_kind(r): r for r in regions}
     node_components: Dict[Tuple[str, int], Component] = {}
     view_counters: Dict[str, int] = {}
     global_i = 0
@@ -533,8 +830,16 @@ def extract_tower_from_dxf(
         region = region_by_kind.get(vk)
         lx = ly = None
         z_level = None
+        scale = 1.0
         if region is not None:
+            scale_x, scale_y = region_scale_xy(region)
             lx, ly = _region_local(region, node["x"], node["y"])
+            lx *= scale_x
+            ly *= scale_y
+            # CAD 通常 Y 向下；立面图的 view_y 映射到 Z 时需要翻转到「向上为正」。
+            # 用 region.z_flip 显式声明（默认不翻，保持自画图/110kV 兼容）。
+            if region.get("z_flip"):
+                ly = -ly
             z_level = region.get("z_level")
         cid = f"node_{nid}"
         comp = Component(
@@ -543,7 +848,7 @@ def extract_tower_from_dxf(
             kind="tower_node",
             source=SourceRef(
                 SourceType.DRAWING, dxf_path,
-                detail=f"端点聚类, view={vk}, handles={','.join(node['handles'])}",
+                detail=f"端点聚类, view={vk}, handles={','.join(str(h) for h in node['handles'] if h is not None)}",
                 confidence=0.9,
             ),
             properties={
@@ -666,7 +971,8 @@ def extract_tower_from_dxf(
         bar_id = handle_to_label.get(handle, f"UNLABELED_{handle}")
         conf = 0.85 if handle in handle_to_label else 0.3
 
-        length = _dist(seg["start"], seg["end"])
+        scale = float(seg.get("scale_ratio", region_scale_ratio(seg.get("region")) or 1.0))
+        length = _dist(seg["start"], seg["end"]) * scale
         # 处理同名编号（如多个视图同名杆件）：用序号后缀避免组件 ID 冲突
         cid = f"bar_{bar_id}_{vk}"
         if cid in model.components:
@@ -722,6 +1028,12 @@ def extract_tower_from_dxf(
     df.properties["bar_count"] = len(bars)
     df.properties["labeled_count"] = len(labeled)
     df.properties["association_rate"] = round(len(labeled) / len(bars), 4) if bars else 0.0
+    if min_bar_len > 0:
+        df.properties["min_bar_length_mm"] = min_bar_len
+    df.properties["degenerate_bar_count"] = sum(
+        1 for c in bars
+        if c.properties.get("from_node") == c.properties.get("to_node")
+    )
 
     # P1 重复件号报告：「一號多杆」供人工复核，不删规则、不凑 passed。
     # 同视图内按 (view_type, bar_id) 聚合，距离最近的杆标 bar_id_primary=true。
