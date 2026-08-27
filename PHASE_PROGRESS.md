@@ -8,10 +8,12 @@
 |---|---|---|---|
 | **A** | 验收与基线（acceptance 脚本 / `--with-mllm` 门禁 / `MLLM_MAX_IMAGE_EDGE=2048` 统一 / 交付说明） | ✅ 完成 | `dcb6244` |
 | **B** | 扫描链质量：B1 霍夫降噪 / B2 双指标 / B3 比例尺标定 / B4 OCR 兜底 | ✅ 完成 | `33b3d8c` |
-| **C** | 线重绘栅格预处理 `preprocess_for_scan` + 基准评测 | ⏳ 待 Cursor | — |
-| **D** | 多视图 DWG 扩展（闲鱼数据集）+ `cross_file_batch` 视图模式 | ⏳ 待 Cursor | — |
-| **E** | Web 工作台扩展（3D/2D 双向选择、审计日志、人工扫描确认） | ⏳ 待 Cursor | — |
-| **F** | 长期：ProjectModel + 领域 VLM 微调 | ⏳ 待 Cursor | — |
+| **C** | 线重绘栅格预处理 `preprocess_for_scan` + 基准评测 | ✅ 完成 | Cursor |
+| **D** | 多视图 DWG 扩展（闲鱼数据集）+ `cross_file_batch` 视图模式 | ✅ 完成 | Cursor |
+| **E** | Web 工作台扩展（3D/2D 双向选择、审计日志、人工扫描确认） | ✅ 完成 | Cursor |
+| **F** | 长期：ProjectModel + 领域 VLM 微调 | ✅ 设计+脚本 | Cursor |
+| **Gap 1** | 图册级 ProjectModel + 多模块装配 + 跨页 BOM 树 | ✅ 脚手架 | Cursor |
+| **Gap 2** | 大样详图变换 + 节点板 + 螺栓群验算 | ✅ 脚手架 | Cursor |
 
 ### Phase B 落地明细（commit `33b3d8c`）
 

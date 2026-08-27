@@ -15,9 +15,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..model import Dimension, EngineeringModel, SourceRef, SourceType
+from ..model import Component, Dimension, EngineeringModel, SourceRef, SourceType
 from .dwg import ensure_dxf_batch
 from .tower_dxf import classify_drawing_kind, extract_tower_from_dxf, layer_usage_report
+from .tower_views import _model_stem
 
 
 def intake_tower_batch(
@@ -155,6 +156,173 @@ def cross_file_bar_id_report(models: List[EngineeringModel]) -> Dict[str, Any]:
         "total_bar_ids": len(bar_id_files),
         "cross_file_groups": cross_groups,
         "duplicate_count": len(cross_groups),
+    }
+
+
+def merge_cross_file_views(
+    models: List[EngineeringModel],
+    layer_map_path: Optional[str | Path | dict] = None,
+) -> EngineeringModel:
+    """Phase D：多文件 DWG 按 view_type 真合并（走 merge_view_coordinates）。
+
+    与 merge_tower_models 的 ID 前缀拼接不同：保留各文件 view_type/局部坐标，
+    供 finalize_tower_model(merge=True) 做三视图线性解耦。
+    """
+    merged = EngineeringModel(name="tower-cross-file-merged")
+    view_kinds: set = set()
+    source_files: List[str] = []
+
+    for model in models:
+        stem = _model_stem(model) or model.name
+        source_files.append(stem)
+        prefix = f"{stem}__"
+        df = model.components.get("drawing_file")
+        if df:
+            vk = df.properties.get("view_kinds") or []
+            view_kinds.update(vk)
+
+        for cid, comp in model.components.items():
+            if comp.kind == "drawing_file":
+                continue
+            new_id = f"{prefix}{cid}"
+            props = dict(comp.properties)
+            props.setdefault("source_file", stem)
+            props.setdefault("drawing_view", stem)
+            merged.add_component(type(comp)(
+                id=new_id,
+                name=f"[{stem}] {comp.name}",
+                kind=comp.kind,
+                source=comp.source,
+                properties=props,
+                tags=list(comp.tags),
+            ))
+
+        for did, dim in model.dimensions.items():
+            merged.add_dimension(Dimension(
+                id=f"{prefix}{did}",
+                name=dim.name,
+                value=dim.value,
+                unit=dim.unit,
+                origin=dim.origin,
+                source=dim.source,
+                applies_to=(f"{prefix}{dim.applies_to}" if dim.applies_to else None),
+                status=dim.status,
+            ))
+
+    # 杆件 from/to 节点引用按来源文件重指
+    for model in models:
+        stem = _model_stem(model) or model.name
+        prefix = f"{stem}__"
+        for cid, comp in model.components.items():
+            if comp.kind != "tower_bar":
+                continue
+            new_bar = merged.components.get(f"{prefix}{cid}")
+            if not new_bar:
+                continue
+            for end in ("from_node", "to_node"):
+                nid = comp.properties.get(end)
+                if nid and f"{prefix}{nid}" in merged.components:
+                    new_bar.properties[end] = f"{prefix}{nid}"
+
+    # 合并 drawing_file：指向主立面 stem（供 view_regions 查找 overlay）
+    primary = source_files[0] if source_files else "cross_file"
+    for stem in source_files:
+        regions = []
+        if layer_map_path:
+            from .tower_spec import view_regions
+            regions = view_regions(stem, overlay=layer_map_path)
+        if any(r.get("kind") == "front" for r in regions):
+            primary = stem
+            break
+
+    merged.add_component(Component(
+        id="drawing_file",
+        name="跨文件合并",
+        kind="drawing_file",
+        properties={
+            "drawing_view": primary,
+            "path": primary,
+            "view_mode": "cross_file_multi_view",
+            "view_kinds": sorted(view_kinds),
+            "source_files": source_files,
+            "merge_method": "merge_view_coordinates",
+        },
+    ))
+    return merged
+
+
+def cross_file_batch(
+    input_dir: str | Path,
+    out_dir: str | Path,
+    layer_map_path: Optional[str | Path] = None,
+    bom_path: Optional[str | Path] = None,
+) -> Dict[str, Any]:
+    """Phase D：闲鱼/国网多 DWG 分文件批量 intake + 真 3D 视图合并。
+
+    立面/平面分文件各自带 view_regions 时，走 merge_cross_file_views +
+    finalize_tower_model(merge=True)，而非 ID 前缀假合并。
+    """
+    from ..intake.tower_pipeline import finalize_tower_model
+    from ..io import load_model, save_model
+    for entry in batch["files"]:
+        if entry.get("error"):
+            continue
+        stem = entry["file"]
+        model_path = Path(out_dir) / f"{stem}.json"
+        if not model_path.exists():
+            dxf = entry.get("dxf")
+            if dxf:
+                model = extract_tower_from_dxf(dxf, layer_map_path=layer_map_path)
+                save_model(model, model_path)
+        if model_path.exists():
+            models.append(load_model(str(model_path)))
+
+    merge_report: Dict[str, Any] = {"mode": "cross_file_view", "files": len(models)}
+    model_path: Optional[str] = None
+    if len(models) >= 2:
+        merged = merge_cross_file_views(models, layer_map_path=layer_map_path)
+        merged = finalize_tower_model(
+            merged, bom_path=bom_path, merge=True, layer_map_path=layer_map_path,
+        )
+        model_path = (Path(out_dir) / "model.json").as_posix()
+        save_model(merged, model_path)
+        merge_report["view_mode"] = (
+            merged.components.get("drawing_file") or Component(
+                id="drawing_file", name="", kind="drawing_file", properties={},
+            )
+        ).properties.get("view_mode")
+        merge_report["bars"] = sum(
+            1 for c in merged.components.values() if c.kind == "tower_bar"
+        )
+        merge_report["nodes_solved"] = sum(
+            1 for c in merged.components.values()
+            if c.kind == "tower_node" and c.properties.get("solve_status") == "solved"
+        )
+    elif len(models) == 1:
+        merged = finalize_tower_model(
+            models[0], bom_path=bom_path, merge=True, layer_map_path=layer_map_path,
+        )
+        model_path = (Path(out_dir) / "model.json").as_posix()
+        save_model(merged, model_path)
+
+    cross_dup = cross_file_bar_id_report(models) if models else {}
+    report_path = Path(out_dir) / "batch_report.json"
+    report = {
+        "ok": batch["ok"],
+        "mode": "cross_file_batch",
+        "files": batch["files"],
+        "layer_report": batch["layer_report"],
+        "cross_file_bar_id_dup": cross_dup,
+        "merge_report": merge_report,
+        "model_path": model_path,
+    }
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        **batch,
+        "model_path": model_path,
+        "merge_report": merge_report,
+        "batch_report": report_path.as_posix(),
+        "cross_file_bar_id_dup": cross_dup,
     }
 
 

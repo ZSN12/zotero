@@ -138,13 +138,23 @@ def _assign_view_by_bbox(
     return new_bars, new_nodes
 
 
-def _detect_geometry(image_path: str, filter_noise: bool = True) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+def _detect_geometry(
+    image_path: str,
+    filter_noise: bool = True,
+    use_preprocess: bool = False,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     """A2 规则几何检测（霍夫线 + 共线合并 + 端点聚类 + 噪声过滤）。
 
+    use_preprocess=True 时先走 Phase C 线重绘栅格预处理，提升弱中心线召回。
     返回 (bars, nodes, meta)。bars 元素：bar_uid + x1/y1/x2/y2；
     nodes 元素：node_id + x_px/y_px。meta 记录 raw/merged/kept 数量。
     """
     cv2, gray = _load_image(image_path)
+    preprocess_meta: Dict[str, Any] = {}
+    if use_preprocess:
+        from .tower_preprocess import preprocess_for_scan
+        import numpy as np
+        gray, preprocess_meta = preprocess_for_scan(gray, cv2=cv2, np=np)
     raw = _detect_line_segments(cv2, gray)
     merged = [
         seg for seg in _merge_collinear(raw)
@@ -176,12 +186,16 @@ def _detect_geometry(image_path: str, filter_noise: bool = True) -> Tuple[List[D
             "x_px": round(float(node["x"]), 2),
             "y_px": round(float(node["y"]), 2),
         })
-    return bars, nodes, {
+    meta = {
         "method": "hough",
         "raw_segments": len(raw),
         "merged_segments": len(merged),
         "noise_removed": len(removed),
     }
+    if preprocess_meta:
+        meta["preprocess"] = preprocess_meta
+        meta["preprocessed"] = True
+    return bars, nodes, meta
 
 
 def _label_point(label: Dict[str, Any]) -> Optional[Tuple[float, float]]:
@@ -540,6 +554,7 @@ def run_tower_agent_pipeline(
     scale: Optional[str | float] = None,
     mm_per_px: Optional[float] = None,
     use_ocr_fallback: bool = True,
+    use_preprocess: bool = True,
 ) -> Dict[str, Any]:
     """无 DXF 扫描图主路径：A0 版面 → A1 件号 → A2 几何 → A3 关联 → A4 编译验证。
 
@@ -708,7 +723,18 @@ def run_tower_agent_pipeline(
     else:
         graph.start("a2_geom", "几何检测（A2）", input=str(source))
         try:
-            bars, nodes, geom_meta = _detect_geometry(str(source), filter_noise=filter_noise)
+            geom_input = str(source)
+            if use_preprocess:
+                from .tower_preprocess import preprocess_image_file
+                geom_input, pre_meta = preprocess_image_file(
+                    str(source), out_dir / "a2_preprocessed.png",
+                )
+            bars, nodes, geom_meta = _detect_geometry(
+                geom_input, filter_noise=filter_noise, use_preprocess=False,
+            )
+            if use_preprocess and pre_meta:
+                geom_meta["preprocess"] = pre_meta
+                geom_meta["preprocessed"] = True
             # P1-6：给 A2 产出的 bar/node 注入 view_type。单文件扫描图可能含多个
             # A0 视图（多 region），按杆件中点落在哪个 view bbox 内归属；无有效
             # 切块（whole_sheet）时回退到文件名级主视图类型。

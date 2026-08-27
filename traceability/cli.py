@@ -383,6 +383,36 @@ def cmd_run_tower(args):
         sys.exit(1)
 
 
+def cmd_cross_file_batch(args):
+    """Phase D：多 DWG 分文件真 3D 视图合并（merge_view_coordinates）。"""
+    from .intake.tower_batch import cross_file_batch
+    result = cross_file_batch(
+        args.input_dir,
+        args.out_dir,
+        layer_map_path=args.layer_map,
+        bom_path=args.bom,
+    )
+    print(f"✓ cross_file_batch：{len(result['files'])} 个文件，mode={result.get('merge_report', {}).get('mode')}")
+    if result.get("model_path"):
+        print(f"  合并模型 -> {result['model_path']}")
+    print(f"  报告 -> {result['batch_report']}")
+    if not result.get("ok"):
+        sys.exit(1)
+
+
+def cmd_build_project(args):
+    """Gap 1：构建图册级 ProjectModel 索引。"""
+    from .project.model import build_project_from_directory, save_project
+    project = build_project_from_directory(
+        args.input_dir,
+        args.project_id or Path(args.input_dir).name,
+        layer_map_path=args.layer_map,
+        out_dir=args.out_dir,
+    )
+    path = save_project(project, Path(args.out_dir) / "project.json")
+    print(f"✓ ProjectModel：{len(project.sheets)} sheets -> {path}")
+
+
 def cmd_intake_tower_batch(args):
     """A3/B7：目录内全部 DWG 转 DXF 并逐文件 intake，输出 layer 报告。"""
     from .intake.tower_batch import intake_tower_batch
@@ -618,6 +648,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_batch.add_argument("--layer-map", help="per-project overlay JSON（P1-5）")
     p_batch.add_argument("--merge", action="store_true", help="多文件合并为单个 EngineeringModel（B7）")
     p_batch.set_defaults(func=cmd_intake_tower_batch)
+
+    p_cross = sub.add_parser("cross-file-batch", help="Phase D：多 DWG 分文件真 3D 视图合并")
+    p_cross.add_argument("input_dir")
+    p_cross.add_argument("--out-dir", default="out/cross-file")
+    p_cross.add_argument("--layer-map", help="per-project overlay JSON")
+    p_cross.add_argument("--bom", help="BOM CSV")
+    p_cross.set_defaults(func=cmd_cross_file_batch)
+
+    p_proj = sub.add_parser("build-project", help="Gap 1：构建图册级 ProjectModel")
+    p_proj.add_argument("input_dir")
+    p_proj.add_argument("--out-dir", default="out/project")
+    p_proj.add_argument("--project-id", help="项目 ID（默认取目录名）")
+    p_proj.add_argument("--layer-map", help="per-project overlay JSON")
+    p_proj.set_defaults(func=cmd_build_project)
 
     p_parse = sub.add_parser("parse-report", help="输出 PARSE_RATE_REPORT 同款 JSON（F3）")
     p_parse.add_argument("file")

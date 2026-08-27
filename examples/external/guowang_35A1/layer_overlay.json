@@ -21,6 +21,16 @@
         "z_level": null
       }
     ],
+    "35C2-SJG1-ML": [
+      {
+        "kind": "plan",
+        "title": "平面图",
+        "origin": [0.0, 0.0],
+        "region": null,
+        "axes": ["x", "y"],
+        "z_level": 0.0
+      }
+    ],
     "35A1-JC1-03": [
       {
         "kind": "detail",
