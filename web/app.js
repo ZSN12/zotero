@@ -144,6 +144,42 @@ async function renderBars(modelPath) {
   });
   computeEvidenceBounds();
   updateConfirmButton();
+  updateDerivedYButton();
+  showDerivedYStatus(model);
+}
+
+function derivedYPendingNodes(model) {
+  return Object.entries(model.components || {}).filter(([, c]) =>
+    c.kind === 'tower_node' &&
+    c.properties?.y_origin === 'z_peer_interpolate' &&
+    c.properties?.y_review !== 'verified',
+  );
+}
+
+function showDerivedYStatus(model) {
+  const pending = derivedYPendingNodes(model);
+  const box = $('derived-y-status');
+  if (!box) return;
+  if (pending.length === 0) {
+    const any = Object.values(model.components || {}).some(
+      (c) => c.kind === 'tower_node' && c.properties?.y_origin === 'z_peer_interpolate',
+    );
+    box.textContent = any
+      ? '插值 y 已全部复核（y_review=verified）'
+      : '无 z-peer 插值 y 节点';
+    box.className = 'status derived-y-ok';
+    return;
+  }
+  const ids = pending.map(([id]) => id).slice(0, 8).join(', ');
+  box.textContent = `${pending.length} 个节点 y 为 z-peer 插值，待复核：${ids}${pending.length > 8 ? '…' : ''}`;
+  box.className = 'status derived-y-pending';
+}
+
+function updateDerivedYButton() {
+  const btn = $('confirm-derived-y');
+  if (!btn || !currentModel) return;
+  const pending = derivedYPendingNodes(currentModel);
+  btn.disabled = pending.length === 0 || !currentModelPath;
 }
 
 function highlightBar3D(barId) {
@@ -271,6 +307,32 @@ async function loadAuditLog() {
   }
 }
 
+async function confirmDerivedY() {
+  if (!currentModelPath) return;
+  const btn = $('confirm-derived-y');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/confirm-derived-y', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_path: currentModelPath }),
+    });
+    const payload = await res.json();
+    if (payload.ok) {
+      $('status').textContent = `插值 Y 复核 ✓ confirmed=${payload.confirmed_nodes || 0}`;
+      await renderBars(currentModelPath);
+      await loadAuditLog();
+    } else {
+      $('status').textContent = '插值 Y 复核失败：' + (payload.error || '未知');
+    }
+  } catch (e) {
+    $('status').textContent = '插值 Y 复核请求失败：' + e;
+  } finally {
+    btn.disabled = false;
+    updateDerivedYButton();
+  }
+}
+
 async function confirmScan() {
   if (!currentModelPath) return;
   const btn = $('confirm-scan');
@@ -349,6 +411,7 @@ async function run() {
 
 $('run').onclick = run;
 $('confirm-scan').onclick = confirmScan;
+$('confirm-derived-y').onclick = confirmDerivedY;
 initViewer();
 loadAuditLog();
 

@@ -80,7 +80,11 @@ def missing_axes(nodes: Dict[str, Dict]) -> List[str]:
     return missing
 
 
-def solve_tower(model: EngineeringModel, allow_scan: bool = False) -> Tuple[Dict[str, Dict], List[str]]:
+def solve_tower(
+    model: EngineeringModel,
+    allow_scan: bool = False,
+    allow_derived_y: bool = False,
+) -> Tuple[Dict[str, Dict], List[str]]:
     """求解铁塔 3D 节点坐标。
 
     返回 (nodes, problems)。nodes 的坐标已尽量补齐：
@@ -90,6 +94,9 @@ def solve_tower(model: EngineeringModel, allow_scan: bool = False) -> Tuple[Dict
 
     P2-5 闸门：solve_status=pending_review 的扫描候选默认阻断，
     除非 allow_scan=True 且已人工确认（verified）。
+
+    cross_file 插值 y 闸门：y_origin=z_peer_interpolate 且 y_review!=verified
+    默认阻断终版导出，须 confirm-derived-y 后以 --allow-derived-y 导出。
     """
     nodes = collect_nodes(model)
 
@@ -103,6 +110,15 @@ def solve_tower(model: EngineeringModel, allow_scan: bool = False) -> Tuple[Dict
         if unreviewed:
             problems.append(f"{len(unreviewed)} 个扫描候选未人工确认（solve_status=pending_review）；"
                             "请先 confirm-scan 后以 --allow-scan 导出")
+
+    if not allow_derived_y:
+        from ..intake.tower_pipeline import derived_y_pending_nodes
+        pending_y = derived_y_pending_nodes(model)
+        if pending_y:
+            problems.append(
+                f"{len(pending_y)} 个节点 y 为 z-peer 插值且待复核（y_review=pending）；"
+                "请先 confirm-derived-y 后以 --allow-derived-y 导出"
+            )
 
     # 杆件拓扑校验：两端节点必须存在
     node_ids = set(nodes)
@@ -423,6 +439,7 @@ def export_tower_glb(
     out_path: str | Path,
     strict: bool = True,
     allow_scan: bool = False,
+    allow_derived_y: bool = False,
 ) -> str:
     """从模型求解并把杆件实体化导出 GLB（Phase 3）。
 
@@ -434,7 +451,9 @@ def export_tower_glb(
     except ImportError as e:  # pragma: no cover
         raise SolveError("导出 GLB 需要 trimesh：pip install trimesh") from e
 
-    nodes, problems = solve_tower(model, allow_scan=allow_scan)
+    nodes, problems = solve_tower(
+        model, allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+    )
     if strict and problems:
         raise SolveError(
             "存在未求解/待补测项，拒绝终版导出：\n  - " + "\n  - ".join(problems)
@@ -580,6 +599,7 @@ def export_tower_step(
     out_path: str | Path,
     strict: bool = True,
     allow_scan: bool = False,
+    allow_derived_y: bool = False,
 ) -> str:
     """E3：STEP 导出（骨架线框或 L 截面实体）。
 
@@ -589,7 +609,9 @@ def export_tower_step(
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    nodes, problems = solve_tower(model, allow_scan=allow_scan)
+    nodes, problems = solve_tower(
+        model, allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+    )
     if strict and problems:
         raise SolveError(
             "存在未求解/待补测项，拒绝 STEP 导出：\n  - " + "\n  - ".join(problems)
@@ -642,12 +664,15 @@ def export_tower_obj(
     out_path: str | Path,
     strict: bool = True,
     allow_scan: bool = False,
+    allow_derived_y: bool = False,
 ) -> str:
     """从模型求解并导出 OBJ。
 
     strict=True 时，任何缺失轴都会阻断导出（沿用「placeholder 阻断终版」原则）。
     """
-    nodes, problems = solve_tower(model, allow_scan=allow_scan)
+    nodes, problems = solve_tower(
+        model, allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+    )
     if strict and problems:
         raise SolveError(
             "存在未求解/待补测项，拒绝终版导出：\n  - " + "\n  - ".join(problems)

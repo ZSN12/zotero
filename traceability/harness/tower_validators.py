@@ -107,17 +107,27 @@ def validate_bom_section_match(model: EngineeringModel, rule_id: str) -> Optiona
 
 
 def validate_node_fully_solved(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:
-    """关键节点三轴坐标已知。"""
+    """关键节点三轴坐标已知；cross_file 插值 y 须 y_review=verified。"""
     unsolved = []
+    derived_pending = []
     for cid, node in _iter_nodes(model):
         p = node.properties
         if p.get("x") is None or p.get("y") is None or p.get("z") is None:
             unsolved.append(cid)
-    if not unsolved:
-        return ValidationResult(rule_id, ValidationStatus.PASSED,
-                                "所有节点三轴坐标已知", "node-solved")
-    return ValidationResult(rule_id, ValidationStatus.FAILED,
-                            f"{len(unsolved)} 个节点缺坐标：{unsolved[:5]}", "node-solved")
+            continue
+        if p.get("y_origin") == "z_peer_interpolate" and p.get("y_review") != "verified":
+            derived_pending.append(cid)
+    if unsolved:
+        return ValidationResult(rule_id, ValidationStatus.FAILED,
+                                f"{len(unsolved)} 个节点缺坐标：{unsolved[:5]}", "node-solved")
+    if derived_pending:
+        return ValidationResult(
+            rule_id, ValidationStatus.PENDING,
+            f"{len(derived_pending)} 个节点 y 为 z-peer 插值，待 confirm-derived-y：{derived_pending[:5]}",
+            "node-solved",
+        )
+    return ValidationResult(rule_id, ValidationStatus.PASSED,
+                            "所有节点三轴坐标已知", "node-solved")
 
 
 def validate_scan_reviewed(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:
@@ -235,6 +245,35 @@ def validate_cross_file_3d_partial(model: EngineeringModel, rule_id: str) -> Opt
     )
 
 
+def validate_cross_file_y_derived(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:
+    """cross_file z-peer 插值 y：存在则 pending，人工 confirm 后 passed。"""
+    df = model.components.get("drawing_file")
+    if df is None or df.properties.get("view_mode") != "cross_file_multi_view":
+        return ValidationResult(rule_id, ValidationStatus.PENDING,
+                                "非 cross_file 模型，跳过", "cross-file-y-derived")
+    pending = [
+        cid for cid, comp in model.components.items()
+        if comp.kind == "tower_node"
+        and comp.properties.get("y_origin") == "z_peer_interpolate"
+        and comp.properties.get("y_review") != "verified"
+    ]
+    if not pending:
+        has_any = any(
+            c.properties.get("y_origin") == "z_peer_interpolate"
+            for c in model.components.values() if c.kind == "tower_node"
+        )
+        if has_any:
+            return ValidationResult(rule_id, ValidationStatus.PASSED,
+                                    "插值 y 已全部人工复核", "cross-file-y-derived")
+        return ValidationResult(rule_id, ValidationStatus.PASSED,
+                                "无 z-peer 插值 y 节点", "cross-file-y-derived")
+    return ValidationResult(
+        rule_id, ValidationStatus.PENDING,
+        f"{len(pending)} 个节点 y 为插值 derived，待 confirm-derived-y",
+        "cross-file-y-derived",
+    )
+
+
 # 规则 ID -> 验证器
 tower_validators = {
     "r_topology_closed": validate_topology_closed,
@@ -244,6 +283,7 @@ tower_validators = {
     "r_no_duplicate_bar_id": validate_no_duplicate_bar_id,
     "r_scan_reviewed": validate_scan_reviewed,
     "r_cross_file_3d_partial": validate_cross_file_3d_partial,
+    "r_cross_file_y_derived": validate_cross_file_y_derived,
 }
 
 
@@ -283,6 +323,11 @@ TOWER_RULE_DEFS = [
         "name": "跨文件 3D 部分解算",
         "description": "cross_file 合并后至少部分节点解出 x/y/z（front+plan 分册）",
     },
+    {
+        "id": "r_cross_file_y_derived",
+        "name": "跨文件插值 Y 复核",
+        "description": "z-peer 插值 y 须人工 confirm-derived-y 后才可终版 GLB",
+    },
 ]
 
 
@@ -302,12 +347,18 @@ def inject_tower_rules(model: EngineeringModel) -> EngineeringModel:
     )
     df = model.components.get("drawing_file")
     is_cross_file = bool(df and df.properties.get("view_mode") == "cross_file_multi_view")
+    has_derived_y = any(
+        c.properties.get("y_origin") == "z_peer_interpolate"
+        for c in model.components.values() if c.kind == "tower_node"
+    )
 
     specs = list(TOWER_RULE_DEFS)
     if not has_scan:
         specs = [sp for sp in specs if sp["id"] != "r_scan_reviewed"]
     if not is_cross_file:
-        specs = [sp for sp in specs if sp["id"] != "r_cross_file_3d_partial"]
+        specs = [sp for sp in specs if sp["id"] not in ("r_cross_file_3d_partial", "r_cross_file_y_derived")]
+    elif not has_derived_y:
+        specs = [sp for sp in specs if sp["id"] != "r_cross_file_y_derived"]
 
     for spec in specs:
         rid = spec["id"]

@@ -231,7 +231,9 @@ def cmd_intake_tower(args):
 
 def cmd_solve_tower(args):
     model = load_model(args.file)
-    nodes, problems = solve_tower(model, allow_scan=args.allow_scan)
+    nodes, problems = solve_tower(
+        model, allow_scan=args.allow_scan, allow_derived_y=args.allow_derived_y,
+    )
     print(f"节点 {len(nodes)} 个，待补测/拓扑问题 {len(problems)} 项")
     origin_summary = axis_origin_summary(nodes)
     print("坐标来源（measured/derived/placeholder）：")
@@ -247,9 +249,15 @@ def cmd_solve_tower(args):
     fmt = args.format or Path(args.out).suffix.lstrip(".").lower() or "obj"
     try:
         if fmt == "glb":
-            export_tower_glb(model, args.out, strict=not args.force, allow_scan=args.allow_scan)
+            export_tower_glb(
+                model, args.out, strict=not args.force,
+                allow_scan=args.allow_scan, allow_derived_y=args.allow_derived_y,
+            )
         else:
-            export_tower_obj(model, args.out, strict=not args.force, allow_scan=args.allow_scan)
+            export_tower_obj(
+                model, args.out, strict=not args.force,
+                allow_scan=args.allow_scan, allow_derived_y=args.allow_derived_y,
+            )
     except SolveError as e:
         print(f"✗ {e}")
         sys.exit(1)
@@ -364,6 +372,7 @@ def cmd_run_tower(args):
         retry=args.retry,
         human_review=args.human_review,
         allow_scan=args.allow_scan,
+        allow_derived_y=args.allow_derived_y,
         format=args.format,
         scale=args.scale,
         mm_per_px=args.mm_per_px,
@@ -490,6 +499,7 @@ def cmd_deliver_tower(args):
         retry=args.retry,
         human_review=args.human_review,
         allow_scan=args.allow_scan,
+        allow_derived_y=args.allow_derived_y,
         format=args.format,
     )
     if not result.get("ok"):
@@ -523,6 +533,20 @@ def cmd_confirm_scan(args):
     save_model(model, args.file)
     print(f"✓ 扫描候选已人工确认（solve_status=verified）-> {args.file}")
     print("  现在可用：solve-tower --allow-scan 进行 strict 导出")
+
+
+def cmd_confirm_derived_y(args):
+    """cross_file z-peer 插值 y：人工复核后 y_review=verified。"""
+    from .intake.tower_pipeline import confirm_cross_file_derived_y, derived_y_pending_nodes
+    model = load_model(args.file)
+    pending = derived_y_pending_nodes(model)
+    if not pending:
+        print(f"✓ 无待复核插值 y 节点 -> {args.file}")
+        return
+    model = confirm_cross_file_derived_y(model)
+    save_model(model, args.file)
+    print(f"✓ 插值 y 已人工复核（{len(pending)} 个节点 y_review=verified）-> {args.file}")
+    print("  现在可用：solve-tower --allow-derived-y 进行 strict GLB 导出")
 
 
 def cmd_merge_scans(args):
@@ -620,6 +644,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_solve.add_argument("--force", action="store_true", help="存在缺失轴时仍强制导出（仅供预览）")
     p_solve.add_argument("--golden", help="金标准 JSON 路径（验收：坐标偏差 2%% 以内）")
     p_solve.add_argument("--allow-scan", action="store_true", help="允许已人工确认的扫描候选导出（P2-5）")
+    p_solve.add_argument("--allow-derived-y", action="store_true",
+                         help="允许已人工复核的 z-peer 插值 y 导出（cross_file）")
     p_solve.set_defaults(func=cmd_solve_tower)
 
     # ---- P0/P1/P2 编排与交付命令 ----
@@ -634,6 +660,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--retry", action="store_true", help="失败步骤重试")
     p_run.add_argument("--human-review", action="store_true", help="pending/failed 标记人工复核")
     p_run.add_argument("--allow-scan", action="store_true", help="允许扫描候选进入求解链（P2-5）")
+    p_run.add_argument("--allow-derived-y", action="store_true",
+                       help="允许已复核的 z-peer 插值 y 进入 GLB 导出")
     p_run.add_argument("--format", choices=["obj", "glb"], default="glb")
     p_run.add_argument("--scale", help="扫描图比例尺")
     p_run.add_argument("--mm-per-px", type=float, help="扫描图 mm/px")
@@ -680,12 +708,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_deliver.add_argument("--retry", action="store_true")
     p_deliver.add_argument("--human-review", action="store_true")
     p_deliver.add_argument("--allow-scan", action="store_true")
+    p_deliver.add_argument("--allow-derived-y", action="store_true",
+                           help="允许已复核的 z-peer 插值 y 进入 GLB 导出")
     p_deliver.add_argument("--format", choices=["obj", "glb"], default="glb")
     p_deliver.set_defaults(func=cmd_deliver_tower)
 
     p_confirm = sub.add_parser("confirm-scan", help="人工确认扫描候选（P2-5）")
     p_confirm.add_argument("file")
     p_confirm.set_defaults(func=cmd_confirm_scan)
+
+    p_confirm_y = sub.add_parser("confirm-derived-y", help="人工复核 cross_file z-peer 插值 y")
+    p_confirm_y.add_argument("file")
+    p_confirm_y.set_defaults(func=cmd_confirm_derived_y)
 
     p_mscan = sub.add_parser("merge-scans", help="front+side 扫描图融合（P2-4）")
     p_mscan.add_argument("--front", required=True)

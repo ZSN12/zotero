@@ -8,6 +8,7 @@
 Phase E 扩展：
     * 审计日志 audit.jsonl（每次 run / confirm-scan 记录）
     * POST /api/confirm-scan 人工扫描确认（confirm_tower_scan）
+    * POST /api/confirm-derived-y 人工复核 z-peer 插值 y（confirm_cross_file_derived_y）
 """
 
 from __future__ import annotations
@@ -127,6 +128,46 @@ def confirm_scan_model(model_path: Path, *, reviewer: str = "web_user") -> dict:
     }
 
 
+def confirm_derived_y_model(model_path: Path, *, reviewer: str = "web_user") -> dict:
+    from traceability.io import load_model, save_model
+    from traceability.intake.tower_pipeline import (
+        confirm_cross_file_derived_y,
+        derived_y_pending_nodes,
+    )
+
+    before_hash = _file_sha256(model_path)
+    model = load_model(str(model_path))
+    pending = derived_y_pending_nodes(model)
+    if not pending:
+        return {
+            "ok": True,
+            "confirmed_nodes": 0,
+            "was_pending": 0,
+            "model_path": _public_path(str(model_path)),
+            "model_hash": before_hash,
+            "message": "无待复核插值 y 节点",
+        }
+    model = confirm_cross_file_derived_y(model)
+    save_model(model, str(model_path))
+    after_hash = _file_sha256(model_path)
+    _audit(
+        "confirm_derived_y",
+        reviewer=reviewer,
+        model=str(model_path),
+        confirmed_nodes=len(pending),
+        pending_nodes=pending[:10],
+        model_hash_before=before_hash,
+        model_hash_after=after_hash,
+    )
+    return {
+        "ok": True,
+        "confirmed_nodes": len(pending),
+        "was_pending": len(pending),
+        "model_path": _public_path(str(model_path)),
+        "model_hash": after_hash,
+    }
+
+
 def _public_path(path: str | None) -> str | None:
     if not path:
         return None
@@ -209,6 +250,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, payload)
             except Exception as exc:
                 _audit("confirm_error", error=str(exc))
+                self._send(500, {"ok": False, "error": str(exc)})
+            return
+
+        if self.path == "/api/confirm-derived-y":
+            rel = data.get("model_path", "")
+            target = _resolve_artifact(rel)
+            if target is None:
+                return self._send(400, {"ok": False, "error": "model_path 无效或越界"})
+            if not target.exists():
+                return self._send(404, {"ok": False, "error": "model 不存在"})
+            try:
+                payload = confirm_derived_y_model(target, reviewer=data.get("reviewer") or "web_user")
+                self._send(200, payload)
+            except Exception as exc:
+                _audit("confirm_derived_y_error", error=str(exc))
                 self._send(500, {"ok": False, "error": str(exc)})
             return
 

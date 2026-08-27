@@ -251,6 +251,7 @@ def _interpolate_front_y_from_z_peers(
             **solved_dict,
             "solve_status": "solved",
             "y_origin": "z_peer_interpolate",
+            "y_review": "pending",
         })
         ao = dict(comp.properties.get("axis_origin") or {})
         ao["y"] = "derived"

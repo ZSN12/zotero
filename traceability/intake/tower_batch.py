@@ -115,6 +115,11 @@ def intake_tower_batch(
                     1 for c in merged.components.values()
                     if c.kind == "tower_node" and c.properties.get("solve_status") == "solved"
                 ),
+                "nodes_derived_y": sum(
+                    1 for c in merged.components.values()
+                    if c.kind == "tower_node"
+                    and c.properties.get("y_origin") == "z_peer_interpolate"
+                ),
             }
         else:
             merged = merge_tower_models(models)
@@ -324,6 +329,11 @@ def cross_file_batch(
         merge_report["nodes_solved"] = sum(
             1 for c in merged.components.values()
             if c.kind == "tower_node" and c.properties.get("solve_status") == "solved"
+        )
+        merge_report["nodes_derived_y"] = sum(
+            1 for c in merged.components.values()
+            if c.kind == "tower_node"
+            and c.properties.get("y_origin") == "z_peer_interpolate"
         )
     elif len(models) == 1:
         merged = finalize_tower_model(

@@ -140,6 +140,7 @@ def run_tower(
     retry: bool = False,
     human_review: bool = False,
     allow_scan: bool = False,
+    allow_derived_y: bool = False,
     format: str = "glb",
     scale: Optional[str] = None,
     mm_per_px: Optional[float] = None,
@@ -245,6 +246,7 @@ def run_tower(
             cross_file_duplicate_count=cross_dup.get("duplicate_count", 0),
             merge_mode=merge_report.get("mode"),
             nodes_solved=merge_report.get("nodes_solved", 0),
+            nodes_derived_y=merge_report.get("nodes_derived_y", 0),
         )
 
         model = None
@@ -422,7 +424,9 @@ def run_tower(
         graph.start("solve", "3D 约束求解", input=model_path.as_posix())
         try:
             from ..solve.tower_solver import solve_tower, compare_to_golden
-            nodes, problems = solve_tower(model)
+            nodes, problems = solve_tower(
+                model, allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+            )
             golden = None
             if golden_path:
                 golden = compare_to_golden(nodes, golden_path)
@@ -450,10 +454,16 @@ def run_tower(
             try:
                 from ..solve.tower_solver import export_tower_glb, export_tower_obj, SolveError
                 if format == "obj":
-                    export_tower_obj(model, out_dir / "tower.obj", strict=True)
+                    export_tower_obj(
+                        model, out_dir / "tower.obj", strict=True,
+                        allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+                    )
                     exported_glb = (out_dir / "tower.obj").as_posix()
                 else:
-                    export_tower_glb(model, glb_path, strict=True)
+                    export_tower_glb(
+                        model, glb_path, strict=True,
+                        allow_scan=allow_scan, allow_derived_y=allow_derived_y,
+                    )
                     exported_glb = glb_path.as_posix()
             except SolveError as exc:
                 graph.finish(error=str(exc), glb_exported=None)

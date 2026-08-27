@@ -50,9 +50,11 @@
       <label>源图（可选，铺底对齐）<input type="file" id="source-image" accept=".png,.jpg,.jpeg" /></label>
       <button id="clear-2d">清空高亮</button>
       <button id="confirm-scan" disabled>人工扫描确认</button>
+      <button id="confirm-derived-y" disabled>插值 Y 复核</button>
     </div>
     <canvas id="evidence-canvas" width="800" height="600"></canvas>
     <div id="evidence-status" class="status">点击 3D 杆件或下方列表，若带像素坐标则在此画线高亮。</div>
+    <div id="derived-y-status" class="status">加载模型后显示插值 y 复核状态。</div>
   </section>
 
   <section class="panel audit-panel">
