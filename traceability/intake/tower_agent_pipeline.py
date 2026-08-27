@@ -98,6 +98,45 @@ def _crop_view(image_path: str, bbox: List[int], out_dir: Path, view_id: str) ->
     }
 
 
+def _assign_view_by_bbox(
+    bars: List[Dict[str, Any]],
+    nodes: List[Dict[str, Any]],
+    views: List[Dict[str, Any]],
+    default_view_type: str,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """P1-6：A2 后按 A0 视图 bbox 给杆/节点打 view_type。
+
+    单图多 region 时，A2 的霍夫检测跑在整图上，产出无视图归属；
+    这里按杆件中点落在哪个 view 的 bbox 内来归属（节点同理）。
+    落在所有 bbox 之外（或只有 whole_sheet 单视图）时回退到文件名级
+    default_view_type，保持单视图旧行为。
+
+    归属后的 view_type 让 A3 的「label 与 bar 同 view」过滤真正生效，
+    避免跨视图（如 front 文字贴到 side 杆件）误配。
+    """
+    def _mid(obj: Dict[str, Any]) -> Tuple[float, float]:
+        if "x1" in obj:
+            return ((float(obj["x1"]) + float(obj["x2"])) / 2.0,
+                    (float(obj["y1"]) + float(obj["y2"])) / 2.0)
+        return (float(obj["x_px"]), float(obj["y_px"]))
+
+    # 只取有真实语义 bbox 的视图；whole_sheet 表示整图无有效切块，不参与归属
+    bbox_views = [v for v in views
+                  if v.get("bbox") and v.get("view_id") != "whole_sheet"]
+
+    def _assign(obj: Dict[str, Any]) -> str:
+        mx, my = _mid(obj)
+        for v in bbox_views:
+            x0, y0, x1, y1 = [int(c) for c in v["bbox"]]
+            if x0 <= mx <= x1 and y0 <= my <= y1:
+                return v.get("view_type") or default_view_type
+        return default_view_type
+
+    new_bars = [dict(b, view_type=_assign(b)) for b in bars]
+    new_nodes = [dict(n, view_type=_assign(n)) for n in nodes]
+    return new_bars, new_nodes
+
+
 def _detect_geometry(image_path: str, filter_noise: bool = True) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     """A2 规则几何检测（霍夫线 + 共线合并 + 端点聚类 + 噪声过滤）。
 
@@ -470,9 +509,16 @@ def run_tower_agent_pipeline(
     except Exception as exc:
         graph.fail(str(exc))
 
+    # P1-7：parse_bars=False（bom/node/大样）短路整条杆件链——A1 件号 OCR 与
+    # A2 几何检测都不该跑（明细表/节点大样没有杆件中心线），A3 直接空跑，
+    # A4 只记 metadata。否则单文件 run-tower tower_bom_hd.png 仍会误跑 A2。
+    parse_bars = bool(view_meta.get("parse_bars", True))
+
     # ---------------- A1 件号 OCR（VLM/MLLM） ----------------
     mllm_backend = mllm or MLLMBackend()
-    if not mllm_backend.available():
+    if not parse_bars:
+        graph.skip("a1_labels", "件号 OCR（A1）", "parse_bars=False（bom/节点大样），跳过件号 OCR")
+    elif not mllm_backend.available():
         graph.skip("a1_labels", "件号 OCR（A1）",
                    "无 MLLM API，跳过件号 OCR（A3 只依赖 A2，全 UNLABELED）")
     else:
@@ -533,30 +579,36 @@ def run_tower_agent_pipeline(
                           warnings=warnings[:20], **mllm_detail)
 
     # ---------------- A2 几何检测（霍夫为主，VLM 可选） ----------------
-    graph.start("a2_geom", "几何检测（A2）", input=str(source))
-    try:
-        bars, nodes, geom_meta = _detect_geometry(str(source), filter_noise=filter_noise)
-        # P2-1：给 A2 产出的 bar/node 注入 view_type，供 A3 做同视图配对
-        # （单文件扫描图通常单一视图，直接用 A0 推断出的主视图类型）
-        vt = view_meta.get("view_type") or "drawing"
-        for b in bars:
-            b["view_type"] = vt
-        for n in nodes:
-            n["view_type"] = vt
-        if bars:
-            graph.finish(bars=len(bars), nodes=len(nodes), **geom_meta)
-        else:
-            # 非图签页 0 杆 -> failed（几何检测失败，不能靠 A3 凑）
-            graph.fail("几何检测 0 杆（非图签页）", **geom_meta)
-    except Exception as exc:
-        graph.fail(str(exc))
+    if not parse_bars:
+        graph.skip("a2_geom", "几何检测（A2）", "parse_bars=False（bom/节点大样），跳过杆件几何检测")
+    else:
+        graph.start("a2_geom", "几何检测（A2）", input=str(source))
+        try:
+            bars, nodes, geom_meta = _detect_geometry(str(source), filter_noise=filter_noise)
+            # P1-6：给 A2 产出的 bar/node 注入 view_type。单文件扫描图可能含多个
+            # A0 视图（多 region），按杆件中点落在哪个 view bbox 内归属；无有效
+            # 切块（whole_sheet）时回退到文件名级主视图类型。
+            vt = view_meta.get("view_type") or "drawing"
+            bars, nodes = _assign_view_by_bbox(bars, nodes, views, vt)
+            if bars:
+                graph.finish(bars=len(bars), nodes=len(nodes), **geom_meta)
+            else:
+                # 非图签页 0 杆 -> failed（几何检测失败，不能靠 A3 凑）
+                graph.fail("几何检测 0 杆（非图签页）", **geom_meta)
+        except Exception as exc:
+            graph.fail(str(exc))
 
     # ---------------- A3 关联匹配（确定性规则） ----------------
     graph.start("a3_link", "关联匹配（A3）", input=f"labels={len(labels)}, bars={len(bars)}")
     try:
         link_meta = _associate_labels(bars, labels, snap_px=label_snap_px)
         assignments = link_meta["assignments"]
-        if link_meta["association_rate"] < min_association_rate:
+        if not parse_bars:
+            # P1-7：bom/节点大样无杆件，A3 空跑但视为通过（不是失败），
+            # A4 只记 metadata。
+            graph.finish(**{k: v for k, v in link_meta.items() if k != "assignments"},
+                         note="parse_bars=False，无杆件可关联")
+        elif link_meta["association_rate"] < min_association_rate:
             graph.pending(
                 f"labeled/bars={link_meta['association_rate']} < {min_association_rate}",
                 **{k: v for k, v in link_meta.items() if k != "assignments"})

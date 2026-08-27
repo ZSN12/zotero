@@ -244,7 +244,8 @@ def run_tower(
                     graph.start("compile", "模型编译（规则注入）")
                     from ..intake.tower_pipeline import finalize_tower_model
                     model = finalize_tower_model(model, bom_path=bom_path, merge=False,
-                                                 allow_scan=allow_scan)
+                                                 allow_scan=allow_scan,
+                                                 layer_map_path=layer_map_path)
                     graph.finish(rules=len(model.rules), bars=_n(model, "tower_bar"))
                 except Exception as exc:
                     graph.fail(str(exc))
@@ -311,7 +312,8 @@ def run_tower(
         try:
             from ..intake.tower_pipeline import finalize_tower_model
             model = finalize_tower_model(model, bom_path=bom_path, merge=merge,
-                                         allow_scan=allow_scan)
+                                         allow_scan=allow_scan,
+                                         layer_map_path=layer_map_path)
             graph.finish(rules=len(model.rules), bars=_n(model, "tower_bar"))
         except Exception as exc:
             graph.fail(str(exc))

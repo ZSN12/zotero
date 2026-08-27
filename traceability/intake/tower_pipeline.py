@@ -22,6 +22,7 @@ def finalize_tower_model(
     bom_path: Optional[str | Path] = None,
     merge: bool = False,
     allow_scan: bool = False,
+    layer_map_path: Optional[str | Path | dict] = None,
 ) -> EngineeringModel:
     """BOM 交叉核验 →（可选）跨视图合并 → 注入验证规则。
 
@@ -29,12 +30,16 @@ def finalize_tower_model(
     注入的 r_scan_reviewed 规则会 failed，阻断终版 export strict；
     人工确认（confirm_tower_scan）把 solve_status=verified 后，
     再以 allow_scan=True 调用即可通过闸门。
+
+    layer_map_path：per-project overlay（P0-1），下传给 merge_view_coordinates /
+    merge_view_bars，确保国网等外部图的 view_regions（含 y_expand/x_expand）
+    能被读回来，而不是只查 schema/tower_layer_map.json。
     """
     if bom_path:
         model = cross_check_bom(model, parse_bom_auto(bom_path))
     if merge:
-        merge_view_coordinates(model)
-        model = merge_view_bars(model)
+        merge_view_coordinates(model, overlay=layer_map_path)
+        model = merge_view_bars(model, overlay=layer_map_path)
     inject_tower_rules(model)
     if allow_scan:
         # 只做「允许进入求解链」的标记；是否 verified 仍由 r_scan_reviewed 规则判定

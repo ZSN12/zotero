@@ -53,9 +53,9 @@ def _model_stem(model: EngineeringModel) -> str:
     return name
 
 
-def _region_meta(stem: str) -> Dict[str, dict]:
+def _region_meta(stem: str, overlay: Optional[str | Path | dict] = None) -> Dict[str, dict]:
     out: Dict[str, dict] = {}
-    for r in view_regions(stem):
+    for r in view_regions(stem, overlay=overlay):
         kind = r.get("kind")
         if kind:
             out[kind] = r
@@ -112,15 +112,22 @@ def _hungarian(cost: List[List[float]]) -> List[Tuple[int, int]]:
         return _linear_sum_assignment_fallback(cost)
 
 
-def merge_view_coordinates(model: EngineeringModel) -> Dict[str, Dict[str, Optional[float]]]:
+def merge_view_coordinates(
+    model: EngineeringModel,
+    overlay: Optional[str | Path | dict] = None,
+) -> Dict[str, Dict[str, Optional[float]]]:
     """合并跨视图坐标，返回 {node_component_id: {"x","y","z"}}。
 
     - front(elevation) 提供 Z，并联合 side 恢复 (x, y)（带展开量时解 2x2 线性系统）
     - section 提供干净的 x，用于给 front×side 配对做判据
     - plan 直接提供该层的 x, y, z
+
+    overlay：per-project 图层/视图规范（P0-1）。国网等外部图的 view_regions
+    写在 overlay 里而非 schema/tower_layer_map.json，因此必须下传，否则
+    _region_meta 读不到 front/side 的 y_expand/x_expand 等展开元数据。
     """
     stem = _model_stem(model)
-    meta = _region_meta(stem)
+    meta = _region_meta(stem, overlay=overlay)
 
     eps = 50.0
     nodes_by_view: Dict[str, List[Tuple[str, Component]]] = defaultdict(list)
@@ -245,7 +252,10 @@ def _bar_3d_length(bar: Component, model: EngineeringModel) -> Optional[float]:
     return math.sqrt((pf["x"] - pt["x"]) ** 2 + (pf["y"] - pt["y"]) ** 2 + (pf["z"] - pt["z"]) ** 2)
 
 
-def merge_view_bars(model: EngineeringModel) -> EngineeringModel:
+def merge_view_bars(
+    model: EngineeringModel,
+    overlay: Optional[str | Path | dict] = None,
+) -> EngineeringModel:
     """把跨视图投影合并为物理杆件。
 
     主视图（front/elevation）每个物理杆件只画一次，因此以主视图为骨架：
@@ -253,6 +263,8 @@ def merge_view_bars(model: EngineeringModel) -> EngineeringModel:
         * 用已解算的节点三轴坐标计算 length_mm_3d
         * 用 BOM 长度把 UNLABELED 主视图杆件匹配回 bar_id（唯一匹配才接受）
         * BOM 维度的 applies_to 重指到合并后的杆件
+
+    overlay：per-project 视图规范（P0-1），下传给 merge_view_coordinates。
     """
     bars = [c for _, c in _tower_bars(model)]
     if not bars:

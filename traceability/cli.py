@@ -201,7 +201,8 @@ def cmd_intake_tower(args):
     if args.layer_map:
         print(f"✓ 使用 per-project overlay：{args.layer_map}")
     model = finalize_tower_model(model, bom_path=args.bom, merge=args.merge,
-                                 allow_scan=args.allow_scan)
+                                 allow_scan=args.allow_scan,
+                                 layer_map_path=args.layer_map)
     if args.bom:
         print(f"已交叉核验 BOM：{len(parse_bom_auto(args.bom))} 行")
     if args.merge:
@@ -302,7 +303,8 @@ def cmd_compile_drawing(args):
             model = analyze_tower_scan(raster_path, model_name=f"tower-{Path(args.file).stem}",
                                        scale=args.scale, mm_per_px=args.mm_per_px)
         model = finalize_tower_model(model, bom_path=args.bom, merge=args.merge,
-                                     allow_scan=args.allow_scan)
+                                     allow_scan=args.allow_scan,
+                                     layer_map_path=args.layer_map)
         print(summarize(run_harness(model)))
         save_model(model, args.out)
         print(f"✓ 扫描图候选模型已保存 -> {args.out}（待人工复核）")
@@ -329,7 +331,8 @@ def cmd_compile_drawing(args):
     if args.tower:
         # MLLM/规则输出 -> 铁塔验证链：BOM + 跨视图合并 + 规则 + Harness + 金标准
         model = finalize_tower_model(model, bom_path=args.bom, merge=args.merge,
-                                     allow_scan=args.allow_scan)
+                                     allow_scan=args.allow_scan,
+                                     layer_map_path=args.layer_map)
         print(f"✓ 铁塔规则已注入：{len(model.rules)} 条")
         if args.merge:
             print("✓ 已执行跨视图合并")

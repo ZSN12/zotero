@@ -266,3 +266,81 @@ python -m traceability.cli compile-drawing examples/clear/tower_side_hd.png --to
 
 ### 文档
 - README.md 新增「无 DXF 扫描图：多 Agent 编排（A0→A4）」一节 + Roadmap 勾选。
+
+---
+
+## 多视图语义打通 + 多文件编排（P0/P1/P2 补全，已落地，2026-08）
+
+> 本轮目标：把铁塔管线从「单文件 / 单视图」打通为「多视图语义 + 多文件编排」，
+> 并以国网 35A1 真实图纸（矢量 DXF 为主）+ 扫描图（VLM 复核）验证。
+
+### 现状诊断（改造前实测）
+
+| 能力 | 状态 |
+|---|---|
+| 矢量 `tower_110kv.dxf` + `--merge` | ✅ 三视图合 3D 已验证（85 节点，max_dev=0.011mm） |
+| 国网 `35A1-JC1-02/03` | ⚠️ 能 parse，但 `layer_overlay.json` 里 `view_regions` 为空，全是 `view_type=drawing`，无法 `--merge` 出 3D |
+| 扫描 agent（A0→A4） | ⚠️ 单 PNG；A1 VLM 坐标未还原，关联率个位数（5.14%） |
+| `examples/clear/` | 已有 front/side/plan/bom 分文件，无批量跑 + 合并 |
+| `merge-scans` | 仅 front+side，无 plan、无 agent 链 |
+
+### 关键结论：国网 02/03 是单视图图纸，不强行 merge 出 3D
+
+用 ezdxf 分析真实图面（INSERT 展开后按 bar_layers 统计）：
+
+- `35A1-JC1-02`（总装）：杆件 x 集中在 34350~34886（宽 536）、y -7678~-7244（高 434），
+  是**单张正立面图**；图面左侧 11114~34375 的实体是图层 0 的图框/尺寸线（2546 个实体），
+  非杆件。文字全是截面 L40X3 / 材质 Q345 / 螺栓 M16X40，无「立面/平面/剖面」标题
+  （中文标题是 SHX 转义码 `\M+5BAF...`）。
+- `35A1-JC1-03`（节点大样）：杆件 x 34383~34717、y -8332~-8006，`1:100` 比例 + 螺栓标注密集。
+
+结论：02/03 不像 `tower_110kv` 那样一张图排布 front+side+plan 三视图，
+**无法靠单文件 merge 出 3D**。产品路径 = 矢量主路径（02 件号关联 ≈56.8%、
+03 ≈84.9%）+ 扫描/VLM 复核，不替代矢量主路径。
+
+### P0 — 多视图语义打通（已落地）
+
+| # | 步骤 | 落地文件 | 验证 |
+|---|---|---|---|
+| P0-1 | DXF view_regions：`35A1-JC1-02` 配 `front` 单立面、`35A1-JC1-03` 配 `detail`+空 axes；无 overlay 时 `_infer_assembly_views()` 按图面结构推断（assembly 左右两簇切 front/side，否则单 front；node_detail → detail） | `examples/external/guowang_35A1/layer_overlay.json` + `tower_dxf.py` | 02 → 1235 杆全 `front`（原 1236 全 drawing）；03 → detail 不产杆件；有图层无 view_regions 时 02 自动推断 front |
+| P0-2 | 扫描图按文件名标 view_type：`tower_scan_views.infer_scan_view_meta()` 从 stem 推断 front/side/plan+z_level/bom/node；接入 A0，drawing_view/tower_bar/tower_node 不再硬编码 `view_type="drawing"` | `tower_scan_views.py` + `tower_agent_pipeline.py` | `tower_front_hd`→front、`tower_plan_z8100_hd`→plan+z_level=8100、`tower_bom_hd`→bom（不 parse）、`tower_node_k1_hd`→detail（不 parse） |
+| P0-3 | A1 VLM 坐标还原：`_labels_to_full_image()` 按 `source_crop_size/crop_size`（≥1）放大 + crop 左上角 bbox 偏移还原到整图（方向取反会致件号坐标偏 2~3 倍） | `tower_agent_pipeline.py` | 真实扫描图 A1 识别 42 件号（此前关联率 5.14% 的根因之一） |
+
+### P1 — 多文件编排（已落地）
+
+| # | 步骤 | 落地文件 | 验证 |
+|---|---|---|---|
+| P1-1 | 扫描目录批量：`scan_dir_files()` 按文件名分组 + `intake_scan_batch()`（front+side → merge_scan_views，plan 写 z_level，跳过 bom/node） | `tower_scan_views.py` | `examples/clear/` → front(291杆)+side(272杆) merge 339 节点候选；3 plan 写 z_level；bom/node 正确跳过 |
+| P1-2 | `run-tower` 目录识别：全是 PNG/PDF → 扫描批量；含 DWG/DXF → 现有 `intake_tower_batch`；`_dir_has_cad_files()` 分流 | `tower_harness.py` | CLI `run-tower <dir>` 端到端跑通（禁用 MLLM 时 A1 跳过，front+side merge 正常） |
+| P1-3 | `_model_stem()` 优先从 `drawing_file.drawing_view`/path stem 取，回退 model.name：修复 batch-merged 模型对不上 overlay 的 view_regions | `tower_views.py` | `tower-batch-merged` 模型正确取到 `35A1-JC1-02` stem |
+
+### P2 — 关联与配置（已落地）
+
+| # | 步骤 | 落地文件 | 验证 |
+|---|---|---|---|
+| P2-1 | A3 同 view_type 配对 + 中点距离；A2 产出 bar/node 注入 view_type（否则 `_view_of(bar)` 恒 None，同视图配对失效）；删 `_dist_point_segment` 死代码 | `tower_agent_pipeline.py` | side 视图杆只匹配 side 件号（不跨视图抢号） |
+| P2-2 | MLLM 配置：`MLLM_TIMEOUT` 默认 300s、`MLLM_CONNECT_TIMEOUT` 30s、`MLLM_MAX_IMAGE_EDGE` 默认 2048；`resolve_mllm_config()` 显式空 key 可禁用（隔离环境变量，修复 `MLLMBackend(api_key="")` 被环境覆盖） | `mllm_backend.py` + `mllm_providers.py` | `MLLMBackend(api_key="")` → available=False；默认构造仍读 `KIMI_API_KEY` |
+
+### 测试与回归
+
+- 修复 `tests/test_mllm_contract.py`：`test_choose_null_when_no_api_for_scan` 显式传
+  `mllm=MLLMBackend(api_key="")`，隔离宿主环境变量（否则环境有 KIMI_API_KEY 时
+  拿到 MLLMBackend 而非 NullBackend）。
+- 非 API 测试 58 项全绿：test_bar_label_association(8) + test_tower_intake(7) +
+  test_traceability(7) + test_tower_110kv(11) + test_mllm_contract(6) +
+  test_p0_p2_features(19)。
+- `tower_agent_pipeline` 测试因含真实 API 调用（`test_scan_model_pending_review`）在
+  有 KIMI_API_KEY 环境会阻塞/超时，需在无 API 环境或显式禁用 MLLM 下跑。
+
+### 遗留与后续建议
+
+1. **02/03 的 3D 重构**：单视图图纸无法单文件 merge 出 3D，需跨文件组合（02 立面 +
+   03 节点大样 + 其它平面图）或人工标定尺度。当前按「矢量主路径做件号关联 + 扫描复核」交付。
+2. **A3 关联率仍受 A2 噪声影响**：霍夫把图框/标注线误判为杆件（真实扫描图 545 候选杆，
+   真实件号仅数十），`MIN_ASSOCIATION_RATE=0.20` 在杆件基数虚高时永远 pending。
+   建议 A2 加「超长连续直线（图框）/ 贴图边界线段」过滤，或 A3 改用
+   「OCR 件号中成功关联比例」而非「labeled/全部候选杆」。
+3. **`MLLM_MAX_IMAGE_EDGE` 默认值不一致**：`mllm_backend.py` docstring 写 1536、
+   实际代码默认 2048，建议统一。
+4. **git 管理**：本轮 `git init` 并提交 `371b5b5`（本地 main，无远程）；如需推送
+   gitee/github 需 `git remote add`。
