@@ -79,6 +79,20 @@ def layer_names(group: str, default: List[str], overlay: Optional[str | Path | d
     return list(default)
 
 
+def layer_names_for_stem(
+    stem: str,
+    group: str,
+    default: List[str],
+    overlay: Optional[str | Path | dict] = None,
+) -> List[str]:
+    """按文件 stem 读取图层组；overlay 中 `{group}_by_stem` 可覆盖单张图。"""
+    spec = load_tower_spec(overlay)
+    by_stem = spec.get(f"{group}_by_stem") or {}
+    if stem in by_stem and isinstance(by_stem[stem], list) and by_stem[stem]:
+        return [str(v) for v in by_stem[stem]]
+    return layer_names(group, default, overlay)
+
+
 def bar_id_patterns(default: List[str], overlay: Optional[str | Path | dict] = None) -> List[str]:
     spec = load_tower_spec(overlay)
     val = spec.get("bar_id_patterns")

@@ -175,6 +175,65 @@ def merge_view_coordinates(
             p["solve_status"] = "solved"
             merged[cid] = {"x": x, "y": y_plan, "z": z}
 
+    # ---- front + plan 跨文件配对（M3：国网 02 front + ML plan）----
+    # front axes=[x,z]：view_x→x，view_y→z；plan axes=[x,y]：view_x→x，view_y→y。
+    # 两文件 origin 不同时，用归一化 view_x 做匈牙利匹配（仅 z 带内 front 节点）。
+    plan_nodes_list = nodes_by_view.get("plan", [])
+    front_at_z: List[Tuple[str, Component]] = []
+    plan_meta = meta.get("plan", {})
+    z_ref = plan_meta.get("z_level")
+    if z_ref is None and plan_nodes_list:
+        z_ref = plan_nodes_list[0][1].properties.get("z_level")
+    z_band = eps * 4
+    for cid, comp in nodes_by_view.get("front", []):
+        if comp.properties.get("solve_status") == "solved":
+            continue
+        p = comp.properties
+        z = p.get("view_y")
+        if z is None:
+            continue
+        if z_ref is not None and abs(float(z) - float(z_ref)) > z_band:
+            continue
+        if p.get("view_x") is not None:
+            front_at_z.append((cid, comp))
+
+    if front_at_z and plan_nodes_list:
+        def _norm_x(val: float, items: List[Tuple[str, Component]]) -> float:
+            xs = [c.properties["view_x"] for _, c in items if c.properties.get("view_x") is not None]
+            if not xs:
+                return 0.5
+            lo, hi = min(xs), max(xs)
+            return (val - lo) / (hi - lo) if hi - lo > 1e-6 else 0.5
+
+        n_f, n_p = len(front_at_z), len(plan_nodes_list)
+        n = max(n_f, n_p)
+        cost = [[1.0] * n for _ in range(n)]
+        for i, (_, fc) in enumerate(front_at_z):
+            fx = fc.properties["view_x"]
+            for j, (_, pc) in enumerate(plan_nodes_list):
+                px = pc.properties.get("view_x")
+                if px is None:
+                    cost[i][j] = float("inf")
+                    continue
+                cost[i][j] = abs(_norm_x(float(fx), front_at_z) - _norm_x(float(px), plan_nodes_list))
+        pairs = _hungarian(cost)
+        for i, j in pairs:
+            if i >= n_f or j >= n_p:
+                continue
+            if cost[i][j] > 0.35:
+                continue
+            fcid, fcomp = front_at_z[i]
+            _, pcomp = plan_nodes_list[j]
+            fp, pp = fcomp.properties, pcomp.properties
+            x = fp.get("view_x")
+            z = fp.get("view_y")
+            y = pp.get("view_y")
+            if x is None or z is None or y is None:
+                continue
+            solved = {"x": round(float(x), 2), "y": round(float(y), 2), "z": round(float(z), 2)}
+            merged[fcid] = dict(solved)
+            fp.update({**solved, "solve_status": "solved"})
+
     # ---- front + side + section 三视图线性解耦 ----
     front_meta = meta.get("front", {})
     side_meta = meta.get("side", {})
@@ -325,10 +384,13 @@ def merge_view_bars(
             bar.properties["section"] = bom_sec.get(bid)
             used_ids.add(bid)
 
-    # 重建组件：只保留主视图节点/杆件 + 图纸上下文 + BOM 行
+    # 重建组件：保留主视图节点/杆件 + 图纸上下文 + BOM + 连接详图
+    _KEEP_KINDS = frozenset({
+        "drawing_file", "bom_row", "gusset_plate", "bolt_group", "detail_view",
+    })
     keep_components = {}
     for cid, c in model.components.items():
-        if c.kind == "drawing_file" or c.kind == "bom_row":
+        if c.kind in _KEEP_KINDS:
             keep_components[cid] = c
     for cid in sorted(primary_nodes):
         keep_components[cid] = model.components[cid]

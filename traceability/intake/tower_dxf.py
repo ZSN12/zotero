@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 
 # 完整 demo 生成器（16 节点 26 杆件，立面+平面+BOM）在 tower_demo_dxf.py
 from .tower_demo_dxf import make_demo_tower_dxf  # noqa: F401  (复用完整版)
-from .tower_spec import layer_names, bar_id_patterns, view_regions
+from .tower_spec import layer_names, layer_names_for_stem, bar_id_patterns, view_regions
 
 from ..model import (
     Component,
@@ -94,6 +94,24 @@ def classify_drawing_kind(stem: str) -> dict:
                 "parse_bars": s.startswith("02"),
                 "reason": "文件名前导序号判定"}
     return {"kind": "drawing", "parse_bars": True, "reason": "默认按杆件图解析"}
+
+
+def resolve_drawing_kind(stem: str, overlay: Optional[str | Path | dict] = None) -> dict:
+    """按文件名分流，并允许 overlay view_regions 覆盖 BOM/图签等跳过规则（M3）。"""
+    kind = classify_drawing_kind(stem)
+    if kind["parse_bars"]:
+        return kind
+    for region in view_regions(stem, overlay=overlay):
+        axes = list(region.get("axes") or [])
+        if not axes:
+            continue
+        vk = region.get("kind", "drawing")
+        return {
+            "kind": vk if vk in ("plan", "front", "side", "section", "elevation", "drawing") else "drawing",
+            "parse_bars": True,
+            "reason": f"overlay view_regions[{vk}] 覆盖 {kind['reason']}",
+        }
+    return kind
 
 
 def _layer_hit(layer: str, names: List[str]) -> bool:
@@ -227,7 +245,11 @@ def _extract_bar_label(text: str, bar_id_re: re.Pattern) -> Optional[str]:
 
 
 def _in_region(x: float, y: float, region: dict) -> bool:
-    x0, x1, y0, y1 = region["region"]
+    reg = region.get("region")
+    if reg is None:
+        # overlay 未写 region 时视为整图有效（M3：闲鱼/国网分册平面图）
+        return bool(region.get("axes"))
+    x0, x1, y0, y1 = reg
     return x0 <= x <= x1 and y0 <= y <= y1
 
 
@@ -344,10 +366,12 @@ def extract_tower_from_dxf(
 
     dxf_path = str(dxf_path)
     stem = Path(dxf_path).stem
-    drawing_kind = classify_drawing_kind(stem)
+    drawing_kind = resolve_drawing_kind(stem, overlay=layer_map_path)
 
     lm = {
-        "bar_layers": layer_names("bar_layers", DEFAULT_LAYER_MAP["bar_layers"], overlay=layer_map_path),
+        "bar_layers": layer_names_for_stem(
+            stem, "bar_layers", DEFAULT_LAYER_MAP["bar_layers"], overlay=layer_map_path,
+        ),
         "node_layers": layer_names("node_layers", DEFAULT_LAYER_MAP["node_layers"], overlay=layer_map_path),
         "dim_layers": layer_names("dim_layers", DEFAULT_LAYER_MAP["dim_layers"], overlay=layer_map_path),
         "text_layers": layer_names("text_layers", DEFAULT_LAYER_MAP["text_layers"], overlay=layer_map_path),
@@ -722,6 +746,16 @@ def extract_tower_from_dxf(
         view_mode = "single_facade"
     df.properties["view_mode"] = view_mode
     df.properties["view_kinds"] = sorted(view_kinds)
+
+    # M3：节点大样（03+ 图纸）→ 节点板 + 螺栓群（Gap 2 主链接入）
+    if drawing_kind["kind"] == "node_detail":
+        detail_regions = [r for r in regions if r.get("kind") == "detail"] or regions
+        from .tower_detail import extract_detail_connections
+
+        extract_detail_connections(
+            model, msp, detail_regions, stem, dxf_path, overlay=layer_map_path,
+        )
+
     return model
 
 

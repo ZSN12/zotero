@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from ..model import Component, Dimension, EngineeringModel, SourceRef, SourceType
 from .dwg import ensure_dxf_batch
-from .tower_dxf import classify_drawing_kind, extract_tower_from_dxf, layer_usage_report
+from .tower_dxf import classify_drawing_kind, resolve_drawing_kind, extract_tower_from_dxf, layer_usage_report
 from .tower_views import _model_stem
 
 
@@ -52,7 +52,7 @@ def intake_tower_batch(
 
     for dxf in sorted(dxf_paths):
         stem = Path(dxf).stem
-        kind = classify_drawing_kind(stem)
+        kind = resolve_drawing_kind(stem, overlay=layer_map_path)
         entry: Dict[str, Any] = {
             "file": stem,
             "dxf": dxf,

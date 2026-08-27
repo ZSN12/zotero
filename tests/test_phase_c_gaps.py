@@ -68,6 +68,36 @@ class CrossFileBatchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             r = cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
         self.assertIsNotNone(r.get("model_path"))
+        mr = r.get("merge_report") or {}
+        self.assertGreater(mr.get("nodes_solved", 0), 0, "cross_file front+plan 应解出 3D 节点")
+
+    def test_guowang_plan_overlay_parses_bars(self):
+        from traceability.intake.tower_dxf import extract_tower_from_dxf
+
+        dxf = EXAMPLES / "external" / "guowang_35A1" / "35C2-SJG1-ML.dxf"
+        if not dxf.exists():
+            self.skipTest("国网平面图不存在")
+        model = extract_tower_from_dxf(str(dxf), layer_map_path=str(OVERLAY))
+        df = model.components.get("drawing_file")
+        self.assertTrue(df.properties.get("parse_bars"))
+        self.assertEqual(df.properties.get("drawing_kind"), "plan")
+        nodes = [c for c in model.components.values() if c.kind == "tower_node"]
+        self.assertGreater(len(nodes), 0)
+        self.assertIn("plan", df.properties.get("view_kinds") or [])
+
+    def test_guowang_detail_gusset_and_bolt_rules(self):
+        from traceability.intake.tower_dxf import extract_tower_from_dxf
+
+        dxf = EXAMPLES / "external" / "guowang_35A1" / "35A1-JC1-03.dxf"
+        if not dxf.exists():
+            self.skipTest("国网大样不存在")
+        model = extract_tower_from_dxf(str(dxf), layer_map_path=str(OVERLAY))
+        gussets = [c for c in model.components.values() if c.kind == "gusset_plate"]
+        bolts = [c for c in model.components.values() if c.kind == "bolt_group"]
+        rules = [r for r in model.rules.values() if r.id.startswith("r_bolt_group_")]
+        self.assertGreaterEqual(len(gussets), 1)
+        self.assertGreaterEqual(len(bolts), 1)
+        self.assertGreaterEqual(len(rules), 1)
 
 
 class ProjectModelTest(unittest.TestCase):
