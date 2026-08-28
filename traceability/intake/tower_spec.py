@@ -233,11 +233,65 @@ def cross_file_infer_side_stems(overlay: Optional[str | Path | dict] = None) -> 
     return [str(s) for s in stems] if isinstance(stems, list) else []
 
 
+def cross_file_merge_all_parseable(overlay: Optional[str | Path | dict] = None) -> bool:
+    """已废弃为空间合并开关：全册解析请用 parse_all_project_sheets。"""
+    return bool(cross_file_view_manifest(overlay).get("merge_all_parseable"))
+
+
+def cross_file_parse_all_project_sheets(overlay: Optional[str | Path | dict] = None) -> bool:
+    """JC1 全册：详图/模块页也解析杆件（写入各 sheet JSON，供追溯与 BOM）。"""
+    manifest = cross_file_view_manifest(overlay)
+    return bool(
+        manifest.get("parse_all_project_sheets")
+        or manifest.get("parse_detail_as_front")
+        or manifest.get("merge_all_parseable")
+    )
+
+
+def cross_file_parse_detail_as_front(overlay: Optional[str | Path | dict] = None) -> bool:
+    """详图/模块页 overlay region 无 axes 时，按正立面 front 解析杆件（全册跑批用）。"""
+    return cross_file_parse_all_project_sheets(overlay)
+
+
+def default_front_region_scales(overlay: Optional[str | Path | dict] = None) -> Tuple[float, float]:
+    """全册合并时详图页继承主立面 scale_x/scale_y。"""
+    manifest = cross_file_view_manifest(overlay)
+    sheets = manifest.get("sheets") or {}
+    front_stem = sheets.get("front") if isinstance(sheets, dict) else None
+    if front_stem:
+        for region in view_regions(str(front_stem), overlay=overlay):
+            if region.get("kind") == "front" and region.get("axes"):
+                return region_scale_xy(region)
+    return 50.2, 85.1
+
+
+def elevate_regions_for_full_merge(
+    regions: List[dict],
+    overlay: Optional[str | Path | dict] = None,
+) -> List[dict]:
+    """全册跑批：把 detail 区（axes 为空）提升为 front 立面，产出杆件参与 merge。"""
+    if not cross_file_parse_detail_as_front(overlay) or not regions:
+        return regions
+    sx, sy = default_front_region_scales(overlay)
+    out: List[dict] = []
+    for region in regions:
+        rc = copy.deepcopy(region)
+        if not list(rc.get("axes") or []):
+            rc["kind"] = "front"
+            rc["axes"] = ["x", "z"]
+            rc.setdefault("scale_x", sx)
+            rc.setdefault("scale_y", sy)
+            rc.setdefault("z_flip", True)
+        out.append(rc)
+    return out
+
+
 def cross_file_merge_stems(overlay: Optional[str | Path | dict] = None) -> set:
     """cross_file 真 3D 合并应纳入的图纸 stem（不含图册内其它详图/模块页）。
 
     来源：cross_file_views.sheets 中 front/plan/side/elevation 非空 stem
-    + infer_side_on_stems。detail / bom 等角色不参与空间合并。
+    + infer_side_on_stems + merge_stems_extra。detail / 模块分册不参与空间合并
+    （全册解析走 parse_all_project_sheets，各 sheet 独立 JSON）。
     未配置 manifest 时返回空集，由调用方决定是否合并全部模型。
     """
     manifest = cross_file_view_manifest(overlay)
@@ -251,6 +305,11 @@ def cross_file_merge_stems(overlay: Optional[str | Path | dict] = None) -> set:
                 stems.add(str(v).strip())
     for s in cross_file_infer_side_stems(overlay):
         stems.add(s)
+    extra = manifest.get("merge_stems_extra") or []
+    if isinstance(extra, list):
+        for s in extra:
+            if s and str(s).strip():
+                stems.add(str(s).strip())
     return stems
 
 

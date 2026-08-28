@@ -718,7 +718,12 @@ def extract_tower_from_dxf(
         lm.update(layer_map)
 
     bar_id_re = _compile_bar_id_re(bar_id_patterns(DEFAULT_BAR_ID_PATTERNS, overlay=layer_map_path))
-    regions = view_regions(stem, overlay=layer_map_path)
+    from .tower_spec import elevate_regions_for_full_merge
+
+    regions = elevate_regions_for_full_merge(
+        view_regions(stem, overlay=layer_map_path),
+        overlay=layer_map_path,
+    )
     min_bar_len = min_bar_length_mm(stem, overlay=layer_map_path)
     coll_cfg = collinear_merge_config(stem, overlay=layer_map_path)
     if eps == EPS:
