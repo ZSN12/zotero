@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>35A1-JC1 铁塔 3D</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0e1116; color: #e8eaed; font-family: system-ui, sans-serif; }
+  #info { position: fixed; left: 12px; top: 12px; z-index: 2; background: rgba(0,0,0,.65); padding: 10px 14px; border-radius: 8px; font-size: 14px; max-width: 420px; }
+  #viewer { width: 100%; height: 100%; }
+  a { color: #8ab4f8; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="info">
+  <b>35A1-JC1</b> 国网官方典型设计完整塔（L0 CanonicalTower / GIM）<br>
+  615 根角钢构件 · 296 个空间节点 · 塔高 36.6 米 · 四面空间桁架 · 语义分层配色<br>
+  <a href="/">返回主控制台</a>
+</div>
+<div id="viewer"></div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const container = document.getElementById('viewer');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 10, 500000);
+camera.up.set(0, 0, 1); // 铁塔沿 Z 轴竖直向上（塔轴=Z，GT 坐标以 Z 为高度）
+camera.position.set(8000, 6000, 12000);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio || 1);
+renderer.setSize(innerWidth, innerHeight);
+container.appendChild(renderer.domElement);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 1.6);
+scene.add(hemi);
+
+const dir1 = new THREE.DirectionalLight(0xffffff, 1.8);
+dir1.position.set(2, 4, 3);
+scene.add(dir1);
+
+const dir2 = new THREE.DirectionalLight(0xffffff, 1.2);
+dir2.position.set(-2, -3, -2);
+scene.add(dir2);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+
+new GLTFLoader().load('/demo/35A1-JC1/gt_reference.glb', (gltf) => {
+  const edgeLines = [];
+  gltf.scene.traverse((obj) => {
+    if (obj.isMesh) {
+      // 保留 GLB 内的语义分层配色（LEG 红 / DIAG 蓝 / HORIZ 绿 / CROSS 紫），
+      // 仅调金属质感让立面更立体，不覆盖模型颜色。
+      if (Array.isArray(obj.material)) {
+        obj.material = obj.material.map((m) => new THREE.MeshStandardMaterial({
+          color: (m && m.color ? m.color : 0x34d399), metalness: 0.6, roughness: 0.3,
+        }));
+      } else if (obj.material) {
+        obj.material = new THREE.MeshStandardMaterial({
+          color: (obj.material.color ? obj.material.color : 0x34d399), metalness: 0.6, roughness: 0.3,
+        });
+      }
+      // 半透明白色发光边缘线框
+      const edges = new THREE.EdgesGeometry(obj.geometry, 15);
+      const line = new THREE.LineSegments(
+        edges,
+        new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 }),
+      );
+      line.userData.isEdgeLine = true;
+      obj.add(line);
+      edgeLines.push(line);
+    }
+  });
+  scene.add(gltf.scene);
+  const box = new THREE.Box3().setFromObject(gltf.scene);
+  const c = box.getCenter(new THREE.Vector3());
+  const s = box.getSize(new THREE.Vector3()).length() / 2 || 1;
+  // Z 轴为高度：默认正面对焦（相机放 +X 侧、高度居中），塔身竖直向上
+  camera.position.copy(c).add(new THREE.Vector3(s * 1.1, s * 0.25, s * 0.6));
+  controls.target.copy(c);
+  controls.update();
+}, undefined, (e) => console.error(e));
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

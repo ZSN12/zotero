@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>35A1-JC1 完整塔 vs DXF 对比</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0e1116; color: #e8eaed; font-family: system-ui, sans-serif; }
+  #info { position: fixed; left: 12px; top: 12px; z-index: 2; background: rgba(0,0,0,.75); padding: 12px 16px; border-radius: 8px; font-size: 13px; max-width: 480px; line-height: 1.5; }
+  #viewer { width: 100%; height: 100%; }
+  button { margin: 4px 4px 4px 0; padding: 6px 12px; cursor: pointer; border-radius: 4px; border: 1px solid #555; background: #1a1d24; color: #e8eaed; }
+  button.active { background: #3b6ef5; border-color: #3b6ef5; }
+  a { color: #8ab4f8; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="info">
+  <b>35A1-JC1 三维模型预览</b><br>
+  <button id="btn-gt" class="active">国网官方 35A1 完整铁塔 (575 杆 · 高 36.6m)</button>
+  <button id="btn-dxf">DXF 管线重构骨架 (106 杆)</button><br>
+  <span id="desc">国网官方标准 30m 呼高全塔（塔腿 + 塔身 + 曲臂横担 + 地线支架）</span><br>
+  <a href="/">返回主控制台</a>
+</div>
+<div id="viewer"></div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b2028);
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 10, 500000);
+camera.up.set(0, 0, 1);
+camera.position.set(15000, 10000, 20000);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio || 1);
+renderer.setSize(innerWidth, innerHeight);
+document.getElementById('viewer').appendChild(renderer.domElement);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 1.6);
+scene.add(hemi);
+const dir1 = new THREE.DirectionalLight(0xffffff, 1.8);
+dir1.position.set(2, 4, 3);
+scene.add(dir1);
+const dir2 = new THREE.DirectionalLight(0xffffff, 1.2);
+dir2.position.set(-2, -3, -2);
+scene.add(dir2);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+
+let current = null;
+const loader = new GLTFLoader();
+
+function load(url, desc) {
+  if (current) scene.remove(current);
+  loader.load(url, (gltf) => {
+    current = gltf.scene;
+    scene.add(current);
+    const box = new THREE.Box3().setFromObject(current);
+    const c = box.getCenter(new THREE.Vector3());
+    const s = box.getSize(new THREE.Vector3()).length() / 2 || 1;
+    // Z 轴为高度：默认正面对焦（相机放 +X 侧、高度居中），塔身竖直向上
+    camera.position.copy(c).add(new THREE.Vector3(s * 1.0, s * 0.25, s * 0.7));
+    controls.target.copy(c);
+    document.getElementById('desc').textContent = desc;
+  });
+}
+
+document.getElementById('btn-gt').onclick = () => {
+  document.getElementById('btn-gt').classList.add('active');
+  document.getElementById('btn-dxf').classList.remove('active');
+  load('/demo/35A1-JC1/gt_reference.glb', '国网官方 GIM .mod → GT JSON → GLB（完整铁塔）');
+};
+document.getElementById('btn-dxf').onclick = () => {
+  document.getElementById('btn-dxf').classList.add('active');
+  document.getElementById('btn-gt').classList.remove('active');
+  load('/demo/35A1-JC1/tower_from_dxf.glb', '咸鱼 DXF + overlay 管线输出（碎片半塔）');
+};
+
+load('/demo/35A1-JC1/gt_reference.glb', '国网官方 GIM .mod → GT JSON → GLB（完整铁塔）');
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

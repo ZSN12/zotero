@@ -19,6 +19,7 @@ function initViewer() {
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x0d1117);
       camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 10, 500000);
+      camera.up.set(0, 0, 1); // 铁塔沿 Z 轴竖直向上（塔轴=Z，GT/DXF 坐标以 Z 为高度）
       camera.position.set(4000, 5000, 12000);
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       renderer.setPixelRatio(window.devicePixelRatio || 1);

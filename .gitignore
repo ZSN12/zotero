@@ -11,8 +11,11 @@ out/
 *.glb
 *.obj
 
-# 网页 demo 预生成产物（tower.glb / model.json / deliver 输出）
-web/demo/
+# 网页 demo 预生成产物（tower.glb / model.json / deliver 输出），
+# 但 demo 的 HTML 查看器是源码，需纳入版本库。
+web/demo/**/*.glb
+web/demo/**/*.json
+web/demo/**/latest_deliver/
 
 # 敏感 / 大体积安装包
 *.dmg

@@ -817,14 +817,14 @@ def export_tower_glb(
         )
 
     layer_colors = {
-        "LEG": [200, 30, 30, 255],
-        "HORIZ": [30, 170, 30, 255],
-        "DIAG": [30, 80, 200, 255],
-        "CROSS": [160, 60, 180, 255],
+        "LEG": [220, 40, 40, 255],
+        "HORIZ": [40, 180, 40, 255],
+        "DIAG": [40, 120, 230, 255],
+        "CROSS": [160, 60, 220, 255],
         "HEAD": [40, 180, 190, 255],
         "KNEE": [180, 120, 30, 255],
         "HANG": [120, 160, 40, 255],
-        "TRUSS_MAIN": [200, 30, 30, 255],
+        "TRUSS_MAIN": [220, 40, 40, 255],
     }
 
     meshes: List = []
@@ -958,7 +958,8 @@ def _parse_section(section: Optional[str]) -> Tuple[float, float]:
 def _angle_steel_mesh(section: Optional[str], length: float):
     """P1-7：L 型角钢截面沿杆长拉伸成实体网格（无 shapely 依赖）。
 
-    截面放在 XY 平面，沿 Z 轴拉伸 length；调用方再 rotate/translate 到杆件方向。
+    截面放在 XY 平面，沿 Z 轴从 -length/2 拉伸到 +length/2（中点=局部原点），
+    使调用方把变换的平移对准杆件中点时，两端恰好落在 from/to 节点上。
     不同 section 规格得到不同肢宽/肢厚，GLB 中可区分截面规格。
     """
     import numpy as np
@@ -970,6 +971,8 @@ def _angle_steel_mesh(section: Optional[str], length: float):
     # 杆 * 0.3 = 600mm > L100 的 100mm）。
     w = min(float(w), max(float(length) * 0.3, float(t) + 1.0))
     w = max(float(w), float(t) + 1.0)
+    z0 = -float(length) / 2.0
+    z1 = float(length) / 2.0
     # L 型截面外轮廓（逆时针，含内侧缺口）
     ring = [
         [0.0, 0.0], [w, 0.0], [w, t], [t, t],
@@ -978,9 +981,9 @@ def _angle_steel_mesh(section: Optional[str], length: float):
     n = len(ring)
     verts = []
     for (x, y) in ring:
-        verts.append([x, y, 0.0])
+        verts.append([x, y, z0])
     for (x, y) in ring:
-        verts.append([x, y, float(length)])
+        verts.append([x, y, z1])
     verts = np.array(verts, dtype=float)
 
     faces = []

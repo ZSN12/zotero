@@ -461,12 +461,16 @@ def _align_matrix(direction: Vec3, center: Vec3, role: str = "DIAG") -> np.ndarr
 
     用于把 _angle_steel_mesh 产出的「截面在 XY、沿 Z 拉伸」的网格
     对齐到世界杆件方向，同时锁定截面绕轴旋转（角顶朝外，不再乱翻）。
+
+    trimesh.apply_transform 按「列」当作基向量（矩阵右乘列向量），
+    因此 R 的列必须是局部 X/Y/Z 在世界中的像：
+        R @ (0,0,1) == normalize(direction)（杆轴 = 局部 Z -> 世界杆方向）。
+    平移 = center，配合 _angle_steel_mesh 把杆放在局部 [-L/2, +L/2]（中点=局部原点），
+    使杆两端恰好落在 from/to 节点上。
     """
     x, y, z = angle_normal_basis(direction, center, role=role)
     m = np.eye(4)
-    m[0, :3] = x
-    m[1, :3] = y
-    m[2, :3] = z
+    m[:3, :3] = np.column_stack([x, y, z])
     m[:3, 3] = _v(center)
     return m
 
@@ -929,12 +933,15 @@ def classify_members(nodes: NodeMap, bars: List[dict]) -> Dict[str, str]:
         d, incl, r = info[b["id"]]
         f, t = nodes[b["from"]], nodes[b["to"]]
         edge = max(abs(float(f[0])), abs(float(t[0])))
-        if incl >= leg_min_incl:
+        # 倾角取绝对值：主腿/斜材既可朝上也可朝下（_inclination_deg 带符号，
+        # 自上而下的腿倾角为负，直接用符号值会漏判主腿）。
+        aincl = abs(incl)
+        if aincl >= leg_min_incl:
             roles[b["id"]] = "LEG"
-        elif incl >= corner_leg_min_incl and wall > 0 and edge >= wall * 0.7:
+        elif aincl >= corner_leg_min_incl and wall > 0 and edge >= wall * 0.7:
             # 贴近立面两缘的斜柱也是主腿（四棱台塔腿）
             roles[b["id"]] = "LEG"
-        elif abs(incl) <= horiz_max_incl:
+        elif aincl <= horiz_max_incl:
             if body_halfwidth > 0 and r > body_halfwidth * 1.4:
                 roles[b["id"]] = "CROSS"
             else:

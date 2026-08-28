@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -79,6 +80,70 @@ class OrientAngleNormalTest(unittest.TestCase):
         for i in range(3):
             col = m[:3, i]
             self.assertAlmostEqual(float(np.linalg.norm(col)), 1.0, places=6)
+
+    def test_align_matrix_maps_bar_axis_to_direction(self):
+        # 根因 A 回归：trimesh 按列当基向量，R 的列必须是局部 X/Y/Z 的世界像。
+        # 局部 Z（杆轴）经 R 变换后必须等于 normalize(direction)。
+        d = np.array([3.0, 0.0, 4.0])
+        center = (50.0, 0.0, 100.0)
+        m = g._align_matrix(tuple(d), center, role="DIAG")
+        axis_local = np.array([0.0, 0.0, 1.0])
+        axis_world = m[:3, :3] @ axis_local  # 列基向量右乘
+        self.assertTrue(np.allclose(axis_world, d / np.linalg.norm(d), atol=1e-6))
+
+    def test_align_matrix_bar_ends_meet_nodes(self):
+        # 根因 A + 网格原点：杆 mesh 局部 Z ∈ [-L/2,+L/2]，平移对准中点，
+        # 两端必须落在 from/to 节点（偏差 < 1mm）。
+        from traceability.solve.tower_solver import _angle_steel_mesh
+
+        pa = np.array([1200.0, -900.0, 5000.0])
+        pb = np.array([2400.0, 300.0, 13000.0])
+        d = pb - pa
+        L = float(np.linalg.norm(d))
+        mid = (pa + pb) / 2.0
+        mesh = _angle_steel_mesh("L90X6", L)
+        # 网格沿局部 Z 居中
+        self.assertAlmostEqual(float(mesh.bounds[0][2]), -L / 2.0, places=3)
+        self.assertAlmostEqual(float(mesh.bounds[1][2]), L / 2.0, places=3)
+        m = g._align_matrix(tuple(d), tuple(mid), role="DIAG")
+        mesh.apply_transform(m)
+        axis_world = m[:3, :3] @ np.array([0.0, 0.0, 1.0])
+        e0 = mid - (L / 2.0) * axis_world
+        e1 = mid + (L / 2.0) * axis_world
+        self.assertLess(float(np.linalg.norm(e0 - pa)), 1.0)
+        self.assertLess(float(np.linalg.norm(e1 - pb)), 1.0)
+
+    def test_gt_bar_ends_meet_nodes_sample(self):
+        # 用 GT 抽 20 根：导出实体后杆端与节点偏差 < 1mm（验收标准）。
+        import json
+        from traceability.solve.tower_solver import _angle_steel_mesh
+
+        gt = json.loads(
+            (Path(__file__).resolve().parent.parent / "examples/gt/35A1-JC1_ground_truth.json")
+            .read_text(encoding="utf-8")
+        )
+        nodes = gt["nodes"]
+        worst = 0.0
+        for bar in gt["bars"][:20]:
+            f = nodes.get(bar["from"])
+            t = nodes.get(bar["to"])
+            if f is None or t is None:
+                continue
+            pa = np.array(f)
+            pb = np.array(t)
+            d = pb - pa
+            L = float(np.linalg.norm(d))
+            if L < 1e-6:
+                continue
+            mid = (pa + pb) / 2.0
+            mesh = _angle_steel_mesh(bar.get("section"), L)
+            m = g._align_matrix(tuple(d), tuple(mid), role="DIAG")
+            mesh.apply_transform(m)
+            axis = m[:3, :3] @ np.array([0.0, 0.0, 1.0])
+            e0 = mid - (L / 2.0) * axis
+            e1 = mid + (L / 2.0) * axis
+            worst = max(worst, float(np.linalg.norm(e0 - pa)), float(np.linalg.norm(e1 - pb)))
+        self.assertLess(worst, 1.0)
 
 
 class ExpandTo4FaceTest(unittest.TestCase):

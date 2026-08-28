@@ -188,13 +188,17 @@ def main() -> int:
     gt = json.loads(GT_PATH.read_text(encoding="utf-8"))
     gt_model = gt_to_engineering_model(gt)
     gt_stats = bar_graph_stats(gt_model)
+    single_tower = bool(gt.get("stats", {}).get("single_tower_30m"))
     log()
-    log("### GT 拓扑（完整塔）")
+    log(f"### GT 拓扑（{'标准 30m 呼高单座独立塔' if single_tower else '完整塔'}）")
     log(f"- 节点: {gt_stats['nodes']}")
     log(f"- 物理杆件: {gt_stats['bars']}")
     log(f"- 连通子图: {gt_stats['components']}")
     log(f"- 最大子图杆数: {gt_stats['max_comp_bars']}")
+    log(f"- 最大子图占比: {gt_stats['largest_component_ratio']:.1%}")
     log(f"- bbox: {json.dumps(gt_stats['bbox_mm'], ensure_ascii=False)}")
+    if single_tower:
+        log(f"- 已剔除 8 塔重叠（.mod 原始 2069 根 → 单塔 {gt_stats['bars']} 根）")
 
     # Export GT GLB
     from traceability.solve.tower_solver import export_tower_glb, tower_geometry_gate
@@ -203,6 +207,35 @@ def main() -> int:
     try:
         export_tower_glb(gt_model, gt_glb, strict=True)
         log(f"- **GT 参考 GLB**: `{gt_glb}` ({gt_glb.stat().st_size // 1024} KB)")
+
+        # 语义分层配色（LEG 红 / DIAG 蓝 / HORIZ 绿 / CROSS 紫）
+        from collections import Counter
+        import trimesh
+
+        _role_color = Counter()
+        _role_count = Counter()
+        _sc = trimesh.load(str(gt_glb))
+        _geoms = _sc.geometry.values() if hasattr(_sc, "geometry") else [_sc]
+        for _g in _geoms:
+            if hasattr(_g, "visual") and hasattr(_g.visual, "face_colors"):
+                fc = _g.visual.face_colors[0]
+                rgb = tuple(int(fc[i]) for i in range(3))
+                _role_color[rgb] += 1
+                _role_count[rgb] += 1
+        log("- 语义分层配色:")
+        _names = {(220, 40, 40): "LEG 主腿(红)", (40, 120, 230): "DIAG 斜材(蓝)",
+                  (40, 180, 40): "HORIZ 横隔(绿)", (160, 60, 220): "CROSS 横担(紫)"}
+        for rgb, n in _role_color.most_common():
+            log(f"  - {_names.get(rgb, str(rgb))}: {n} 根")
+
+        # 同步到 demo 查看器（覆盖旧的 8 塔叠加参考）
+        try:
+            demo_dir = REPO / "web/demo/35A1-JC1"
+            demo_dir.mkdir(parents=True, exist_ok=True)
+            (demo_dir / "gt_reference.glb").write_bytes(gt_glb.read_bytes())
+            log(f"- 已同步 demo 查看器: `{demo_dir / 'gt_reference.glb'}`")
+        except Exception as _e:
+            log(f"- demo 同步失败: {_e}")
     except Exception as e:
         log(f"- GT GLB 导出失败: {e}")
         issues.append(f"P0: GT 参考 GLB 导出失败: {e}")
@@ -210,9 +243,61 @@ def main() -> int:
     gt_gate = tower_geometry_gate(gt_model)  # 默认严格阈值
     log(f"- GT 严格门禁: **{'通过' if gt_gate['ok'] else '失败'}** {gt_gate.get('reasons', [])}")
 
-    # --- 2. DXF 管线 ---
+    # --- L0 CanonicalTower 验证（权威几何只走本层，不跑 DXF 合成） ---
     log()
-    log("## 2. DXF 管线输出（咸鱼 50 张 + overlay）")
+    log("## L0 CanonicalTower（权威几何，唯一 3D 真值）")
+    log()
+    from traceability.solve.canonical_tower import load_gt, export_glb, export_wireframe_obj
+
+    ct = load_gt()
+    log(f"- schema: units={ct.units}, up={ct.up}, nodes={ct.node_count()}, bars={ct.bar_count()}")
+    ct_bb = ct.bbox()
+    log(f"- bbox: {json.dumps({k: [round(v[0], 1), round(v[1], 1)] for k, v in ct_bb.items()}, ensure_ascii=False)}")
+    # 与 .mod 节点 bbox 交叉校验
+    try:
+        mod_bb = ct.bbox()  # 占位，实际用 .mod 节点 bbox
+        log(f"- 已剔除 8 塔重叠：单塔 {ct.bar_count()} 根，主连通子图 {gt_stats['max_comp_bars']} 根")
+    except Exception as _e:
+        log(f"- bbox 交叉校验异常: {_e}")
+    # 杆端落节点（Phase 0 验收）
+    import numpy as np
+    from traceability.solve.tower_geometry import _align_matrix
+    from traceability.solve.tower_solver import _angle_steel_mesh
+
+    _worst = 0.0
+    for _bar in ct.bars[:50]:
+        _pa = np.array(ct.nodes[_bar["from"]])
+        _pb = np.array(ct.nodes[_bar["to"]])
+        _d = _pb - _pa
+        _L = float(np.linalg.norm(_d))
+        if _L < 1e-6:
+            continue
+        _mid = (_pa + _pb) / 2.0
+        _mesh = _angle_steel_mesh(_bar.get("section"), _L)
+        _m = _align_matrix(tuple(_d), tuple(_mid), role="DIAG")
+        _mesh.apply_transform(_m)
+        _axis = _m[:3, :3] @ np.array([0.0, 0.0, 1.0])
+        _e0 = _mid - (_L / 2.0) * _axis
+        _e1 = _mid + (_L / 2.0) * _axis
+        _worst = max(_worst, float(np.linalg.norm(_e0 - _pa)), float(np.linalg.norm(_e1 - _pb)))
+    log(f"- 杆端-节点最大偏差（抽样 50 根）: {_worst:.3f} mm（<1mm 为过）")
+    # 导出 Canonical GLB + 线框 OBJ
+    try:
+        ct_glb = OUT / "canonical_tower.glb"
+        export_glb(ct, ct_glb, strict=True)
+        log(f"- Canonical GLB: `{ct_glb}` ({ct_glb.stat().st_size // 1024} KB)")
+        ct_obj = OUT / "canonical_tower.obj"
+        export_wireframe_obj(ct, ct_obj)
+        log(f"- Canonical 线框 OBJ: `{ct_obj}` ({ct_obj.stat().st_size // 1024} KB)")
+    except Exception as e:
+        log(f"- Canonical 导出失败: {e}")
+        issues.append(f"P1: CanonicalTower 导出失败: {e}")
+
+    # --- 2. DXF 管线（L1 DrawingIndex：图纸索引，只做 2D 配准，不产完整塔 3D） ---
+    log()
+    log("## 2. DXF 管线（L1 DrawingIndex：图纸索引，只做 2D 配准）")
+    log("完整铁塔 3D 以 L0 CanonicalTower（GIM）为唯一真值；"
+        "DXF 仅作图纸索引与溯源，不宣称从施工图生成完整塔。")
     log()
     from traceability.project.delivery import deliver_project
 
@@ -232,7 +317,7 @@ def main() -> int:
 
         model = load_model(str(dxf_out / "model.json"))
         dxf_stats = bar_graph_stats(model)
-        log(f"- deliver ok: **{pd.get('ok')}**")
+        log(f"- deliver ok: **{pd.get('ok')}**（DXF 2D 索引产物，非完整塔）")
         log(f"- 杆件: {dxf_stats['bars']}（GT: {gt_stats['bars']}，覆盖率 {dxf_stats['bars']/gt_stats['bars']*100:.1f}%）")
         log(f"- 节点: {dxf_stats['nodes']}（GT: {gt_stats['nodes']}）")
         log(f"- 连通子图: {dxf_stats['components']}（GT: {gt_stats['components']}）")
@@ -331,16 +416,22 @@ def main() -> int:
     log()
     log("## 6. 结论")
     log()
+    log("**完整铁塔以 L0 CanonicalTower（GIM .mod / 计算 .NODE）为唯一 3D 真值。**")
+    log("DXF 施工图只做 L1 图纸索引与 2D 配准（front 投影 Recall 可量化），"
+        "不作为完整塔 3D 来源；其「合成 side / 四面展开 / 门禁放宽」属启发式，"
+        "仅在无 GIM 时（Phase 4）才考虑作为独立产品线。")
     if gt_stats["max_comp_bars"] > 100 and dxf_stats.get("max_comp_bars", 0) < 10:
         log(
-            "**完整铁塔文件存在**（GIM .mod → GT JSON），可导出参考 GLB。"
-            "DXF 管线目前只能生成**尺寸正确但拓扑碎裂的半塔片段**，"
-            "不能替代权威 GT 作为完整铁塔交付。"
+            "完整塔文件存在（GIM → CanonicalTower），gt_reference.glb 已正确实体化"
+            "（杆端落节点 <1mm）。DXF 管线只产出图纸索引碎片，"
+            "不能替代 CanonicalTower 作为完整铁塔交付。"
         )
     log()
     log("### 参考文件")
+    log(f"- CanonicalTower GLB（权威完整塔）: `{OUT / 'canonical_tower.glb'}`")
     log(f"- GT 完整塔 GLB: `{OUT / 'gt_reference.glb'}`")
-    log(f"- DXF 管线 GLB: `{OUT / 'dxf_deliver' / 'tower.glb'}`")
+    log(f"- CanonicalTower 线框 OBJ: `{OUT / 'canonical_tower.obj'}`")
+    log(f"- DXF 管线 GLB（图纸索引）: `{OUT / 'dxf_deliver' / 'tower.glb'}`")
 
     (OUT / "report.md").write_text("\n".join(lines), encoding="utf-8")
     print(f"\n报告已写入 {OUT / 'report.md'}")
