@@ -52,7 +52,10 @@ python3 -m pytest tests -q              # 当前基线 103 passed
 Phase 4 扫描图最小可用版已落地（版面分析 + 霍夫线检测 + 端点聚类），
 并在 P1 完成无 DXF 扫描图的 A0→A4 多 Agent 编排（每步可审计 + Harness 闸门）。
 Phase B 扫描链质量四项（B1 霍夫降噪 / B2 双指标 / B3 比例尺 / B4 OCR 兜底）已落地。
-测试 103 项全绿。
+国网 `35A1-JC1` 3D 失真已修复：02 同图 front+side 双视图，158 杆（median 160mm），
+deliver-project 几何门禁通过（进 GLB 58 杆、Z span 2923mm 向上为正、1 个连通子图），
+旧 overlay 会被门禁拦下（ok=False）——「件号关联率 ≠ 3D 可用」已闭环。
+测试 144 项全绿。
 
 ---
 
@@ -431,3 +434,75 @@ python -m traceability.cli compile-drawing examples/clear/tower_side_hd.png --to
 - **P0-3 关联率 ≥15%**：需配置 `MLLM_PROVIDER=kimi-code KIMI_API_KEY=sk-...` 后跑
   `run-tower examples/clear/tower_front_hd.png --backend mllm`；当前环境无 key，A1 会
   skip 致关联率 0.0。代码与验收命令均已就绪。
+
+
+---
+
+## 35A1-JC1 3D 失真修复（已落地，2026-08）
+
+> 背景：`out/35A1-JC1-album-deliver/tower.glb` 有 GLB、`ok=True`，但目视是散乱 L 型钢片，不是格构塔。
+> 结论先行：**件号关联率达标 ≠ 3D 几何可用**。本轮按根因优先级修复解析层、尺度层、合并层与导出层，
+> 并新增 GLB 导出前几何门禁，不再对「碎板 GLB」报 success。
+
+### 根因（已定位并验证）
+
+1. **杆件源几何错误**：`35A1-JC1-02.dxf` layer 1 有 873 条碎 LINE（median ~1.4mm，尺寸刻度/双线边）；
+   真正较长线段在 layer 1/4，layer 0 是图框/尺寸界线。旧 `bar_layers` 把碎线当主杆层。
+2. **端点聚类 EPS 与短杆耦合**：杆长 < EPS 时两端聚成同一节点 → `from_node == to_node` 雪崩。
+3. **`merge_view_bars` 只留 `from!=to`** → 最终进 GLB 仅约 105 根残骸。
+4. **图面比例未应用**：02 正立面 1:10，图面坐标未乘 `scale_ratio`，合并 bbox 约 481×479×425mm。
+5. **Z 倒挂 / X 未归零**：CAD Y 向下 → Z 为负；正立面落在图纸绝对坐标 x≈34000，未平移到 0。
+6. **02 同图其实有正立面 + 侧立面两个子图**（右侧 x≈34533~34698），旧 overlay 只框 front，漏掉 side。
+7. **短杆 + L100×8 默认截面**：杆长 50~80mm 却拉出 100mm 角钢 → GLB 像铁板堆。
+8. **`cross_file_merge_stems`**：把 detail(03) 也纳入空间合并；plan 配的是另一系列 `35C2-SJG1-ML`。
+
+### 已落地修复
+
+| # | 项 | 文件 |
+|---|---|---|
+| 1 | `bar_layers_by_stem["35A1-JC1-02"]=["1","4"]`（排除 layer 0 图框/尺寸界线）；`min_bar_length_mm=25`、`cluster_eps_mm=50`（真实 mm） | `layer_overlay.json` |
+| 2 | `cluster_eps_mm` 语义为「真实 mm」，聚类时按视图 `scale_ratio` 换算回图纸单位 | `tower_dxf.py` |
+| 3 | 杆件最短长度在缩放后（真实 mm）过滤；`drawing_file` 写 `min_bar_length_mm` / `degenerate_bar_count` | `tower_dxf.py` |
+| 4 | front + side 两个 view region（同图右侧侧立面），`scale_ratio=10` + `z_flip=true`；`view_x/view_y/length_mm` 乘比例、Z 向上为正 | `tower_dxf.py` + overlay |
+| 5 | `cross_file_normalize_x`：`view_align.*.normalize_x` 生效，merge 后主立面 X 中心归零 | `tower_spec.py` / `tower_views.py` |
+| 6 | `cross_file_merge_stems` 只取 front/plan/side/elevation，排除 detail(03)；side 指向同图 02 | `tower_spec.py` / `tower_batch.py` |
+| 7 | `tower_geometry_gate()`：GLB 导出前门禁——有效杆数、退化率、空间跨度、连通子图数、最大子图占比、孤立杆比例、front+side 覆盖；不达标 `ok=False` 且写原因 | `tower_solver.py` / `delivery.py` |
+| 8 | `keep_largest_connected_component()` + `prune_to_largest_component.enabled`：导出前只留最大连通子图，剔除悬空短线/漂浮碎块 | `tower_solver.py` / `delivery.py` |
+| 9 | `_angle_steel_mesh` 短杆截面宽度 cap：`min(肢宽, 杆长×0.3)`，避免短杆变铁板 | `tower_solver.py` |
+
+### 验收结果（修复后实测）
+
+**02 单张诊断**
+```text
+bars=158  degenerate=28  rate=0.177
+valid(from!=to)=130  median_len_mm=160.0
+view_mode=multi_view  view_kinds=[front, side]  min_bar_len=25.0
+```
+
+**deliver-project（新 overlay）**
+```text
+ok=True  glb=58 meshes
+gate: valid_bars=58, degenerate=0, span=2923mm, components=1,
+      largest_ratio=1.0, isolated_ratio=0.0, pruned_bars=10, ok=True
+merge_stems=[35A1-JC1-02, 35C2-SJG1-ML]   ← 03 已排除
+bbox X≈[-880,456]  Y≈[-880,658]  Z≈[1063,3986]（向上为正）
+synthetic_y=0（已用同图右侧真实侧立面，不再合成侧视）
+```
+
+**旧 overlay → 门禁失败（假成功被堵住）**
+```text
+exit=1  ok=False
+GLB 几何门禁未通过：节点空间跨度 518.7mm < 门禁阈值 2000.0mm
+```
+
+**110kV 回归**：`run-tower examples/tower_110kv.dxf --merge --format glb` 正常（X/Z 跨距 13000/21000mm）。
+
+**测试**：全量 `144 passed`。
+
+### 仍待后续（如实标注，不掩盖）
+
+- **退化率 17.7%（02 单张）**：`cluster_eps_mm=50` 对短杆仍偏大；当前靠 gate + prune 保 GLB 干净（进 GLB 前退化已为 0）。若要求单张退化率 <10%，需再降 eps 或提高 min length。
+- **master BOM 冲突 10**：`length_mm` 基本为 0、截面为空，且 plan 是另一系列 `35C2-SJG1-ML`，`r_project_bom_master` failed——manifest 已如实报告，未凑通过。
+- **gusset/bolt 锚定**：detail(03) 不再进 cross_file 空间合并，节点大样锚定需后续独立路径。
+- **plan 语义待确认**：无 JC1 自有平面图时，按「2.5D 立面 + 同图侧立面」口径交付。
+- **杆数 158/进 GLB 58**：已从 1235 碎线大幅收敛；若需逼近真实主材数，可再做平行线段去重/中心线抽取。

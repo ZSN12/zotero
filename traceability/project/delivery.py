@@ -68,12 +68,18 @@ def deliver_project(
     """图册级交付：ProjectModel + cross_file 合并 + Harness + GLB + manifest。"""
     from ..intake.tower_batch import cross_file_batch, cross_file_bar_id_report, intake_tower_batch
     from ..intake.tower_spec import load_tower_spec, should_use_cross_file_merge
+    from ..intake.tower_views import expand_4_face_symmetry_model
     from ..io import load_model, save_model
-    from ..solve.tower_solver import export_tower_glb, SolveError
+    from ..solve.tower_solver import export_tower_glb, inspect_model, tower_geometry_gate, SolveError
     from .bar_inventory import aggregate_bar_inventory
     from .bom_tree import aggregate_bom_tree
     from .harness import run_project_harness
-    from .module_build import physical_bar_counts, resolve_master_bom_path, try_assembly_from_merged
+    from .module_build import (
+        physical_bar_counts,
+        resolve_master_bom_path,
+        try_assembly_from_merged,
+        try_assembly_m1_m6_from_merged,
+    )
 
     input_dir = Path(input_dir)
     out_dir = Path(out_dir)
@@ -133,6 +139,11 @@ def deliver_project(
     if model_path and model_path.exists():
         merged_model = load_model(str(model_path))
 
+    # Phase 2：单立面 -> 四面封闭空间网架（overlay 开启时自动展开）。
+    # 展开会重写 tower_node / tower_bar 组件；BOM / 节点板 / 图纸上下文保留。
+    if merged_model is not None and ov.get("enable_4_face_expansion"):
+        expand_4_face_symmetry_model(merged_model, layer_map_path)
+
     physical_counts: Dict[str, int] = {}
     if merged_model is not None:
         physical_counts = physical_bar_counts(merged_model)
@@ -150,7 +161,10 @@ def deliver_project(
 
     assembly_info: Optional[Dict[str, Any]] = None
     if merged_model is not None:
-        assembly_info = try_assembly_from_merged(merged_model, layer_map_path)
+        # Phase 3：优先 M1–M6 长链条装配；否则回退 Gap 1 的 M1/M2 z 拆分 demo。
+        assembly_info = try_assembly_m1_m6_from_merged(merged_model, layer_map_path)
+        if assembly_info is None:
+            assembly_info = try_assembly_from_merged(merged_model, layer_map_path)
         if assembly_info and assembly_info.get("model"):
             asm_path = out_dir / "assembly_model.json"
             save_model(assembly_info["model"], asm_path)
@@ -173,6 +187,7 @@ def deliver_project(
     )
 
     harness: Optional[Dict[str, Any]] = None
+    geometry_gate: Optional[Dict[str, Any]] = None
     glb_path: Optional[Path] = None
     assembly_glb_path: Optional[Path] = None
     glb_error: Optional[str] = None
@@ -183,25 +198,43 @@ def deliver_project(
         save_model(merged_model, out_dir / "model.json")
         model_path = out_dir / "model.json"
 
+        # P1（可选）：export 前仅保留最大连通子图杆件，剔除悬空短线/漂浮碎块。
+        prune_cfg = (ov.get("prune_to_largest_component") if isinstance(ov, dict) else None)
+        prune_before_gate = bool(prune_cfg.get("enabled")) if isinstance(prune_cfg, dict) else False
+        pruned_bars = 0
+        if prune_before_gate:
+            from ..solve.tower_solver import keep_largest_connected_component
+            pruned_bars = keep_largest_connected_component(merged_model)
+            save_model(merged_model, out_dir / "model.json")
+
+        geometry_gate = tower_geometry_gate(merged_model, layer_map_path)
+        if prune_before_gate:
+            geometry_gate["pruned_bars"] = pruned_bars
+
         if export_glb:
-            glb_path = out_dir / "tower.glb"
-            try:
-                export_tower_glb(merged_model, glb_path, strict=True)
+            if not geometry_gate["ok"]:
+                glb_error = "GLB 几何门禁未通过：" + "；".join(geometry_gate["reasons"])
+                glb_path = None
+            else:
+                glb_path = out_dir / "tower.glb"
                 try:
-                    import trimesh
-                    scene = trimesh.load(str(glb_path), force="scene")
-                    mesh_stats["total_meshes"] = len(scene.geometry)
-                except Exception:
-                    pass
-                bars = sum(1 for c in merged_model.components.values() if c.kind == "tower_bar")
-                gussets = sum(
-                    1 for c in merged_model.components.values()
-                    if c.kind == "gusset_plate" and c.properties.get("polygon_global")
-                )
-                bolts = sum(1 for c in merged_model.components.values() if c.kind == "bolt_group")
-                mesh_stats.update({"bars": bars, "gussets": gussets, "bolt_groups": bolts})
-            except SolveError as exc:
-                glb_error = str(exc)
+                    export_tower_glb(merged_model, glb_path, strict=True)
+                    try:
+                        import trimesh
+                        scene = trimesh.load(str(glb_path), force="scene")
+                        mesh_stats["total_meshes"] = len(scene.geometry)
+                    except Exception:
+                        pass
+                    bars = sum(1 for c in merged_model.components.values() if c.kind == "tower_bar")
+                    gussets = sum(
+                        1 for c in merged_model.components.values()
+                        if c.kind == "gusset_plate" and c.properties.get("polygon_global")
+                    )
+                    bolts = sum(1 for c in merged_model.components.values() if c.kind == "bolt_group")
+                    mesh_stats.update({"bars": bars, "gussets": gussets, "bolt_groups": bolts})
+                except SolveError as exc:
+                    glb_error = str(exc)
+                    glb_path = None
 
         if export_glb and assembly_info and assembly_info.get("model"):
             assembly_glb_path = out_dir / "assembly.glb"
@@ -213,7 +246,30 @@ def deliver_project(
     mr = (cross_result or {}).get("merge_report") or {}
     nodes_solved = int(mr.get("nodes_solved") or 0)
     glb_ok = (not export_glb) or (glb_path is not None and glb_path.exists() and not glb_error)
-    delivery_ok = merged_model is not None and nodes_solved > 0 and glb_ok
+    # P1：delivery.ok 显式绑定 3D 几何门禁；gate 不过即使 nodes_solved>0 也判失败。
+    gate_ok = bool(geometry_gate and geometry_gate.get("ok"))
+    delivery_ok = merged_model is not None and nodes_solved > 0 and glb_ok and (not export_glb or gate_ok)
+
+    # P0-3 报告：仍未解出三轴的节点写入 delivery，供人工复核（strict export 的前置卡点）。
+    unsolved_nodes: List[str] = []
+    if merged_model is not None:
+        for cid, comp in merged_model.components.items():
+            if comp.kind != "tower_node":
+                continue
+            p = comp.properties or {}
+            if any(p.get(axis) is None for axis in ("x", "y", "z")):
+                unsolved_nodes.append(cid)
+    unsolved_summary = {
+        "count": len(unsolved_nodes),
+        "sample": unsolved_nodes[:50],
+    }
+    topology_summary: Dict[str, Any] = {}
+    if merged_model is not None:
+        try:
+            topology_summary = inspect_model(merged_model)
+        except Exception:
+            topology_summary = {}
+
     harness_all_passed = harness is not None and not (harness.get("failed"))
     delivery = {
         "ok": delivery_ok,
@@ -225,6 +281,9 @@ def deliver_project(
         "glb_path": str(glb_path) if glb_path and glb_path.exists() else None,
         "assembly_glb_path": str(assembly_glb_path) if assembly_glb_path and assembly_glb_path.exists() else None,
         "glb_error": glb_error,
+        "glb_geometry_gate": geometry_gate,
+        "unsolved_nodes": unsolved_summary,
+        "topology": topology_summary,
         "mesh_stats": mesh_stats,
         "sheets": [sid for sid in project.sheets],
         "modules": project.modules,
@@ -236,6 +295,8 @@ def deliver_project(
             "reports": (assembly_info or {}).get("reports"),
             "model_path": (assembly_info or {}).get("model_path"),
             "module_ids": (assembly_info or {}).get("module_ids"),
+            "closed": (assembly_info or {}).get("closed"),
+            "max_gap_mm": (assembly_info or {}).get("max_gap_mm"),
         },
         "cross_file_batch_report": (cross_result or {}).get("batch_report"),
         "bar_inventory": bar_inventory,

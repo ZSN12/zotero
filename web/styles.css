@@ -1,9 +1,15 @@
 :root { --border:#d9dde3; --accent:#0b6bcb; --bg:#f5f7fa; }
 * { box-sizing: border-box; }
 body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:#1a2330; }
-header { padding:16px 20px; border-bottom:1px solid var(--border); background:#fff; }
+header { padding:14px 20px; border-bottom:1px solid var(--border); background:#fff; }
 header h1 { margin:0 0 4px; font-size:20px; }
 header p { margin:0; color:#5b6472; font-size:13px; }
+.preset-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.preset-btn { background:#0b6bcb; color:#fff; font-size:12px; font-weight:600; padding:7px 12px; border-radius:6px; border:0; cursor:pointer; transition:background .2s; }
+.preset-btn:hover { background:#084e96; }
+.preset-btn.active { background:#0a7d33; }
+.preset-link { font-size:12px; font-weight:600; color:#0b6bcb; text-decoration:none; padding:6px 10px; border:1px solid var(--accent); border-radius:6px; background:#f0f7ff; }
+.preset-link:hover { background:#e1effe; }
 .layout { display:grid; grid-template-columns: 340px 1fr; gap:12px; padding:12px; }
 .panel { background:#fff; border:1px solid var(--border); border-radius:8px; padding:12px; }
 .upload-panel { grid-row: span 2; }
@@ -45,3 +51,15 @@ td.passed { color:#0a7d33; } td.failed { color:#c62828; } td.running { color:#b2
 .status.derived-y-pending { color:#b26a00; }
 .status.derived-y-ok { color:#0a7d33; }
 #evidence-canvas { width:100%; max-width:1000px; height:auto; border:1px solid var(--border); border-radius:6px; background:#0e1116; }
+/* Phase 4：深色科技感 + M1–M6 模块切换器 */
+.viewer-panel { background:#0d1117; border-color:#1f2933; color:#e6edf3; }
+.viewer-panel h2 { color:#e6edf3; }
+.module-switcher { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+.module-btn {
+  background:#161b22; color:#34d399; border:1px solid #1f6f4b;
+  font-size:12px; font-weight:600; padding:5px 10px; border-radius:6px; cursor:pointer;
+  transition: all .15s;
+}
+.module-btn:hover { background:#1c2b26; border-color:#34d399; }
+.module-btn.active { background:#0b3b2a; color:#6ee7b7; border-color:#34d399; box-shadow:0 0 8px rgba(52,211,153,.45); }
+#viewer { background:#0d1117; border:1px solid #1f2933; }

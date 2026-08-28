@@ -346,6 +346,14 @@ class Handler(BaseHTTPRequestHandler):
             if f.exists() and f.is_file():
                 return self._send(200, f.read_bytes(), "text/markdown; charset=utf-8")
             return self._send(404, {"error": "not found"})
+        if path.startswith("/demo/"):
+            f = ROOT / path.lstrip("/")
+            if f.exists() and f.is_file():
+                ctype = mimetypes.guess_type(str(f))[0] or "application/octet-stream"
+                if f.suffix == ".html":
+                    ctype = "text/html; charset=utf-8"
+                return self._send(200, f.read_bytes(), ctype)
+            return self._send(404, {"error": "not found"})
         if path.startswith("/artifacts/"):
             target = _resolve_artifact(path)
             if target and target.is_file():

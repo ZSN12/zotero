@@ -11,6 +11,9 @@ out/
 *.glb
 *.obj
 
+# 网页 demo 预生成产物（tower.glb / model.json / deliver 输出）
+web/demo/
+
 # 敏感 / 大体积安装包
 *.dmg
 tools/oda-file-converter/ODAFileConverter.app/

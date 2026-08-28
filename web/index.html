@@ -12,8 +12,18 @@
 </head>
 <body>
 <header>
-  <h1>铁塔工程追溯 Demo</h1>
-  <p>上传 DXF/PNG/PDF → 一步跑完 intake → compile → cross_check → verify → export → 3D 交互</p>
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+    <div>
+      <h1>铁塔工程追溯 Demo</h1>
+      <p>从图纸到可信 3D 几何与工程上下文（支持构件追溯、节点板、螺栓群与 Master BOM）</p>
+    </div>
+    <div class="preset-bar">
+      <span style="font-size:13px; font-weight:600; color:#5b6472; margin-right:4px;">快速载入预置模型：</span>
+      <button id="btn-demo-35a1" class="preset-btn">⚡️ 国网 35A1-JC1 (3473 杆/高 36.6m/官方全塔)</button>
+      <button id="btn-demo-110kv" class="preset-btn">⚡️ 110kV 猫头塔 (316 杆/85 节点)</button>
+      <a href="/demo/jc1.html" target="_blank" class="preset-link">↗ 全屏 3D 查看器</a>
+    </div>
+  </div>
 </header>
 
 <main class="layout">
@@ -35,7 +45,8 @@
   </section>
 
   <section class="panel viewer-panel">
-    <h2>3. 3D 预览（GLB）</h2>
+    <h2>3. 3D 预览（GLB · 翡翠绿科技感）</h2>
+    <div id="module-switcher" class="module-switcher" title="M1–M6 模块切换器（点击高亮/隐藏）"></div>
     <div id="viewer"></div>
   </section>
 

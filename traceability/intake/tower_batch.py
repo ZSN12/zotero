@@ -300,7 +300,10 @@ def cross_file_batch(
     from ..intake.tower_pipeline import finalize_tower_model
     from ..io import load_model, save_model
 
+    from .tower_spec import cross_file_merge_stems
+
     batch = intake_tower_batch(input_dir, out_dir, layer_map_path=layer_map_path, merge=False)
+    merge_stems = cross_file_merge_stems(layer_map_path)
     models: List[EngineeringModel] = []
     for entry in batch["files"]:
         if entry.get("error"):
@@ -313,9 +316,16 @@ def cross_file_batch(
                 model = extract_tower_from_dxf(dxf, layer_map_path=layer_map_path)
                 save_model(model, model_path)
         if model_path.exists():
+            if merge_stems and stem not in merge_stems:
+                continue
             models.append(load_model(str(model_path)))
 
-    merge_report: Dict[str, Any] = {"mode": "cross_file_view", "files": len(models)}
+    merge_report: Dict[str, Any] = {
+        "mode": "cross_file_view",
+        "files": len(models),
+        "merge_stems": sorted(merge_stems) if merge_stems else None,
+        "batch_files": len(batch["files"]),
+    }
     model_path: Optional[str] = None
     if len(models) >= 2:
         merged = merge_cross_file_views(models, layer_map_path=layer_map_path)

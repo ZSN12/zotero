@@ -63,9 +63,15 @@ class P01OverlayThreadingTest(unittest.TestCase):
 
 
 class P02Guowang02ViewModeTest(unittest.TestCase):
-    """P0-2：国网 02 单立面标记 view_mode=single_facade。"""
+    """P0-2：国网 02 单立面（synthetic side 策略），标记 view_mode=single_facade。
 
-    def test_single_facade_view_mode(self):
+    02 图只有一个 front 立面（簇4），没有独立 side region；side 立面由
+    synthetic_side_from_front=true 在 merge_view_coordinates 阶段合成
+    （塔 x/y 近似旋转对称）。因此单文件提取时 view_kinds=["front"]、
+    view_mode=single_facade，side 在跨文件合并后才补进 view_kinds。
+    """
+
+    def test_front_single_facade_view_mode(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf
         ov = EXAMPLES / "external" / "guowang_35A1" / "layer_overlay.json"
         model = extract_tower_from_dxf(
@@ -75,8 +81,26 @@ class P02Guowang02ViewModeTest(unittest.TestCase):
         df = model.components["drawing_file"]
         self.assertEqual(df.properties.get("view_mode"), "single_facade")
         self.assertEqual(df.properties.get("view_kinds"), ["front"])
+        # layer0 为尺寸界线，不得进杆件
+        layers = {b.properties.get("layer") for b in tower_components(model, "tower_bar")}
+        self.assertNotIn("0", layers)
+        self.assertEqual(layers, {"1", "4"})
         # parse rate >= 50%（验收线）
         self.assertGreaterEqual(df.properties.get("association_rate", 0.0), 0.50)
+
+    def test_synthetic_side_registers_view_kinds(self):
+        """synthetic_side_from_front 合成 side 节点后，view_kinds 应补 'side'。"""
+        from traceability.intake.tower_dxf import extract_tower_from_dxf
+        from traceability.intake.tower_views import merge_view_coordinates
+        ov = EXAMPLES / "external" / "guowang_35A1" / "layer_overlay.json"
+        model = extract_tower_from_dxf(
+            EXAMPLES / "external" / "guowang_35A1" / "35A1-JC1-02.dxf",
+            layer_map_path=ov,
+        )
+        merge_view_coordinates(model, overlay=ov)
+        df = model.components["drawing_file"]
+        self.assertIn("side", df.properties.get("view_kinds", []))
+        self.assertGreater(df.properties.get("synthetic_side_nodes", 0), 0)
 
     def test_110kv_multi_view_mode(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf

@@ -480,6 +480,317 @@ def _iter_gussets(model: EngineeringModel):
             yield cid, comp
 
 
+def _bar_graph_components(model: EngineeringModel) -> Tuple[int, int, int]:
+    """计算杆件拓扑：连通子图数、最大子图节点占比、孤立杆比例。
+
+    以 tower_bar 为边、tower_node 为顶点建图（只算两端节点都存在的有效杆件）。
+    返回 (component_count, largest_ratio, isolated_ratio)。
+    """
+    nodes = {cid for cid, _ in _iter_nodes(model)}
+    adj: Dict[str, set] = {}
+    edges: List[Tuple[str, str]] = []
+    for _, bar in _iter_bars(model):
+        f = bar.properties.get("from_node")
+        t = bar.properties.get("to_node")
+        if f == t:
+            continue
+        if f not in nodes or t not in nodes:
+            continue
+        adj.setdefault(f, set()).add(t)
+        adj.setdefault(t, set()).add(f)
+        edges.append((f, t))
+
+    total = len(edges)
+
+    # 孤立杆：两端都是叶子（度为 1），典型是刻度/标注线端点而非格构节点。
+    isolated = sum(
+        1 for f, t in edges
+        if len(adj.get(f, ())) == 1 and len(adj.get(t, ())) == 1
+    )
+
+    seen: set = set()
+    components = 0
+    largest = 0
+    for nid in list(adj):
+        if nid in seen or not adj.get(nid):
+            continue
+        stack = [nid]
+        seen.add(nid)
+        size = 0
+        while stack:
+            cur = stack.pop()
+            size += 1
+            for nb in adj.get(cur, []):
+                if nb not in seen:
+                    seen.add(nb)
+                    stack.append(nb)
+        components += 1
+        largest = max(largest, size)
+
+    touched = set(adj)
+    components += len([n for n in nodes if n not in touched])
+
+    largest_ratio = (largest / len(touched)) if touched else 0.0
+    isolated_ratio = (isolated / total) if total else 0.0
+    return components, round(largest_ratio, 4), round(isolated_ratio, 4)
+
+
+def keep_largest_connected_component(model: EngineeringModel) -> int:
+    """P1（可选）：仅保留最大连通子图的杆件与其节点，剔除悬空短线。
+
+    返回剔除的杆件数。适用于「主桁架连通、但周边有标注/碎线」的模型；
+    调用时机应在 GLB 导出 / 门禁之前。
+    """
+    nodes = {cid for cid, _ in _iter_nodes(model)}
+    adj: Dict[str, set] = {}
+    edges: Dict[str, Tuple[str, str]] = {}
+    for cid, bar in _iter_bars(model):
+        f = bar.properties.get("from_node")
+        t = bar.properties.get("to_node")
+        if f == t:
+            continue
+        if f not in nodes or t not in nodes:
+            continue
+        adj.setdefault(f, set()).add(t)
+        adj.setdefault(t, set()).add(f)
+        edges[cid] = (f, t)
+
+    # 找最大连通子图的节点集合
+    seen: set = set()
+    best: set = set()
+    for nid in list(adj):
+        if nid in seen:
+            continue
+        stack = [nid]
+        seen.add(nid)
+        comp: set = set()
+        while stack:
+            cur = stack.pop()
+            comp.add(cur)
+            for nb in adj.get(cur, []):
+                if nb not in seen:
+                    seen.add(nb)
+                    stack.append(nb)
+        if len(comp) > len(best):
+            best = comp
+
+    if not best:
+        return 0
+
+    removed = 0
+    for cid, bar in list(_iter_bars(model)):
+        f = bar.properties.get("from_node")
+        t = bar.properties.get("to_node")
+        if f in best and t in best:
+            continue
+        del model.components[cid]
+        removed += 1
+
+    for cid, comp in list(_iter_nodes(model)):
+        if cid not in best:
+            del model.components[cid]
+
+    # 清理依赖/规则引用
+    valid = set(model.components) | set(model.dimensions) | set(model.connections) | set(model.rules)
+    model.dependencies = {
+        k: {d for d in deps if d in valid}
+        for k, deps in model.dependencies.items()
+        if k in valid
+    }
+    for r in model.rules.values():
+        r.applies_to = [a for a in (r.applies_to or []) if a in model.components]
+    return removed
+
+
+def inspect_model(model: EngineeringModel) -> Dict:
+    """量化验收 1：模型拓扑度数统计（Degree=1 悬空断裂节点应为 0）。
+
+    对 tower_bar 建图，返回 degree 直方图、Degree=1 节点数与连通分量数。
+    """
+    from .tower_geometry import inspect_model_topology
+
+    nodes: Dict[str, tuple] = {}
+    for cid, comp in _iter_nodes(model):
+        p = comp.properties
+        if all(p.get(a) is not None for a in ("x", "y", "z")):
+            nodes[cid] = (float(p["x"]), float(p["y"]), float(p["z"]))
+    bars = []
+    for cid, bar in _iter_bars(model):
+        f, t = bar.properties.get("from_node"), bar.properties.get("to_node")
+        if f in nodes and t in nodes:
+            bars.append({"id": cid, "from": f, "to": t})
+    return inspect_model_topology(nodes, bars)
+
+
+def tower_geometry_gate(
+    model: EngineeringModel,
+    overlay: Optional[str | Path | dict] = None,
+) -> Dict:
+    """GLB 导出前的几何门禁（视觉门禁）。
+
+    只检查「几何是否可信」，不替代 Harness / BOM 核对：
+        * 有效杆件数（from_node != to_node 且两端节点存在）
+        * 退化杆比例（from_node == to_node）
+        * 已解算节点的空间 bbox 跨度（防止 0.5m 盒子冒充真塔）
+        * P1 拓扑：连通子图数、最大子图节点占比、孤立杆比例、view_type 覆盖
+
+    阈值可在 overlay 中配置：
+        glb_gate_min_valid_bars               默认 80
+        glb_gate_max_degenerate_ratio         默认 0.15
+        glb_gate_min_bbox_span_mm             默认 2000（国网图建议 3000）
+        glb_gate_max_components               默认 3
+        glb_gate_min_largest_component_ratio  默认 0.85
+        glb_gate_max_isolated_bar_ratio       默认 0.10
+        glb_gate_require_front_and_side       默认 False（同图双视图表开启）
+    返回 {"ok", "reasons", "bars", "valid_bars", "valid_3d_bars",
+          "degenerate_bars", "degenerate_ratio", "bbox_mm", "span_mm",
+          "components", "largest_component_ratio", "isolated_bar_ratio",
+          "view_types"}。
+    """
+    spec: dict = {}
+    try:
+        from ..intake.tower_spec import load_tower_spec
+        spec = load_tower_spec(overlay)
+    except Exception:
+        spec = {}
+    min_valid_bars = float(spec.get("glb_gate_min_valid_bars", 80))
+    max_degenerate_ratio = float(spec.get("glb_gate_max_degenerate_ratio", 0.15))
+    min_span = float(spec.get("glb_gate_min_bbox_span_mm", 2000.0))
+    max_components = int(spec.get("glb_gate_max_components", 3))
+    min_largest_ratio = float(spec.get("glb_gate_min_largest_component_ratio", 0.85))
+    max_isolated_ratio = float(spec.get("glb_gate_max_isolated_bar_ratio", 0.10))
+    require_front_side = bool(spec.get("glb_gate_require_front_and_side", False))
+
+    bars = [c for _, c in _iter_bars(model)]
+    nodes = {cid: c for cid, c in _iter_nodes(model)}
+    valid: List[Component] = []
+    valid_3d: List[Component] = []
+    degenerate = 0
+    missing_node = 0
+    for bar in bars:
+        f = bar.properties.get("from_node")
+        t = bar.properties.get("to_node")
+        if f == t:
+            degenerate += 1
+            continue
+        if f not in nodes or t not in nodes:
+            missing_node += 1
+            continue
+        valid.append(bar)
+        nf, nt = nodes[f].properties, nodes[t].properties
+        if all(nf.get(a) is not None and nt.get(a) is not None for a in ("x", "y", "z")):
+            valid_3d.append(bar)
+
+    # 空间 bbox：只在已解算三轴的节点上计算
+    solved_pts = []
+    for cid, comp in _iter_nodes(model):
+        p = comp.properties
+        if all(p.get(a) is not None for a in ("x", "y", "z")):
+            solved_pts.append((float(p["x"]), float(p["y"]), float(p["z"])))
+    bbox_mm = {}
+    span_mm = 0.0
+    if solved_pts:
+        mins = [min(p[i] for p in solved_pts) for i in range(3)]
+        maxs = [max(p[i] for p in solved_pts) for i in range(3)]
+        bbox_mm = {
+            "x": [round(mins[0], 2), round(maxs[0], 2)],
+            "y": [round(mins[1], 2), round(maxs[1], 2)],
+            "z": [round(mins[2], 2), round(maxs[2], 2)],
+        }
+        span_mm = max(maxs[i] - mins[i] for i in range(3))
+
+    degenerate_ratio = degenerate / len(bars) if bars else 0.0
+    components, largest_ratio, isolated_ratio = _bar_graph_components(model)
+    view_types = sorted({
+        str(b.properties.get("view_type"))
+        for b in bars
+        if b.properties.get("view_type")
+    })
+    # merge_view_bars 只保留主视图（front）杆件，因此「是否同图 front+side 双视图解析」
+    # 以 drawing_file.view_kinds 为准，而不是以最终 bars 的 view_type 为准。
+    df_comp = model.components.get("drawing_file")
+    df_props = df_comp.properties if df_comp else {}
+    df_view_kinds = set(df_props.get("view_kinds") or [])
+
+    # Phase 2 四面对称展开模型：由 2D 单立面自动生成四棱台网架。
+    # 闸门改为验收「四面封闭 + 4 条主腿 + 规模 + Degree=1=0」。
+    expanded_4face = bool(df_props.get("expanded_4_face"))
+    corner_legs = int(df_props.get("corner_legs") or 0)
+    face_count = int(df_props.get("face_count") or 0)
+    degree1 = int(df_props.get("topology_degree1") or 0)
+    require_degree1_zero = bool(spec.get("glb_gate_require_degree1_zero", False))
+    max_degree1 = int(spec.get("glb_gate_max_degree1", 0))
+
+    reasons: List[str] = []
+    if len(bars) == 0:
+        reasons.append("模型中没有 tower_bar，无法导出 GLB")
+
+    if expanded_4face:
+        min_4face_bars = int(spec.get("glb_gate_min_4face_bars", 250))
+        max_4face_bars = int(spec.get("glb_gate_max_4face_bars", 350))
+        if len(valid) < min_4face_bars or len(valid) > max_4face_bars:
+            reasons.append(
+                f"四面网架有效杆件数 {len(valid)} 不在 {min_4face_bars}~{max_4face_bars} 区间")
+        if face_count != 4:
+            reasons.append(f"四面网架 face_count={face_count}，应为 4")
+        if corner_legs != 4:
+            reasons.append(f"四角主腿数 {corner_legs}，应为 4")
+        if (require_degree1_zero or max_degree1 >= 0) and degree1 > max_degree1:
+            # 量化验收 1（可配置严格档）：悬空断裂节点（Degree=1）应 <= max_degree1。
+            reasons.append(f"悬空断裂节点（Degree=1）{degree1} 个，应 <= {max_degree1}")
+        if min_span > 0 and span_mm < min_span:
+            reasons.append(
+                f"节点空间跨度 {span_mm:.1f}mm < 门禁阈值 {min_span:.1f}mm（bbox={bbox_mm}）")
+        if bars and degenerate_ratio > max_degenerate_ratio:
+            reasons.append(
+                f"退化杆比例 {degenerate_ratio:.1%} > 门禁阈值 {max_degenerate_ratio:.1%}")
+    else:
+        if len(valid) < min_valid_bars:
+            reasons.append(
+                f"有效杆件数 {len(valid)} < 门禁阈值 {min_valid_bars}（退化 {degenerate}、缺节点 {missing_node}）")
+        if bars and degenerate_ratio > max_degenerate_ratio:
+            reasons.append(
+                f"退化杆比例 {degenerate_ratio:.1%} > 门禁阈值 {max_degenerate_ratio:.1%}")
+        if min_span > 0 and span_mm < min_span:
+            reasons.append(
+                f"节点空间跨度 {span_mm:.1f}mm < 门禁阈值 {min_span:.1f}mm（bbox={bbox_mm}）")
+
+        # P1：拓扑碎片化检查
+        if components > max_components:
+            reasons.append(
+                f"杆件连通子图数 {components} > 门禁阈值 {max_components}（疑似多视图平铺/标注碎片）")
+        if largest_ratio < min_largest_ratio:
+            reasons.append(
+                f"最大连通子图节点占比 {largest_ratio:.1%} < 门禁阈值 {min_largest_ratio:.1%}")
+        if isolated_ratio > max_isolated_ratio:
+            reasons.append(
+                f"孤立杆比例 {isolated_ratio:.1%} > 门禁阈值 {max_isolated_ratio:.1%}（两端皆叶子）")
+        if require_front_side and not ({"front", "side"} <= df_view_kinds):
+            reasons.append(
+                f"drawing_file.view_kinds 缺少 front+side（当前 {sorted(df_view_kinds)}），同图双视图表不能只导出单立面平铺")
+
+    return {
+        "ok": not reasons,
+        "reasons": reasons,
+        "bars": len(bars),
+        "valid_bars": len(valid),
+        "valid_3d_bars": len(valid_3d),
+        "degenerate_bars": degenerate,
+        "degenerate_ratio": round(degenerate_ratio, 4),
+        "missing_node_bars": missing_node,
+        "bbox_mm": bbox_mm,
+        "span_mm": round(span_mm, 2),
+        "components": components,
+        "largest_component_ratio": largest_ratio,
+        "isolated_bar_ratio": isolated_ratio,
+        "view_types": view_types,
+        "expanded_4face": expanded_4face,
+        "corner_legs": corner_legs,
+        "face_count": face_count,
+        "topology_degree1": degree1,
+    }
+
+
 def export_tower_glb(
     model: EngineeringModel,
     out_path: str | Path,
@@ -521,6 +832,24 @@ def export_tower_glb(
     node_ids = list(nodes)
     total_bars = sum(1 for _ in _iter_bars(model))
     skipped: List[str] = []
+
+    # P1-8 语义分类：按几何倾角 + 位置分 LEG/DIAG/HORIZ/CROSS，用于着色 + 法向定向。
+    from .tower_geometry import classify_members, _align_matrix
+
+    bar_positions = {
+        cid: {
+            "id": cid,
+            "from": bar.properties.get("from_node"),
+            "to": bar.properties.get("to_node"),
+        }
+        for cid, bar in _iter_bars(model)
+    }
+    node_positions = {
+        nid: (float(n["x"] or 0), float(n["y"] or 0), float(n["z"] or 0))
+        for nid, n in nodes.items()
+    }
+    bar_roles = classify_members(node_positions, list(bar_positions.values()))
+
     for cid, bar in _iter_bars(model):
         f = bar.properties.get("from_node")
         t = bar.properties.get("to_node")
@@ -537,22 +866,22 @@ def export_tower_glb(
             skipped.append(cid)
             continue
         section = bar.properties.get("section")
+        role = bar_roles.get(cid, "DIAG")
         try:
             # P1-7：角钢按真实 L 型截面拉伸，非统一圆柱
             mesh = _angle_steel_mesh(section, length)
         except Exception:
             radius = _section_radius(section)
             mesh = trimesh.creation.cylinder(radius=radius, height=length, sections=12)
-        transform = trimesh.geometry.align_vectors([0.0, 0.0, 1.0], direction)
         mid = ((pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, (pa[2] + pb[2]) / 2)
-        transform[0][3] = mid[0]
-        transform[1][3] = mid[1]
-        transform[2][3] = mid[2]
+        # P1-8：L 截面法向定向——角顶朝外（LEG 朝四棱台外角、斜材翼缘贴立面），
+        # 取代 align_vectors 的绕轴随机旋转。
+        transform = _align_matrix(direction, mid, role=role)
         mesh.apply_transform(transform)
-        color = layer_colors.get(bar.properties.get("layer", ""), [180, 180, 180, 255])
+        color = layer_colors.get(role, layer_colors.get(bar.properties.get("layer", ""), [180, 180, 180, 255]))
         mesh.visual.face_colors = color
         bid = str(bar.properties.get("bar_id") or cid)
-        extras = {"bar_id": bid, "component_id": cid}
+        extras = {"bar_id": bid, "component_id": cid, "role": role}
         mesh.metadata = dict(extras)
         meshes.append(mesh)
         mesh_meta.append(extras)
@@ -636,6 +965,10 @@ def _angle_steel_mesh(section: Optional[str], length: float):
     import trimesh
 
     w, t = _parse_section(section)
+    # 短杆截面宽度 cap：杆长 50mm 却拉出 100mm 角钢会变成「铁板/方砖」。
+    # 截面肢宽不超过杆长 30%（且不小于肢厚+1），长杆不受影响（如 2000mm
+    # 杆 * 0.3 = 600mm > L100 的 100mm）。
+    w = min(float(w), max(float(length) * 0.3, float(t) + 1.0))
     w = max(float(w), float(t) + 1.0)
     # L 型截面外轮廓（逆时针，含内侧缺口）
     ring = [

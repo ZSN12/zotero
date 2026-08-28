@@ -27,8 +27,10 @@ from .tower_spec import (
     cross_file_z_ref,
     cross_file_allow_z_peer_interpolate,
     cross_file_synthetic_side_from_front,
+    cross_file_synthetic_side_view_x_scale,
     cross_file_plan_sheets,
     cross_file_z_band_scale,
+    cross_file_normalize_x,
 )
 
 # 三视图展开系数（与 schema/tower_layer_map.json 生成器约定一致）
@@ -242,13 +244,14 @@ def _interpolate_front_y_from_z_peers(
                 s1, s2 = sorted(peers, key=lambda s: abs(float(s.properties.get("view_x") or 0) - float(ux)))[:2]
         else:
             s1, s2 = sorted(peers, key=lambda s: abs(float(s.properties.get("view_x") or 0) - float(ux)))[:2]
-        x1, y1 = float(s1.properties["view_x"]), float(s1.properties["y"])
-        x2, y2 = float(s2.properties["view_x"]), float(s2.properties["y"])
-        if abs(x2 - x1) < 1e-6:
-            y = y1
-        else:
-            t = (float(ux) - x1) / (x2 - x1)
-            y = y1 + t * (y2 - y1)
+        if len(peers) > 1:
+            x1, y1 = float(s1.properties["view_x"]), float(s1.properties["y"])
+            x2, y2 = float(s2.properties["view_x"]), float(s2.properties["y"])
+            if abs(x2 - x1) < 1e-6:
+                y = y1
+            else:
+                t = (float(ux) - x1) / (x2 - x1)
+                y = y1 + t * (y2 - y1)
         solved_dict = {
             "x": round(float(ux), 2),
             "y": round(float(y), 2),
@@ -270,7 +273,11 @@ def _synthesize_side_nodes_from_front(
     model: EngineeringModel,
     overlay: Optional[str | Path | dict] = None,
 ) -> int:
-    """M5：无 side 分册时，从 front 1:1 生成 synthetic side 节点（供 front+side 解 y）。"""
+    """M5：无 side 分册时，从 front 生成 synthetic side 节点（供 front+side 解 y）。
+
+    side.view_x = front.view_x * synthetic_side_view_x_scale。默认 1.0 保持 M5
+    原「1:1 假侧视」行为；国网单立面设 0.0 可避免 y≈x 的 45° 斜片。
+    """
     if not cross_file_synthetic_side_from_front(overlay=overlay):
         return 0
     if any(
@@ -282,6 +289,7 @@ def _synthesize_side_nodes_from_front(
 
     from ..model import Component
 
+    side_x_scale = cross_file_synthetic_side_view_x_scale(overlay=overlay)
     count = 0
     for cid, comp in list(model.components.items()):
         if comp.kind != "tower_node" or comp.properties.get("view_type") != "front":
@@ -301,7 +309,7 @@ def _synthesize_side_nodes_from_front(
             properties={
                 "node_id": nid,
                 "view_type": "side",
-                "view_x": p.get("view_x"),
+                "view_x": round(float(p.get("view_x")) * side_x_scale, 4),
                 "view_y": p.get("view_y"),
                 "source_file": p.get("source_file"),
                 "drawing_view": p.get("drawing_view"),
@@ -315,6 +323,12 @@ def _synthesize_side_nodes_from_front(
     df = model.components.get("drawing_file")
     if df is not None and count:
         df.properties["synthetic_side_nodes"] = count
+        # synthetic side 也构成一个可参与 front+side 3D 解耦的视图；
+        # 否则 tower_geometry_gate 的 require_front_and_side 会误判「缺 side」。
+        vk = set(df.properties.get("view_kinds") or [])
+        if "side" not in vk:
+            vk.add("side")
+            df.properties["view_kinds"] = sorted(vk)
     return count
 
 
@@ -327,7 +341,8 @@ def _recover_y_via_synthetic_side(
     if not cross_file_synthetic_side_from_front(overlay=overlay):
         return 0
     front_meta = _region_meta(_model_stem(model), overlay=overlay).get("front", {})
-    a = float(front_meta.get("y_expand", DEFAULT_EXPAND)) if front_meta else DEFAULT_EXPAND
+    # 无显式 y_expand 时默认 0（外部图 region 直接写 x/z 轴，不应强加展开量）。
+    a = float(front_meta.get("y_expand", 0.0)) if front_meta else 0.0
     side_by_pair: Dict[str, Component] = {}
     for cid, comp in model.components.items():
         if comp.kind != "tower_node" or comp.properties.get("view_type") != "side":
@@ -440,6 +455,183 @@ def _pair_front_plan_at_z(
     return paired
 
 
+def _pair_front_side_at_z(
+    model: EngineeringModel,
+    nodes_by_view: Dict[str, List[Tuple[str, Component]]],
+    merged: Dict[str, Dict[str, Optional[float]]],
+    *,
+    eps: float = 50.0,
+    cost_threshold: float = 0.35,
+    expand: float = 0.0,
+) -> int:
+    """P0-4：同图 front+side 按标高 Z 配对，解算唯一 (x, y, z)。
+
+    front.view_x = X，side.view_x = Y，两者的 view_y = Z（同一 Z 带内）。
+    无 section 视图做判据时，用归一化 view_x 排序做匈牙利一对一配对：
+        x = front.view_x，y = side.view_x，z = 平均标高。
+    expand != 0 时（图面带展开量），用 2x2 线性解耦恢复干净 (x, y)。
+
+    只使用真实 side 节点（synthetic_pair 标记的假侧视不参与本路径），
+    已解算的 front 节点跳过。
+    """
+    real_side = [
+        (cid, comp) for cid, comp in nodes_by_view.get("side", [])
+        if not comp.properties.get("synthetic_pair")
+    ]
+    if not real_side:
+        return 0
+
+    fb = defaultdict(list)
+    for cid, comp in nodes_by_view.get("front", []):
+        if comp.properties.get("solve_status") == "solved":
+            continue
+        z = comp.properties.get("view_y")
+        if z is None:
+            continue
+        fb[round(float(z) / eps)].append((cid, comp))
+    sb = defaultdict(list)
+    for cid, comp in real_side:
+        z = comp.properties.get("view_y")
+        if z is None:
+            continue
+        sb[round(float(z) / eps)].append((cid, comp))
+
+    def _norm_x(val: float, items: List[Tuple[str, Component]]) -> float:
+        xs = [c.properties["view_x"] for _, c in items if c.properties.get("view_x") is not None]
+        if not xs:
+            return 0.5
+        lo, hi = min(xs), max(xs)
+        return (val - lo) / (hi - lo) if hi - lo > 1e-6 else 0.5
+
+    paired = 0
+    for k in sorted(set(fb) & set(sb)):
+        F, S = fb[k], sb[k]
+        n_f, n_s = len(F), len(S)
+        n = max(n_f, n_s)
+        cost = [[1.0] * n for _ in range(n)]
+        for i, (_, fc) in enumerate(F):
+            fx = fc.properties.get("view_x")
+            if fx is None:
+                continue
+            for j, (_, sc) in enumerate(S):
+                sy = sc.properties.get("view_x")
+                if sy is None:
+                    cost[i][j] = float("inf")
+                    continue
+                cost[i][j] = abs(_norm_x(float(fx), F) - _norm_x(float(sy), S))
+        pairs = _hungarian(cost)
+        for i, j in pairs:
+            if i >= n_f or j >= n_s:
+                continue
+            if cost[i][j] > cost_threshold:
+                continue
+            fcid, fcomp = F[i]
+            scid, scomp = S[j]
+            xp = fcomp.properties.get("view_x")
+            yp = scomp.properties.get("view_x")
+            zf = fcomp.properties.get("view_y")
+            zs = scomp.properties.get("view_y")
+            if xp is None or yp is None or zf is None:
+                continue
+            if expand:
+                try:
+                    x, y = _linear_solve(float(xp), float(yp), expand)
+                except (ZeroDivisionError, ValueError):
+                    continue
+            else:
+                x, y = float(xp), float(yp)
+            z = float(zf)
+            if zs is not None:
+                z = (float(zf) + float(zs)) / 2.0
+            solved = {"x": round(x, 2), "y": round(y, 2), "z": round(z, 2)}
+            for cid, comp in ((fcid, fcomp), (scid, scomp)):
+                comp.properties.update({
+                    **solved,
+                    "solve_status": "solved",
+                    "solve_method": "front_side_z_pair",
+                })
+                merged[cid] = dict(solved)
+            paired += 1
+    return paired
+
+
+def _fill_unpaired_front_y(
+    model: EngineeringModel,
+    nodes_by_view: Dict[str, List[Tuple[str, Component]]],
+    merged: Dict[str, Dict[str, Optional[float]]],
+    eps: float = 50.0,
+) -> int:
+    """P0-3：front(X,Z)+side(Y,Z) 配对后，仍有 front 节点只缺 Y 时，
+    用同 Z 带内已解算 front 节点的 Y 做线性插值补齐（X 最近邻）。
+
+    这样 strict export 不再因 front 节点缺 Y 而卡死；Y 来源标记为 side_peer_fill。
+    """
+    front_nodes = nodes_by_view.get("front", [])
+    solved = [
+        c for _, c in front_nodes
+        if c.properties.get("solve_status") == "solved"
+        and c.properties.get("y") is not None
+    ]
+    filled = 0
+    for cid, comp in front_nodes:
+        if comp.properties.get("solve_status") == "solved":
+            continue
+        ux = comp.properties.get("view_x")
+        uz = comp.properties.get("view_y")
+        if ux is None or uz is None:
+            continue
+        peers = [
+            c for c in solved
+            if abs(float(c.properties.get("view_y") or 0) - float(uz)) <= eps
+        ]
+        if not peers:
+            # 同 Z 带无已解算节点时，退到全高最近 Z 的两个节点插值
+            peers = sorted(
+                solved,
+                key=lambda c: abs(float(c.properties.get("view_y") or 0) - float(uz)),
+            )[:2]
+        if not peers:
+            continue
+        if len(peers) == 1:
+            y = float(peers[0].properties["y"])
+        else:
+            peers.sort(key=lambda c: float(c.properties.get("view_x") or 0))
+            left = [c for c in peers if float(c.properties.get("view_x") or 0) <= float(ux)]
+            right = [c for c in peers if float(c.properties.get("view_x") or 0) >= float(ux)]
+            if left and right:
+                s1 = max(left, key=lambda c: float(c.properties["view_x"]))
+                s2 = min(right, key=lambda c: float(c.properties["view_x"]))
+            else:
+                s1, s2 = sorted(
+                    peers, key=lambda c: abs(float(c.properties.get("view_x") or 0) - float(ux)),
+                )[:2]
+        if len(peers) > 1:
+            x1, y1 = float(s1.properties["view_x"]), float(s1.properties["y"])
+            x2, y2 = float(s2.properties["view_x"]), float(s2.properties["y"])
+            if abs(x2 - x1) < 1e-6:
+                y = y1
+            else:
+                t = (float(ux) - x1) / (x2 - x1)
+                y = y1 + t * (y2 - y1)
+        solved_dict = {
+            "x": round(float(ux), 2),
+            "y": round(float(y), 2),
+            "z": round(float(uz), 2),
+        }
+        comp.properties.update({
+            **solved_dict,
+            "solve_status": "solved",
+            "solve_method": "side_peer_fill",
+            "y_origin": "side_peer_fill",
+        })
+        ao = dict(comp.properties.get("axis_origin") or {})
+        ao["y"] = "derived"
+        comp.properties["axis_origin"] = ao
+        merged[cid] = dict(solved_dict)
+        filled += 1
+    return filled
+
+
 def merge_view_coordinates(
     model: EngineeringModel,
     overlay: Optional[str | Path | dict] = None,
@@ -469,6 +661,7 @@ def merge_view_coordinates(
         return None if z is None else round(float(z) / eps)
 
     merged: Dict[str, Dict[str, Optional[float]]] = {}
+    df = model.components.get("drawing_file")
 
     # ---- plan 视图：x/y/z 三轴直接可得 ----
     for cid, comp in nodes_by_view.get("plan", []):
@@ -503,6 +696,22 @@ def merge_view_coordinates(
             p["solve_status"] = "solved"
             merged[cid] = {"x": x, "y": y_plan, "z": z}
 
+    # ---- front + side 同 Z 带配对（P0-4：同图双视图真 3D 解）----
+    # 有 section 视图时，下面的三视图线性解耦更严格，不要提前抢占。
+    front_meta = meta.get("front", {})
+    side_meta = meta.get("side", {})
+    a_f = float(front_meta.get("y_expand", 0.0)) if front_meta else 0.0
+    a_s = float(side_meta.get("x_expand", 0.0)) if side_meta else 0.0
+    a = a_f or a_s
+    _synthesize_side_nodes_from_front(model, overlay=overlay)
+    if not nodes_by_view.get("section"):
+        paired_fs = _pair_front_side_at_z(model, nodes_by_view, merged, eps=eps, expand=a)
+        if df is not None and paired_fs:
+            df.properties["front_side_pairings"] = paired_fs
+        filled_y = _fill_unpaired_front_y(model, nodes_by_view, merged, eps=eps)
+        if df is not None and filled_y:
+            df.properties["side_peer_filled_y"] = filled_y
+
     # ---- front + plan 跨文件配对（M3/M5：多 z 平面 plan_sheets）----
     z_band = eps * cross_file_z_band_scale(overlay=overlay)
     plan_specs = cross_file_plan_sheets(overlay=overlay)
@@ -526,12 +735,10 @@ def merge_view_coordinates(
             paired_total += _pair_front_plan_at_z(
                 model, nodes_by_view_plan, merged, z_ref=z_ref, z_band=z_band,
             )
-    df = model.components.get("drawing_file")
     if df is not None and paired_total:
         df.properties["plan_pairings"] = paired_total
 
     # ---- M5：synthetic side → front+side 解 y ----
-    _synthesize_side_nodes_from_front(model, overlay=overlay)
     syn_recovered = _recover_y_via_synthetic_side(model, merged, overlay=overlay)
     if df is not None and syn_recovered:
         df.properties["y_synthetic_side"] = syn_recovered
@@ -543,13 +750,7 @@ def merge_view_coordinates(
     if cross_file_allow_z_peer_interpolate(overlay=overlay):
         _interpolate_front_y_from_z_peers(model, merged, eps)
 
-    # ---- front + side + section 三视图线性解耦 ----
-    front_meta = meta.get("front", {})
-    side_meta = meta.get("side", {})
-    a_f = float(front_meta.get("y_expand", DEFAULT_EXPAND)) if front_meta else 0.0
-    a_s = float(side_meta.get("x_expand", DEFAULT_EXPAND)) if side_meta else 0.0
-    a = a_f or a_s
-
+    # ---- front + side + section 三视图线性解耦（a 已在上面计算）----
     fb = defaultdict(list)
     for cid, comp in nodes_by_view.get("front", []):
         fb[bucket(comp.properties.get("view_y"))].append((cid, comp))
@@ -710,6 +911,31 @@ def merge_view_bars(
     for bar in primary_bars:
         keep_components[bar.id] = bar
 
+    # 主立面 X/Y 中心归零（view_align.*.normalize_x）：国网/闲鱼立面图坐标常
+    # 落在图纸绝对坐标（如 x≈34000），归零后 X/Y 关于 0 对称、GLB 不再偏在一边。
+    # Y 也一起归零：front(X,Z)+side(Y,Z) 合并后，侧视 Y 轴同样需要居中。
+    if cross_file_normalize_x(overlay=overlay):
+        # 只用「已解算三轴」的主视图节点做居中；未解算节点仍保留图纸绝对坐标，
+        # 若混入会把中心拉到 ~34000 的图纸坐标系里。
+        solved_nodes = [
+            c for c in keep_components.values()
+            if c.kind == "tower_node"
+            and c.properties.get("view_type") == primary
+            and all(c.properties.get(a) is not None for a in ("x", "y", "z"))
+        ]
+        xs = [float(c.properties["x"]) for c in solved_nodes]
+        ys = [float(c.properties["y"]) for c in solved_nodes]
+        if xs:
+            x_center = (min(xs) + max(xs)) / 2
+            for c in keep_components.values():
+                if c.kind == "tower_node" and c.properties.get("x") is not None:
+                    c.properties["x"] = round(float(c.properties["x"]) - x_center, 2)
+        if ys:
+            y_center = (min(ys) + max(ys)) / 2
+            for c in keep_components.values():
+                if c.kind == "tower_node" and c.properties.get("y") is not None:
+                    c.properties["y"] = round(float(c.properties["y"]) - y_center, 2)
+
     # 修正 BOM 维度的 applies_to 与依赖
     merged_by_bid: Dict[str, List[str]] = defaultdict(list)
     for bar in primary_bars:
@@ -747,4 +973,190 @@ def merge_view_bars(
         elif r.id == "r_node_fully_solved":
             r.applies_to = node_ids
 
+    return model
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2  单立面 -> 四面封闭空间网架（EngineeringModel 包装）
+# --------------------------------------------------------------------------- #
+
+def expand_4_face_symmetry_model(
+    model: EngineeringModel,
+    overlay: Optional[str | Path | dict] = None,
+    *,
+    snap_tol: Optional[float] = None,
+    weld_corner_legs: bool = True,
+    add_diaphragms: bool = True,
+) -> EngineeringModel:
+    """Phase 2：把模型里的单立面杆件展开为四面封闭空间网架（原地改写）。
+
+    流程：
+        1. 取主视图（front/elevation）杆件与其已解算节点，构造单立面平面
+           (t=x, z) 节点图（忽略当前可能错误的 y 合成值）；
+        2. Phase 1：snap_diagonals_to_legs 吸附斜材端点到主腿工作线；
+        3. Phase 2：expand_4_face_symmetry 四向镜像 + 四角主腿熔合 + 横隔面；
+        4. 写回 EngineeringModel（旧 tower_node/tower_bar 替换为 4 面构件，
+           保留 drawing_file / BOM / 节点板等上下文）。
+
+    返回原 model（原地修改）。overlay 可覆盖 snap_tol 与开关。
+    """
+    from ..solve.tower_geometry import (
+        snap_diagonals_to_legs,
+        expand_4_face_symmetry,
+        classify_members,
+        inspect_model_topology,
+    )
+
+    spec = {}
+    if overlay is not None:
+        try:
+            from .tower_spec import load_tower_spec
+            spec = load_tower_spec(overlay)
+        except Exception:
+            spec = {}
+    if snap_tol is None:
+        snap_tol = float(spec.get("snap_tol_mm", 80.0))
+
+    bars = [c for _, c in _tower_bars(model)]
+    if not bars:
+        return model
+    counts: Dict[str, int] = defaultdict(int)
+    for c in bars:
+        counts[c.properties.get("view_type") or "_all"] += 1
+    primary = "front" if counts.get("front") else "elevation" if counts.get("elevation") else (
+        max(counts, key=lambda k: counts[k])
+    )
+
+    # 单立面节点：t=x、z=z（y 归零，避免 synthetic side 的对角线污染）
+    src_nodes: NodeMap = {}
+    node_meta: Dict[str, Tuple[str, Component]] = {}
+    for cid, comp in _tower_nodes(model):
+        p = comp.properties
+        if p.get("view_type") != primary:
+            continue
+        if p.get("x") is None or p.get("z") is None:
+            continue
+        x, z = float(p["x"]), float(p["z"])
+        src_nodes[cid] = (x, 0.0, z)
+        node_meta[cid] = (primary, comp)
+
+    src_bars: List[dict] = []
+    bar_meta: Dict[str, Component] = {}
+    for cid, comp in _tower_bars(model):
+        p = comp.properties
+        if p.get("view_type") != primary:
+            continue
+        f, t = p.get("from_node"), p.get("to_node")
+        if f not in src_nodes or t not in src_nodes:
+            continue
+        if f == t:
+            continue
+        src_bars.append({
+            "id": cid,
+            "from": f,
+            "to": t,
+            "bar_id": p.get("bar_id"),
+            "section": p.get("section"),
+            "layer": p.get("layer"),
+        })
+        bar_meta[cid] = comp
+
+    if not src_bars:
+        return model
+
+    work_nodes, work_bars = src_nodes, src_bars
+
+    # 可选：T 形交点打断，把「端点落在其它杆件线段上」的 2D 线段闭合为共享节点。
+    if bool(spec.get("close_face_intersections")):
+        from ..solve.tower_geometry import close_face_intersections
+        work_nodes, work_bars = close_face_intersections(
+            work_nodes, work_bars,
+            snap_tol=float(spec.get("intersection_snap_tol_mm", 30.0)),
+        )
+
+    # Phase 1（可选）：斜材端点吸附到主腿工作线。
+    # 系统重构：默认不启用 snap_diagonals_to_legs，因为它会把原本共享的
+    # 节点重新吸附到新坐标，破坏已连通的杆件网络（实测 15 杆 1 组件 →
+    # 48 杆 3 组件）。仅当 overlay 显式启用 snap_diagonals 时才执行。
+    if bool(spec.get("snap_diagonals")):
+        snapped_nodes, snapped_bars = snap_diagonals_to_legs(
+            work_nodes, work_bars, snap_tol=snap_tol,
+        )
+    else:
+        snapped_nodes, snapped_bars = work_nodes, work_bars
+
+    # Phase 2：四面镜像展开 + 四角主腿熔合 + 横隔面
+    face_nodes, face_bars = expand_4_face_symmetry(
+        snapped_nodes, snapped_bars,
+        weld_corner_legs=weld_corner_legs,
+        add_diaphragms=add_diaphragms,
+    )
+    topology = inspect_model_topology(face_nodes, face_bars)
+    roles = classify_members(face_nodes, face_bars)
+
+    # 重建模型组件
+    _KEEP_KINDS = frozenset({
+        "drawing_file", "bom_row", "gusset_plate", "bolt_group", "detail_view",
+    })
+    keep_components: Dict[str, Component] = {}
+    for cid, comp in model.components.items():
+        if comp.kind in _KEEP_KINDS:
+            keep_components[cid] = comp
+
+    bar_id_count: Dict[str, int] = defaultdict(int)
+    src_ref = model.components.get("drawing_file")
+    src_ref = src_ref.source if src_ref is not None else None
+    for nid, pos in face_nodes.items():
+        keep_components[f"4f_{nid}"] = Component(
+            id=f"4f_{nid}", name=nid, kind="tower_node",
+            source=src_ref,
+            properties={
+                "x": round(pos[0], 4), "y": round(pos[1], 4), "z": round(pos[2], 4),
+                "solve_status": "solved",
+                "generated_4face": True,
+            },
+        )
+
+    new_bar_ids: List[str] = []
+    for b in face_bars:
+        bid = str(b.get("bar_id") or b["id"])
+        n = bar_id_count[bid]
+        bar_id_count[bid] = n + 1
+        comp_id = f"4f_{b['id']}"
+        keep_components[comp_id] = Component(
+            id=comp_id, name=b["id"], kind="tower_bar",
+            source=src_ref,
+            properties={
+                "bar_id": bid,
+                "from_node": f"4f_{b['from']}",
+                "to_node": f"4f_{b['to']}",
+                "section": b.get("section"),
+                "layer": b.get("layer"),
+                "face": b.get("face"),
+                "role": b.get("role") or roles.get(b["id"], "DIAG"),
+                "corner_leg": bool(b.get("corner_leg")),
+                "diaphragm": bool(b.get("diaphragm")),
+                "generated_4face": True,
+                "solve_status": "solved",
+                "length_mm_3d": round(
+                    math.sqrt(sum((face_nodes[b["to"]][i] - face_nodes[b["from"]][i]) ** 2 for i in range(3))), 2,
+                ),
+            },
+        )
+        new_bar_ids.append(comp_id)
+
+    model.components = keep_components
+    model.staleness = {cid: st for cid, st in model.staleness.items() if cid in model.components}
+    model.dependencies = {}
+
+    df = model.components.get("drawing_file")
+    if df is not None:
+        df.properties.update({
+            "expanded_4_face": True,
+            "face_count": 4,
+            "corner_legs": sum(1 for b in face_bars if b.get("corner_leg")),
+            "diaphragm_count": sum(1 for b in face_bars if b.get("diaphragm")),
+            "topology_degree1": topology["dangling_degree1"],
+            "topology_components": topology["components"],
+        })
     return model

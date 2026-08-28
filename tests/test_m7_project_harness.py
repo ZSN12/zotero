@@ -87,6 +87,7 @@ class DeliverProjectM7Test(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             result = deliver_project(d, tmp, layer_map_path=str(OVERLAY))
             self.assertTrue(result.get("ok"))
+            self.assertTrue((result.get("glb_geometry_gate") or {}).get("ok"))
             ph = result.get("project_harness") or {}
             self.assertGreater(ph.get("sheet_count", 0), 0)
             self.assertTrue(Path(result["artifact_paths"]["project_harness"]).exists())

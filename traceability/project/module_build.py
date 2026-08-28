@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..model import Component, EngineeringModel
+from ..model import Component, Dimension, EngineeringModel
 from ..intake.tower_spec import load_tower_spec
 from .assembly import assemble_modules
 
@@ -136,6 +136,107 @@ def split_merged_by_z(
     return _extract(lower_id, False), _extract(upper_id, True)
 
 
+# --------------------------------------------------------------------------- #
+# Phase 3  M1–M6 长链条多模块装配定义
+# --------------------------------------------------------------------------- #
+
+MODULE_DEFINITIONS: List[Dict[str, Any]] = [
+    {"id": "M1_LEG",        "name": "基础与塔脚段",   "z_range": (0.0, 9000.0)},
+    {"id": "M2_LOWER_BODY", "name": "下塔身段",       "z_range": (9000.0, 18000.0)},
+    {"id": "M3_MID_BODY",   "name": "中塔身段",       "z_range": (18000.0, 24000.0)},
+    {"id": "M4_UPPER_BODY", "name": "上塔身段",       "z_range": (24000.0, 30000.0)},
+    {"id": "M5_CROSSARM",   "name": "导线曲臂横担段", "z_range": (30000.0, 33500.0)},
+    {"id": "M6_HEAD",       "name": "猫耳地线支架段", "z_range": (33500.0, 36600.0)},
+]
+
+
+def _node_z_of(comp: Component) -> Optional[float]:
+    z = comp.properties.get("z")
+    if z is None:
+        z = comp.properties.get("view_y")
+    return float(z) if z is not None else None
+
+
+def split_merged_by_modules(
+    model: EngineeringModel,
+    definitions: Optional[List[Dict[str, Any]]] = None,
+    *,
+    interface_tol_mm: float = 500.0,
+) -> List[EngineeringModel]:
+    """按 M1–M6 标高接口把合并模型切分为 6 个子模块。
+
+    节点 z 落在 [z0 - tol, z1 + tol] 时属于该模块；杆件两端节点均属于某模块
+    时该杆件归入该模块。接口节点（靠近分界标高）会同时进入相邻两个模块，
+    供 Phase 3 装配时做 top/bottom 配对。
+    """
+    defs = definitions or MODULE_DEFINITIONS
+    # 收集实际存在的节点 z 层；固定 z_range 边界吸附到最近实际 z 层，使相邻模块
+    # 共享同一接口层（变截面棱台固定标高往往没有恰好落上的节点）。
+    z_levels = sorted({round(float(_node_z_of(c)), 1)
+                       for c in model.components.values() if c.kind == "tower_node"
+                       and _node_z_of(c) is not None})
+
+    def _snap(z: float) -> float:
+        if not z_levels:
+            return z
+        return min(z_levels, key=lambda zz: abs(zz - z))
+
+    modules: List[EngineeringModel] = []
+    for mdef in defs:
+        mid = mdef["id"]
+        z0 = _snap(float(mdef["z_range"][0]))
+        z1 = _snap(float(mdef["z_range"][1]))
+        sub = EngineeringModel(name=f"module-{mid}")
+
+        node_membership: Dict[str, bool] = {}
+        for cid, comp in model.components.items():
+            if comp.kind != "tower_node":
+                continue
+            z = _node_z_of(comp)
+            if z is None:
+                continue
+            node_membership[cid] = z0 - interface_tol_mm <= z <= z1 + interface_tol_mm
+
+        for cid, comp in model.components.items():
+            if comp.kind == "tower_node":
+                if node_membership.get(cid):
+                    props = dict(comp.properties)
+                    props["module_id"] = mid
+                    sub.add_component(Component(
+                        id=cid, name=comp.name, kind=comp.kind,
+                        source=comp.source, properties=props, tags=list(comp.tags),
+                    ))
+            elif comp.kind == "tower_bar":
+                f, t = comp.properties.get("from_node"), comp.properties.get("to_node")
+                if f and t and node_membership.get(f) and node_membership.get(t):
+                    props = dict(comp.properties)
+                    props["module_id"] = mid
+                    sub.add_component(Component(
+                        id=cid, name=comp.name, kind=comp.kind,
+                        source=comp.source, properties=props, tags=list(comp.tags),
+                    ))
+            elif comp.kind == "drawing_file":
+                props = dict(comp.properties)
+                props.update({"view_mode": "module_slice", "module_id": mid,
+                              "z_range": [z0, z1],
+                              "module_z0": z0, "module_z1": z1})
+                sub.add_component(Component(
+                    id=cid, name=comp.name, kind=comp.kind,
+                    source=comp.source, properties=props, tags=list(comp.tags),
+                ))
+
+        for did, dim in model.dimensions.items():
+            if dim.applies_to and sub.components.get(dim.applies_to):
+                sub.add_dimension(Dimension(
+                    id=did, name=dim.name, value=dim.value, unit=dim.unit,
+                    origin=dim.origin, source=dim.source,
+                    applies_to=dim.applies_to, status=dim.status,
+                ))
+        modules.append(sub)
+
+    return [m for m in modules if sum(1 for c in m.components.values() if c.kind == "tower_node") > 0]
+
+
 def try_assembly_from_merged(
     merged_model: EngineeringModel,
     overlay: Optional[str | Path | dict],
@@ -164,4 +265,60 @@ def try_assembly_from_merged(
         "module_ids": ["M1", "M2"],
         "mode": "assembly_demo_z_split",
         "z_split_ratio": ratio_f,
+    }
+
+
+def try_assembly_m1_m6_from_merged(
+    merged_model: EngineeringModel,
+    overlay: Optional[str | Path | dict],
+) -> Optional[Dict[str, Any]]:
+    """Phase 3：M1–M6 六模块长链条装配（刚体 [R|T] 对齐 + 缝合）。
+
+    overlay 可用键：
+        module_definitions: "m1_m6" 或显式 [{id,name,z_range:[z0,z1]}, ...]
+        assembly_tol_mm:     拼接公差（默认 5.0）
+        assembly_interface_tol_mm: 切分接口容差（默认 500.0）
+    """
+    ov = load_tower_spec(overlay) if overlay else {}
+    if not ov.get("enable_module_assembly"):
+        return None
+
+    defs = ov.get("module_definitions")
+    if defs is None:
+        return None
+    if isinstance(defs, str) and defs == "m1_m6":
+        definitions = MODULE_DEFINITIONS
+    elif isinstance(defs, list) and defs:
+        definitions = [
+            {
+                "id": str(d.get("id") or f"M{i + 1}"),
+                "name": str(d.get("name") or f"模块 {i + 1}"),
+                "z_range": (float(d["z_range"][0]), float(d["z_range"][1])),
+            }
+            for i, d in enumerate(defs)
+            if isinstance(d, dict) and d.get("z_range")
+        ]
+    else:
+        return None
+
+    tol = float(ov.get("assembly_tol_mm") or 5.0)
+    interface_tol = float(ov.get("assembly_interface_tol_mm") or 500.0)
+    modules = split_merged_by_modules(
+        merged_model, definitions=definitions, interface_tol_mm=interface_tol,
+    )
+    if len(modules) < 2:
+        return None
+
+    asm_model, reports = assemble_modules(modules, tol_mm=tol, rigid=True)
+    closed = all(bool(r.get("closed")) for r in reports)
+    max_gap = max((float(r.get("max_gap_mm") or 0.0) for r in reports), default=0.0)
+    return {
+        "model": asm_model,
+        "reports": reports,
+        "module_ids": [d["id"] for d in definitions if any(
+            m.name == f"module-{d['id']}" for m in modules)],
+        "mode": "m1_m6_rigid_chain",
+        "tol_mm": tol,
+        "closed": closed,
+        "max_gap_mm": round(max_gap, 3),
     }

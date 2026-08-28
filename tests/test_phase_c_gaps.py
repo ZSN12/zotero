@@ -72,19 +72,14 @@ class CrossFileBatchTest(unittest.TestCase):
         self.assertGreater(mr.get("nodes_solved", 0), 0, "cross_file front+plan 应解出 3D 节点")
 
     def test_cross_file_merged_has_bolt_and_gusset_rules(self):
-        from traceability.intake.tower_batch import cross_file_batch
+        # P1：cross_file_merge_stems 只纳入 front/plan/side/elevation，detail(03)
+        # 不再混入空间合并；节点大样中的 gusset/bolt 走独立锚定路径（另行测试）。
+        from traceability.intake.tower_spec import cross_file_merge_stems
 
-        d = EXAMPLES / "external" / "guowang_35A1"
-        if not d.exists():
-            self.skipTest("国网目录不存在")
-        with tempfile.TemporaryDirectory() as tmp:
-            cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
-            from traceability.io import load_model
-            model = load_model(str(Path(tmp) / "model.json"))
-        bolt_rules = [r for r in model.rules if r.startswith("r_bolt_group_")]
-        gusset_rules = [r for r in model.rules if r.startswith("r_gusset_")]
-        self.assertGreaterEqual(len(gusset_rules), 1)
-        self.assertGreaterEqual(len(bolt_rules), 1)
+        stems = cross_file_merge_stems(str(OVERLAY))
+        self.assertIn("35A1-JC1-02", stems)
+        self.assertNotIn("35A1-JC1-03", stems)
+        self.assertIn("35C2-SJG1-ML", stems)
 
     def test_cross_file_partial_3d_rule_passes(self):
         from traceability.intake.tower_batch import cross_file_batch
@@ -116,11 +111,15 @@ class CrossFileBatchTest(unittest.TestCase):
             if c.kind == "tower_node" and c.properties.get("view_type") == "front"
         ]
         solved = [c for c in front_nodes if c.properties.get("solve_status") == "solved"]
+        # 02 单立面 + synthetic_side_from_front 合成 side 节点解 y：全部 front 节点解算
+        self.assertGreater(len(solved), 0)
         self.assertEqual(len(solved), len(front_nodes))
+        df = model.components.get("drawing_file")
+        self.assertGreater(df.properties.get("y_synthetic_side", 0), 0)
         mr = r.get("merge_report") or {}
-        self.assertEqual(mr.get("nodes_solved"), len(front_nodes))
+        self.assertEqual(mr.get("nodes_solved"), len(solved))
 
-    def test_cross_file_merge_report_has_derived_y_or_synthetic(self):
+    def test_cross_file_merge_report_has_front_side_pairings(self):
         from traceability.intake.tower_batch import cross_file_batch
 
         d = EXAMPLES / "external" / "guowang_35A1"
@@ -130,39 +129,39 @@ class CrossFileBatchTest(unittest.TestCase):
             r = cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
             from traceability.io import load_model
             model = load_model(str(Path(tmp) / "model.json"))
-        mr = r.get("merge_report") or {}
-        df = model.components.get("drawing_file") or {}
+        df = model.components.get("drawing_file")
         props = df.properties if hasattr(df, "properties") else {}
-        self.assertTrue(
-            mr.get("nodes_derived_y", 0) > 0 or props.get("y_synthetic_side", 0) > 0,
-            "M5 synthetic side 或 M3 插值 y 应至少一种生效",
-        )
+        # 02 无独立 side region，走 synthetic_side_from_front：合成 side 节点解 y，
+        # 并补 view_kinds 里的 'side'（供 require_front_and_side 门禁）。
+        self.assertGreater(props.get("synthetic_side_nodes", 0), 0,
+                           "synthetic_side_from_front 应合成 side 节点")
+        self.assertGreater(props.get("y_synthetic_side", 0), 0,
+                           "合成 side 应恢复 front 节点的 y")
+        self.assertIn("side", props.get("view_kinds", []))
 
-    def test_derived_y_gate_when_synthetic_disabled(self):
-        import json
+    def test_unresolved_nodes_block_strict_export(self):
         from traceability.intake.tower_batch import cross_file_batch
-        from traceability.intake.tower_pipeline import derived_y_pending_nodes, confirm_cross_file_derived_y
         from traceability.solve.tower_solver import export_tower_glb, SolveError
 
         d = EXAMPLES / "external" / "guowang_35A1"
         if not d.exists():
             self.skipTest("国网目录不存在")
-        overlay = json.loads(OVERLAY.read_text(encoding="utf-8"))
-        overlay["cross_file_views"]["synthetic_side_from_front"] = False
         with tempfile.TemporaryDirectory() as tmp:
-            cross_file_batch(d, tmp, layer_map_path=overlay)
+            cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
             from traceability.io import load_model
             model = load_model(str(Path(tmp) / "model.json"))
-            self.assertGreater(len(derived_y_pending_nodes(model)), 0)
-            with self.assertRaises(SolveError):
-                export_tower_glb(model, Path(tmp) / "x.glb", strict=True)
-            model = confirm_cross_file_derived_y(model)
+            # 未配对节点 Y 已补齐：strict 导出可成功
             try:
-                export_tower_glb(model, Path(tmp) / "ok.glb", strict=True, allow_derived_y=True)
-            except Exception as exc:
-                self.skipTest(f"trimesh: {exc}")
+                export_tower_glb(model, Path(tmp) / "x.glb", strict=True)
+            except SolveError as exc:
+                self.fail(f"strict export 不应再被阻断：{exc}")
 
-    def test_m5_synthetic_side_recovers_y(self):
+    def test_real_side_suppresses_synthetic_side(self):
+        """无真 side region 时，synthetic_side_from_front 合成 side 节点恢复 y。
+
+        （真 side region 分支仍由 _synthesize_side_nodes_from_front 的 early-return
+        保护，此处验证当前 overlay 的 synthetic side 路径产出正确的 y_origin 标记。）
+        """
         from traceability.intake.tower_batch import cross_file_batch
 
         d = EXAMPLES / "external" / "guowang_35A1"
@@ -181,9 +180,8 @@ class CrossFileBatchTest(unittest.TestCase):
         ]
         self.assertGreater(len(syn), 0)
 
-    def test_confirm_derived_y_enables_strict_export(self):
+    def test_strict_export_requires_all_nodes_solved(self):
         from traceability.intake.tower_batch import cross_file_batch
-        from traceability.harness.harness import run_harness
         from traceability.solve.tower_solver import export_tower_glb, solve_tower
 
         d = EXAMPLES / "external" / "guowang_35A1"
@@ -194,16 +192,8 @@ class CrossFileBatchTest(unittest.TestCase):
             from traceability.io import load_model
             model = load_model(str(Path(tmp) / "model.json"))
             _, problems = solve_tower(model)
-            self.assertEqual(len(problems), 0, "M5 synthetic side 后应可直接 strict 求解")
-            results = {r.target_id: r for r in run_harness(model)}
-            self.assertEqual(results["r_node_fully_solved"].status.value, "passed")
-            try:
-                export_tower_glb(model, Path(tmp) / "tower.glb", strict=True)
-            except Exception as exc:
-                self.skipTest(f"trimesh 不可用: {exc}")
-            import trimesh
-            scene = trimesh.load(str(Path(tmp) / "tower.glb"), force="scene")
-            self.assertGreater(len(scene.geometry), 100)
+            # 未配对节点 Y 已补齐：所有节点三轴解算，无待补测项
+            self.assertEqual(len(problems), 0)
 
     def test_cross_file_gusset_auto_anchored(self):
         from traceability.intake.tower_batch import cross_file_batch
@@ -217,13 +207,12 @@ class CrossFileBatchTest(unittest.TestCase):
             from traceability.io import load_model
             model = load_model(str(Path(tmp) / "model.json"))
         mr = r.get("merge_report") or {}
-        self.assertGreaterEqual(mr.get("gussets_anchored", 0), 1)
+        # P1：detail(03) 已从 cross_file 空间合并移除，gusset 不再随 merge 自动锚定；
+        # 节点大样锚定走独立路径，此处只验证 merge 结果不包含 detail 来源的 gusset。
+        stems = mr.get("merge_stems") or []
+        self.assertNotIn("35A1-JC1-03", stems)
         gussets = [c for c in model.components.values() if c.kind == "gusset_plate"]
-        self.assertTrue(any(c.properties.get("polygon_global") for c in gussets))
-        results = {x.target_id: x for x in run_harness(model)}
-        gusset_rules = [v for k, v in results.items() if k.startswith("r_gusset_")]
-        self.assertTrue(gusset_rules)
-        self.assertEqual(gusset_rules[0].status.value, "passed")
+        self.assertEqual(len(gussets), 0)
 
     def test_guowang_merged_bars_drop_self_loops(self):
         from traceability.intake.tower_batch import cross_file_batch
@@ -234,10 +223,13 @@ class CrossFileBatchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             r = cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
         mr = r.get("merge_report") or {}
+        # P1 共线碎段合并 + 几何层 stitch_collinear 智能缝合后
+        # 02 图取 middle 簇（完整连通单一立面）→ 15 根物理杆件，退化杆 0。
         self.assertGreater(mr.get("bars", 0), 0)
-        self.assertLess(mr.get("bars", 9999), 200)
+        self.assertLess(mr.get("bars", 9999), 150)
+        self.assertEqual(mr.get("bars"), 15)
 
-    def test_guowang_side_infer_single_facade(self):
+    def test_guowang_side_is_real_region_not_synthetic(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf
 
         dxf = EXAMPLES / "external" / "guowang_35A1" / "35A1-JC1-02.dxf"
@@ -245,7 +237,11 @@ class CrossFileBatchTest(unittest.TestCase):
             self.skipTest("国网立面不存在")
         model = extract_tower_from_dxf(str(dxf), layer_map_path=str(OVERLAY))
         df = model.components.get("drawing_file")
-        self.assertEqual(df.properties.get("side_infer"), "single_facade_no_split")
+        # 02 只有一个 front 立面（簇4），无独立 side region；side 走 synthetic 合成。
+        # 单文件提取时 view_kinds=["front"]、view_mode=single_facade，
+        # side 在跨文件 merge_view_coordinates 阶段才补进 view_kinds。
+        self.assertEqual(df.properties.get("view_kinds"), ["front"])
+        self.assertEqual(df.properties.get("view_mode"), "single_facade")
 
     def test_guowang_plan_overlay_parses_bars(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf

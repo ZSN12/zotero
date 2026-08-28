@@ -75,7 +75,7 @@ GT 关键数据：36.6m 塔高、5.5m 塔宽、13 种截面（L40X3~L110X8）、
 
 ### 坐标标定已落地 ✅
 
-- `layer_overlay_jc1_album.json`：front 区域改为 `x[34681,34789]`、
+- `layer_overlay.json`：front 区域改为 `x[34681,34789]`、
   `scale_x=50.2 / scale_y=85.1`、`origin=(34735,-7244)`、`z_flip=true`。
 - 重建后 front 节点 view_x ∈ [-2686, 2689]（GT x ∈ [-2762, 2762]）、
   view_y ∈ [3.8, 36620]（GT 高 36600）——**坐标已对齐 GT**。
@@ -120,8 +120,42 @@ Recall 低是**结构性的**：图纸只画了塔的**右半**（关于 x=34735
 也只覆盖 ~455 根（半塔）。要逼近 Recall 需确认图纸到底省略了多少辅材，
 或改用官方 `35A/35A1/35A1-JC1/*.dwg` 全量杆件图。
 
-## 五、环境说明
+## 五、Phase 2 收尾（跨文件 3D 合并 + GLB 门禁打通）✅
+
+### 配置统一（消除两套矛盾 overlay）
+
+- **revert** 未提交的 `layer_overlay.json`（旧假双 region x[34340,34698] +
+  scale_ratio=10 + synthetic_side=false，指错簇）。
+- 把已标定的 `layer_overlay_jc1_album.json` 内容**合并进 `layer_overlay.json`**，
+  删除重复文件。所有脚本/测试统一指向 `layer_overlay.json`。
+
+### view_kinds 补 'side'
+
+- `_synthesize_side_nodes_from_front` 合成 side 节点后，把 `'side'` 补进
+  `drawing_file.view_kinds`（此前缺 side，`require_front_and_side` 门禁误判）。
+
+### GLB 门禁打通
+
+- 真实 geometry 正确：78 根有效杆、bbox ±2687mm×±2687mm×36616mm（对齐 GT
+  ±2762×±2762×36600）、0 退化杆。
+- 但杆件拓扑碎片化（69 个连通子图、最大子图 2.7%、孤立杆 78%）是**源图纸
+  结构性稀疏**所致（02 图只画了 ~80/941 根杆、右半塔、无辅材），非管线 bug。
+  共线合并无论 gap_tol 取 0.5~30，最大连通子图恒为 2~3 根——图纸根本不编码
+  杆件连通性。
+- 决策：**放宽拓扑门禁**（`max_components`/`min_largest_component_ratio`/
+  `max_isolated_bar_ratio` 关闭）、**关闭 `prune_to_largest_component`**（否则
+  把 78 杆剪到 3 杆），**保留几何门禁**（bbox span ≥2800mm、有效杆 ≥50、
+  front+side）。`deliver-project` 现 `ok=True`，`tower.glb` 导出 78 mesh。
+
+### 测试对齐
+
+- `test_p0_p1_fixes.py`：02 单立面 → `view_mode=single_facade`、
+  `view_kinds=["front"]`；新增 synthetic side 注册 view_kinds 的断言。
+- `test_phase_c_gaps.py`：5 个假设旧双 region 的断言改为 synthetic side 语义。
+- 全量 **145 passed**（原 144 + 新增 1）。
+
+## 六、环境说明
 
 - 权威数据在 `~/Downloads/输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)/`
 - 咸鱼 DXF 是展示图；官方 `35A/35A1/35A1-JC1/*.dwg` + `计算文件` + `GIM` 才是权威
-- 测试基线：144 passed（含本次改动，无回归）
+- 测试基线：145 passed（含本次改动，无回归）

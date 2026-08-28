@@ -171,6 +171,29 @@ def run_project_harness(
             "enable_module_assembly 已开但缺少可装配模块",
         ))
 
+    # Phase 3 验收：r_project_assembly_closed —— M1~M6 拼装接口对齐公差 Δ ≤ 5mm
+    asm = assembly_info or {}
+    if asm.get("model"):
+        reports = asm.get("reports") or []
+        closed = all(bool(r.get("closed")) for r in reports)
+        max_gap = max((float(r.get("max_gap_mm") or 0.0) for r in reports), default=0.0)
+        n_pairs = sum(int(r.get("matched") or 0) for r in reports)
+        if closed and n_pairs > 0:
+            results.append(ProjectValidationResult(
+                "r_project_assembly_closed", ValidationStatus.PASSED,
+                f"{len(reports)} 段拼装接口闭合，最大缝隙 Δ={max_gap:.2f}mm ≤ 5.0mm",
+            ))
+        elif n_pairs > 0:
+            results.append(ProjectValidationResult(
+                "r_project_assembly_closed", ValidationStatus.FAILED,
+                f"拼装接口最大缝隙 Δ={max_gap:.2f}mm > 5.0mm",
+            ))
+        else:
+            results.append(ProjectValidationResult(
+                "r_project_assembly_closed", ValidationStatus.PENDING,
+                "装配已启用但未匹配接口节点",
+            ))
+
     summary = _summarize(results)
     summary["modules"] = project.modules
     summary["sheet_count"] = len(project.sheets)

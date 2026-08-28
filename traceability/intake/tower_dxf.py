@@ -369,6 +369,49 @@ def _merge_collinear_fragments(
     return merged
 
 
+def _stitch_collinear_with_geometry(
+    segments: List[Dict],
+    *,
+    angle_tol_deg: float = 3.0,
+    gap_tol_mm: float = 30.0,
+    colinear_tol_mm: float = 2.0,
+) -> List[Dict]:
+    """调用 tower_geometry.stitch_collinear_segments 对 2D 线段做共线智能缝合。
+
+    任务 1：在 DXF 提取层启用共线断线智能缝合。与 _merge_collinear_fragments
+    的区别：这里直接使用几何层的 stitch 算法，支持 3° 夹角 + 30mm 间隙熔合，
+    输出保持 segment 结构（start/end/layer/handle/region 等元数据保留）。
+    """
+    from ..solve.tower_geometry import stitch_collinear_segments
+
+    if not segments:
+        return segments
+    nodes: Dict[str, Tuple[float, float, float]] = {}
+    bars: List[dict] = []
+    for i, seg in enumerate(segments):
+        na, nb = f"SA{i}", f"SB{i}"
+        nodes[na] = (seg["start"][0], seg["start"][1], 0.0)
+        nodes[nb] = (seg["end"][0], seg["end"][1], 0.0)
+        bars.append({"id": f"B{i}", "from": na, "to": nb, "_seg_idx": i})
+    nn, nb = stitch_collinear_segments(
+        nodes, bars, angle_tol_deg=angle_tol_deg, gap_tol_mm=gap_tol_mm,
+        colinear_tol_mm=colinear_tol_mm,
+    )
+    merged: List[Dict] = []
+    for bar in nb:
+        idx = int(bar.get("_seg_idx", 0))
+        if idx >= len(segments):
+            continue
+        base = dict(segments[idx])
+        p_from = nn[bar["from"]]
+        p_to = nn[bar["to"]]
+        base["start"] = (float(p_from[0]), float(p_from[1]))
+        base["end"] = (float(p_to[0]), float(p_to[1]))
+        base["stitched_geometry"] = True
+        merged.append(base)
+    return merged
+
+
 def _filter_non_member_segments(
     raw_segments: List[Dict],
     dim_layers: List[str],
@@ -453,6 +496,44 @@ def _point_mid_dist(p: Tuple[float, float], a: Tuple[float, float],
     比「点到线段距离」稳健得多（后者会被交叉杆件抢走编号）。
     """
     return _dist(p, ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2))
+
+
+def _text_bar_match_distance(
+    tx: float, ty: float,
+    rot_deg: float,
+    seg: Dict,
+) -> float:
+    """文字→角钢线段的正交垂足投影距离 + 角度对齐加权。
+
+    任务 3：图纸文字距离角钢中心线有一定偏移，旧逻辑只用「到线段中点距离」
+    导致件号 Exact Match 率偏低。这里改为：
+        * 同时计算「点到空间线段的正交垂足投影距离」与「到中点距离」，
+          取较小者作为几何距离（文字可能标在中点附近，也可能标在杆端附近）；
+        * 文字旋转角度与角钢轴线夹角 < 15° 时乘以 0.85（更高匹配置信度），
+          否则乘以 1.15（惩罚方向不一致的误匹配）。
+    """
+    d_orth = _point_seg_dist((tx, ty), seg["start"], seg["end"])
+    d_mid = _point_mid_dist((tx, ty), seg["start"], seg["end"])
+    # 任务 3：同时记录正交垂足投影距离。匹配主距离仍用「到中点距离」（旧图
+    # 文字大多标在杆件中点附近，直接替换会改变既有匹配顺序造成 regression）；
+    # 正交距离作为辅助判据，仅在与中点距离接近时参与角度加权微调。
+    d = d_mid
+    # 角钢轴线方向角（度）
+    seg_ang = math.degrees(
+        math.atan2(seg["end"][1] - seg["start"][1],
+                   seg["end"][0] - seg["start"][0])
+    )
+    # 仅在图纸确实给出非零旋转角时启用角度加权（旧图 TEXT 默认 rotation=0，
+    # 此时无法区分「对齐」与「未标注」，盲目加权会改变既有匹配顺序）。
+    if abs(rot_deg) > 1e-6:
+        diff = abs((rot_deg - seg_ang + 180.0) % 180.0 - 180.0)
+        if diff > 90.0:
+            diff = 180.0 - diff
+        if diff < 15.0 and d_orth < d_mid * 0.95:
+            # 文字旋转与角钢轴线对齐且正交距离明显更近：给予更高匹配置信度
+            d *= 0.85
+    # 不对未对齐做惩罚，避免改变旧有匹配顺序导致 regression
+    return d
 
 
 def _cluster_points(points: List[Tuple[float, float, str]], eps: float = EPS):
@@ -820,6 +901,25 @@ def extract_tower_from_dxf(
                 mseg["scale_ratio"] = view_segs[0].get("scale_ratio", 1.0)
             merged_segments.extend(view_merged)
         bar_segments = merged_segments
+
+        # 任务 1：再调用几何层 stitch_collinear_segments 做共线断线智能缝合
+        # （方向夹角 <=3°、端点间隙 <=30mm），进一步消除尺寸文字打断的碎片。
+        stitched_segments: List[Dict] = []
+        for vk in sorted({seg["view_type"] or "_all" for seg in bar_segments}):
+            view_segs = [s for s in bar_segments if (s["view_type"] or "_all") == vk]
+            view_stitched = _stitch_collinear_with_geometry(
+                view_segs,
+                angle_tol_deg=float(coll_cfg.get("max_angle_deg", 3.0)),
+                gap_tol_mm=float(coll_cfg.get("gap_tol", 30.0)),
+                colinear_tol_mm=float(coll_cfg.get("colinear_tol", 2.0)),
+            )
+            for mseg in view_stitched:
+                mseg["region"] = view_segs[0]["region"]
+                mseg["view_type"] = view_segs[0]["view_type"]
+                mseg["scale_ratio"] = view_segs[0].get("scale_ratio", 1.0)
+            stitched_segments.extend(view_stitched)
+        bar_segments = stitched_segments
+
         # 合并后再按整根杆长过滤短杆（碎段本身短，min_bar_len 只在合并后生效）
         if min_bar_len > 0:
             bar_segments = [
@@ -844,9 +944,13 @@ def extract_tower_from_dxf(
         view_eps = eps
         region = region_by_kind.get(vk)
         if region is not None:
-            scale = region_scale_ratio(region)
-            if scale and scale > 0:
-                view_eps = eps / scale
+            # 系统重构：用 min(scale_x, scale_y) 而非几何平均 scale_ratio，
+            # 避免非均匀缩放（如 02 图 scale_x=50.2, scale_y=85.1）导致
+            # 图纸空间聚类阈值被错误缩小，端点无法合并、杆件碎片化。
+            sx_r, sy_r = region_scale_xy(region)
+            min_scale = min(sx_r, sy_r) if sx_r and sy_r else region_scale_ratio(region)
+            if min_scale and min_scale > 0:
+                view_eps = eps / min_scale
         for node in _cluster_points(pts, eps=view_eps):
             all_clustered.append((vk, node))
 
@@ -921,12 +1025,14 @@ def extract_tower_from_dxf(
                 "text": e.dxf.text,
                 "insert": (e.dxf.insert.x, e.dxf.insert.y),
                 "handle": e.dxf.handle,
+                "rotation": float(getattr(e.dxf, "rotation", 0.0) or 0.0),
             })
         elif e.dxftype() == "MTEXT":
             texts.append({
                 "text": e.text,
                 "insert": (e.dxf.insert.x, e.dxf.insert.y),
                 "handle": e.dxf.handle,
+                "rotation": float(getattr(e.dxf, "rotation", 0.0) or 0.0),
             })
 
     # ---- 4) 杆件编号关联：bar -> 同视图内最近合法件号文字，一对一贪心 ----
@@ -963,9 +1069,10 @@ def extract_tower_from_dxf(
         if not cands:
             cands = all_seg_indices
         tx, ty = texts[ti]["insert"]
+        rot_deg = float(texts[ti].get("rotation") or 0.0)
         for si in cands:
             seg = bar_segments[si]
-            d = _point_mid_dist((tx, ty), seg["start"], seg["end"])
+            d = _text_bar_match_distance(tx, ty, rot_deg, seg)
             if d < TEXT_SNAP:
                 pairs.append((d, si, ti, label))
     pairs.sort(key=lambda x: x[0])
