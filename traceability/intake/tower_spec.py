@@ -281,10 +281,21 @@ def cluster_eps_mm(
 
 
 def region_scale_ratio(region: Optional[dict]) -> float:
-    """视图区域比例：scale_ratio=10 表示图纸 1:10（真实尺寸 = 图面 × 10）。"""
+    """视图区域比例：scale_ratio=10 表示图纸 1:10（真实尺寸 = 图面 × 10）。
+
+    国网立面图横向/竖向比例不同（scale_x ≠ scale_y），无单一 scale_ratio 时
+    回退到 scale_x/scale_y 的几何平均作为各向同性代理（供 min_bar_len / eps
+    换算用；精确分轴比例见 region_scale_xy）。
+    """
     if not region:
         return 1.0
-    return float(region.get("scale_ratio", 1.0))
+    if "scale_ratio" in region:
+        return float(region["scale_ratio"])
+    sx = region.get("scale_x")
+    sy = region.get("scale_y")
+    if sx is not None and sy is not None:
+        return (float(sx) * float(sy)) ** 0.5
+    return 1.0
 
 
 def region_scale_xy(region: Optional[dict]) -> Tuple[float, float]:
@@ -323,6 +334,30 @@ def double_line_merge_config(
     """
     spec = load_tower_spec(overlay)
     cfg = spec.get("double_line_merge") or {}
+    if not isinstance(cfg, dict):
+        return None
+    v = cfg.get(stem)
+    return dict(v) if isinstance(v, dict) and v else None
+
+
+def collinear_merge_config(
+    stem: str,
+    overlay: Optional[str | Path | dict] = None,
+) -> Optional[dict]:
+    """按 stem 读取共线碎段合并配置（国网图把一根角钢画成多个短碎段）。
+
+    overlay 中可配置：
+        collinear_merge: {
+            "<stem>": {
+                "colinear_tol": 2.0,   # 点到主轴直线的垂直距离上限（图纸单位）
+                "gap_tol": 30.0,       # 端点沿主轴投影间距上限（图纸单位）
+                "max_angle_deg": 8.0,  # 方向角差上限（含 pi 翻转）
+            }
+        }
+    返回 None 表示该 stem 不启用共线合并（保持旧行为）。
+    """
+    spec = load_tower_spec(overlay)
+    cfg = spec.get("collinear_merge") or {}
     if not isinstance(cfg, dict):
         return None
     v = cfg.get(stem)

@@ -34,6 +34,7 @@ from .tower_spec import (
     region_scale_ratio,
     region_scale_xy,
     double_line_merge_config,
+    collinear_merge_config,
 )
 
 from ..model import (
@@ -638,6 +639,7 @@ def extract_tower_from_dxf(
     bar_id_re = _compile_bar_id_re(bar_id_patterns(DEFAULT_BAR_ID_PATTERNS, overlay=layer_map_path))
     regions = view_regions(stem, overlay=layer_map_path)
     min_bar_len = min_bar_length_mm(stem, overlay=layer_map_path)
+    coll_cfg = collinear_merge_config(stem, overlay=layer_map_path)
     if eps == EPS:
         eps = cluster_eps_mm(stem, overlay=layer_map_path)
 
@@ -736,9 +738,12 @@ def extract_tower_from_dxf(
             if not _region_axes(region):
                 continue
             scale = region_scale_ratio(region)
-            length_mm = _dist(seg["start"], seg["end"]) * scale
-            if min_bar_len > 0 and length_mm < min_bar_len:
-                continue
+            # P1 共线合并时，碎段本身短（1~3 单位），min_bar_len 会误杀；
+            # 改在合并之后、按整根杆长再过滤（见下方 1.5 步）。
+            if not coll_cfg:
+                length_mm = _dist(seg["start"], seg["end"]) * scale
+                if min_bar_len > 0 and length_mm < min_bar_len:
+                    continue
             seg["region"] = region
             seg["view_type"] = _region_kind(region)
             seg["scale_ratio"] = scale
@@ -765,9 +770,10 @@ def extract_tower_from_dxf(
                 if not _region_axes(region):
                     continue
                 scale = region_scale_ratio(region)
-                length_mm = _dist(seg["start"], seg["end"]) * scale
-                if min_bar_len > 0 and length_mm < min_bar_len:
-                    continue
+                if not coll_cfg:
+                    length_mm = _dist(seg["start"], seg["end"]) * scale
+                    if min_bar_len > 0 and length_mm < min_bar_len:
+                        continue
                 seg["region"] = region
                 seg["view_type"] = _region_kind(region)
                 seg["scale_ratio"] = scale
@@ -793,6 +799,33 @@ def extract_tower_from_dxf(
                 seg["view_type"] = "drawing"
                 seg["scale_ratio"] = 1.0
                 bar_segments.append(seg)
+
+    # ---- 1.5) P1 共线碎段合并：把「同一物理杆件被拆成多个短段」拼成整根 ----
+    # 必须在 region 赋值之后、节点聚类之前做：合并依据是图纸坐标下的同向共线
+    # + 端点相邻，而节点聚类需要整根杆的两端端点（否则碎片端点被当成节点）。
+    # 按 view_type 分组，各自独立合并（不同视图在图纸上空间分离，绝不跨视图拼）。
+    if coll_cfg and bar_segments:
+        merged_segments: List[Dict] = []
+        for vk in sorted({seg["view_type"] or "_all" for seg in bar_segments}):
+            view_segs = [s for s in bar_segments if (s["view_type"] or "_all") == vk]
+            view_merged = _merge_collinear_fragments(
+                view_segs,
+                colinear_tol=float(coll_cfg.get("colinear_tol", 2.0)),
+                gap_tol=float(coll_cfg.get("gap_tol", 30.0)),
+            )
+            # 合并后段保留视图元数据（region/view_type/scale_ratio 取链首段）
+            for mseg in view_merged:
+                mseg["region"] = view_segs[0]["region"]
+                mseg["view_type"] = view_segs[0]["view_type"]
+                mseg["scale_ratio"] = view_segs[0].get("scale_ratio", 1.0)
+            merged_segments.extend(view_merged)
+        bar_segments = merged_segments
+        # 合并后再按整根杆长过滤短杆（碎段本身短，min_bar_len 只在合并后生效）
+        if min_bar_len > 0:
+            bar_segments = [
+                s for s in bar_segments
+                if _dist(s["start"], s["end"]) * (s.get("scale_ratio") or 1.0) >= min_bar_len
+            ]
 
     # ---- 2) 节点：按视图区域各自聚类（视图在图纸上空间分离）----
     # 聚类阈值 eps 是「真实 mm」；而端点坐标是图纸单位。有 scale_ratio 的视图

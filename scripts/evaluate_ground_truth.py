@@ -32,11 +32,14 @@ def load_model(model_path: Path) -> dict:
 
 
 def gt_bars_2d(gt: dict, view: str) -> list:
-    """把 GT 的 3D 杆件投影到 2D（front: (x,z)，side: (y,z)）。
+    """把 GT 的 3D 杆件投影到 2D（front: (x,z)，side: (y,z)），并去重。
 
     返回 [(x1,z1,x2,z2,bar_id,section), ...]，坐标 mm。
+    GT 是 3D 物理杆件，对称杆件投影到同一 2D 线段；这里按「端点排序后
+    四舍五入」去重，避免同一条线被算成多根 GT 杆件，歪曲 Precision/Recall。
     """
     nodes = gt["nodes"]
+    seen: set = set()
     bars = []
     for b in gt["bars"]:
         f = nodes.get(b["from"])
@@ -51,14 +54,21 @@ def gt_bars_2d(gt: dict, view: str) -> list:
             x2, z2 = t[1], t[2]
         else:
             raise ValueError(f"未知视图 {view}")
+        # 端点排序 + 取整去重（对称杆件投影重叠）
+        if (x1, z1) > (x2, z2):
+            x1, z1, x2, z2 = x2, z2, x1, z1
+        key = (round(x1), round(z1), round(x2), round(z2))
+        if key in seen:
+            continue
+        seen.add(key)
         bars.append((x1, z1, x2, z2, b["id"], b.get("section", "")))
     return bars
 
 
-def model_bars_2d(model: dict) -> list:
-    """管线输出的杆件 2D 坐标（x_px/y_px 或 view_x/view_y）。
+def model_bars_2d(model: dict, view: Optional[str] = None) -> list:
+    """管线输出的杆件 2D 坐标（view_x/view_y 已标定 mm，否则回退 x/y）。
 
-    优先用 view_x/view_y（已标定 mm），否则 x_px/y_px。
+    view 非 None 时只取该 view_type 的杆件（front 评测不混入 side 杆件）。
     """
     comps = model.get("components", {})
     nodes = {cid: c for cid, c in comps.items() if c.get("kind") == "tower_node"}
@@ -67,6 +77,8 @@ def model_bars_2d(model: dict) -> list:
         if c.get("kind") != "tower_bar":
             continue
         p = c.get("properties", {})
+        if view is not None and p.get("view_type") not in (view, None):
+            continue
         f = p.get("from_node")
         t = p.get("to_node")
         nf = nodes.get(f) if f else None
@@ -137,7 +149,7 @@ def main():
     model = load_model(args.model)
 
     gt_bars = gt_bars_2d(gt, args.view)
-    model_bars = model_bars_2d(model)
+    model_bars = model_bars_2d(model, view=args.view)
 
     if not model_bars:
         print("⚠ 管线输出无可用杆件坐标（view_x/view_y 缺失）")
