@@ -90,15 +90,41 @@ def filter_to_single_tower(nodes, segments, keep_ids: set[int]):
     return nodes, segments
 
 
-def merge_segments(segments):
-    """把「端点相接 + 截面/材质相同」的分段合并回物理杆件。
+def merge_segments(segments, pos: dict[int, list] | None = None):
+    """把「端点相接 + 截面/材质相同 + 共线 + 无侧枝」的分段合并回物理杆件。
 
     返回 bars：[{id, from, to, section, material, segments}]。
     from/to 是合并后链的首尾节点 id；segments 是参与合并的原始段数。
+
+    关节保护（保证拓扑可信）：
+        * 铁塔格构在几乎每个面板节点都有斜材/横隔汇交（度>2），不能按「度==2」
+          判断通长；更不能把所有相接段硬链成一根（会把两根不同杆斜穿成一根，
+          或让横向连接悬空断链）。
+        * 只有当中间节点 B 是「安全通长点」——在原始分段图中度恰好为 2（只有
+          当前链的两段经过，无侧枝汇交）——且两段方向共线时才合并。
+        * 度 > 2 的节点是真实节点（有斜材/横隔连接），在此断杆。
     """
-    by_from: dict[int, list] = defaultdict(list)
+    import math
+
+    if pos is not None:
+        def _collinear(a, b, c):
+            pa, pb, pc = pos[a], pos[b], pos[c]
+            v = (pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2])
+            w = (pc[0] - pb[0], pc[1] - pb[1], pc[2] - pb[2])
+            nv = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+            nw = math.sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2])
+            if nv < 1e-9 or nw < 1e-9:
+                return False
+            return (v[0] * w[0] + v[1] * w[1] + v[2] * w[2]) / (nv * nw) > 0.999
+    else:
+        def _collinear(a, b, c):
+            return False
+
+    # 原始分段图中每个节点的度（用于判断「安全通长点」）
+    degree: dict[int, int] = defaultdict(int)
     for s in segments:
-        by_from[s[0]].append(s)
+        degree[s[0]] += 1
+        degree[s[1]] += 1
 
     used: set[int] = set()
     bars = []
@@ -107,14 +133,17 @@ def merge_segments(segments):
             continue
         chain = [s]
         used.add(i)
-        # 向后延伸：找「以当前尾节点为起点、截面/材质相同」的段
+        # 向后延伸：仅当中间节点为安全通长点（度==2）且共线时才链
         cur = s
         while True:
+            if degree.get(cur[1], 0) != 2:
+                break
             nxt = None
             for j, cand in enumerate(segments):
                 if j in used:
                     continue
-                if cand[0] == cur[1] and cand[2] == s[2] and cand[3] == s[3]:
+                if (cand[0] == cur[1] and cand[2] == s[2] and cand[3] == s[3]
+                        and _collinear(cur[0], cur[1], cand[1])):
                     nxt = j
                     break
             if nxt is None:
@@ -152,7 +181,7 @@ def build(mod_path: Path, out_path: Path, node_file: Path | None = None) -> dict
         keep = parse_node_file(node_file)
         nodes, segments = filter_to_single_tower(nodes, segments, keep)
         single_tower = True
-    bars = merge_segments(segments)
+    bars = merge_segments(segments, pos=nodes)
     nodes, dropped_nodes = drop_orphan_nodes(nodes, bars)
     name = "35A1-JC1 国网官方计算模型 (GIM .mod)"
     if single_tower:

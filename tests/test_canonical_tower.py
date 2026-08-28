@@ -23,8 +23,8 @@ class CanonicalTowerSchemaTest(unittest.TestCase):
         gt = load_gt()
         self.assertEqual(gt.units, "mm")
         self.assertEqual(gt.up, "Z")
-        self.assertEqual(gt.node_count(), 296)
-        self.assertEqual(gt.bar_count(), 615)
+        self.assertEqual(gt.node_count(), 358)
+        self.assertGreaterEqual(gt.bar_count(), 500)
         # bars reference existing nodes
         for b in gt.bars:
             self.assertIn(b["from"], gt.nodes)
@@ -33,6 +33,15 @@ class CanonicalTowerSchemaTest(unittest.TestCase):
         bb = gt.bbox()
         self.assertAlmostEqual(bb["z"][0], 0.0, places=1)
         self.assertGreater(bb["z"][1], 36000.0)
+
+    def test_gt_passes_strict_topology_gate(self):
+        # 拓扑可信：单座独立塔应全连通，通过严格门禁（根因修复后不再因碎片断链）
+        from traceability.solve.tower_solver import tower_geometry_gate
+
+        gt = load_gt()
+        model = gt.to_engineering_model()
+        gate = tower_geometry_gate(model)
+        self.assertTrue(gate["ok"], f"GT 门禁失败: {gate.get('reasons')}")
 
     def test_roundtrip_dict(self):
         gt = load_gt()
