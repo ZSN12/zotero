@@ -1,32 +1,48 @@
 # P0/P1 进展报告：Ground Truth 建立 + 物理杆件重建
 
 > 更新日期：本次会话。目标：把「自验证 100% 贴号」换成「权威 GT 驱动的真实 Precision/Recall」。
+> **架构已重构为 L0/L1/L2（见文末）**：完整铁塔 3D 只来自 L0 CanonicalTower（GIM），DXF 只做 L1 图纸索引。
 
 ## 一、已完成（已提交推送）
 
-### P0 — 权威 Ground Truth ✅（commit `2deb51e`）
+### L0 CanonicalTower — 权威几何（唯一 3D 真值）✅（commit `df3ce0a` / `e6adb9d`）
 
-**数据源（非手标、非 BOM）：国网官方资料包的 GIM 解析成果 `.mod` + 计算文件。**
+**数据源（非手标、非 BOM）：国网官方资料包的 GIM 解析成果 `.mod` + 计算文件 `.NODE`。**
+完整铁塔 3D 以 GIM 为唯一来源，不再从 DXF 施工图「发明」3D。
 
 | 文件 | 内容 |
 |---|---|
-| `scripts/build_ground_truth.py` | `.mod` → GT JSON 转换器 |
-| `examples/gt/35A1-JC1_ground_truth.json` | **2069 物理杆件 + 1707 节点**（mm 坐标） |
-| `scripts/evaluate_ground_truth.py` | Precision/Recall/ExactMatch 评测 |
+| `traceability/solve/canonical_tower.py` | L0 权威几何：`{nodes, bars, units:mm, up:Z}` schema；从 `.mod`/`.NODE` 加载；只走正确渲染路径导出 GLB/线框 OBJ |
+| `scripts/build_ground_truth.py` | `.mod` + 计算 `.NODE` → 单座标准 30m 呼高独立塔 GT（剔除 8 塔重叠） |
+| `examples/gt/35A1-JC1_ground_truth.json` | **1071 物理杆段 + 358 节点**（mm 坐标），**单连通子图、严格门禁通过** |
+| `scripts/evaluate_ground_truth.py` | front 投影 Precision/Recall（L1 配准可量化，不作为完整塔 3D 门禁） |
 
-GT 关键数据：36.6m 塔高、5.5m 塔宽、13 种截面（L40X3~L110X8）、材质 Q345/Q235。
-`.mod` 的 3473 根杆段按「端点相接+同截面+同材质」合并成 2069 根物理杆件。
+GT 关键数据：36.6m 塔高、5.5m 塔宽、z∈[0,36600]mm。标准 30m 呼高组合（Body2+Leg8），
+从 `.mod` 原始 2069 根（8 塔重叠的"鸟巢"）提纯为单座独立塔 1071 根，**全连通**。
 
-**评测结果（当前基线）：Precision 0% / Recall 0%** —— 诚实暴露了管线输出（71 根碎段）
-与 GT（2069 根物理杆件）的巨大差距，取代了之前虚假的「158 根 100% 贴号」。
+### GLB 实体化根因修复 ✅（commit `df3ce0a`）
+
+- **`_align_matrix` 变换矩阵写反**：世界基向量被塞进矩阵【行】，而 trimesh 按【列】
+  当基向量用，导致杆轴（局部 Z）不对准 from→to。改为 `column_stack([x,y,z])`。
+- **`_angle_steel_mesh` 网格原点在杆一端**：截面沿局部 Z 从 0 拉到 length，平移却对准
+  中点 → 每根杆再偏移半杆长。改为局部 [-L/2,+L/2] 居中，杆两端精确落节点（偏差 0.000mm）。
+- **`classify_members` 倾角符号漏判**：`_inclination_deg` 带符号，自上而下的腿倾角为负，
+  用 `abs(incl)` 后主腿不再漏判。
+
+**验收：GT 完整塔肉眼是塔（四棱台格构），节点处杆端汇交；`gt_reference.glb` 正确导出。**
+
+### DXF 施工图 — L1 DrawingIndex（图纸索引，只做 2D）✅（commit `df3ce0a`）
+
+DXF 只产出：视图 region、图层角色、文字/尺寸、BOM 件号；**不作为完整塔 3D 来源**。
+其「合成 side / 四面展开 / 门禁放宽」属启发式，仅在无 GIM 时（Phase 4）才作为独立产品线。
 
 ### P1 — 图元分类 + 分轴比例 + 配准工具 ✅
 
 | 文件 | 内容 |
 |---|---|
-| `tower_dxf.py::_filter_non_member_segments` | 尺寸线/图框线剔除（bar_layers 优先，避免数字图层重叠误杀） |
-| `tower_spec.py::region_scale_xy` | 分轴比例 scale_x/scale_z（国网立面横向/竖向比例不同） |
-| `scripts/calibrate_view.py` | GT 反投影自动标定视图 scale/origin（commit `3ac8295`） |
+| `tower_dxf.py::_filter_non_member_segments` | 尺寸线/图框线剔除（bar_layers 优先） |
+| `tower_spec.py::region_scale_xy` | 分轴比例 scale_x/scale_z |
+| `scripts/calibrate_view.py` | GT 反投影自动标定视图 scale/origin |
 
 ## 二、关键发现（坐标对齐，P1 核心难点）
 
@@ -134,28 +150,22 @@ Recall 低是**结构性的**：图纸只画了塔的**右半**（关于 x=34735
 - `_synthesize_side_nodes_from_front` 合成 side 节点后，把 `'side'` 补进
   `drawing_file.view_kinds`（此前缺 side，`require_front_and_side` 门禁误判）。
 
-### GLB 门禁打通
+### GLB 门禁（现行，L0 架构）
 
-- 真实 geometry 正确：78 根有效杆、bbox ±2687mm×±2687mm×36616mm（对齐 GT
-  ±2762×±2762×36600）、0 退化杆。
-- 但杆件拓扑碎片化（69 个连通子图、最大子图 2.7%、孤立杆 78%）是**源图纸
-  结构性稀疏**所致（02 图只画了 ~80/941 根杆、右半塔、无辅材），非管线 bug。
-  共线合并无论 gap_tol 取 0.5~30，最大连通子图恒为 2~3 根——图纸根本不编码
-  杆件连通性。
-- 决策：**放宽拓扑门禁**（`max_components`/`min_largest_component_ratio`/
-  `max_isolated_bar_ratio` 关闭）、**关闭 `prune_to_largest_component`**（否则
-  把 78 杆剪到 3 杆），**保留几何门禁**（bbox span ≥2800mm、有效杆 ≥50、
-  front+side）。`deliver-project` 现 `ok=True`，`tower.glb` 导出 78 mesh。
+- **完整塔以 L0 CanonicalTower（GIM）为准，DXF 只做 L1 图纸索引**。
+- GT（标准 30m 呼高单塔）：**单连通子图（100%）、严格门禁通过**；杆端-节点偏差 0.000mm。
+- DXF 管线输出（02 图右半塔碎片）**不放松门禁去换取 `ok=True`**；门禁如实失败，
+  `deliver ok: False`，因为 02 图本身只编码了 ~61 根杆、右半塔、无辅材，不足以组成完整塔。
+- `tower.glb` 只作为图纸索引/溯源产物，不是完整塔交付。
 
 ### 测试对齐
 
-- `test_p0_p1_fixes.py`：02 单立面 → `view_mode=single_facade`、
-  `view_kinds=["front"]`；新增 synthetic side 注册 view_kinds 的断言。
-- `test_phase_c_gaps.py`：5 个假设旧双 region 的断言改为 synthetic side 语义。
-- 全量 **145 passed**（原 144 + 新增 1）。
+- `test_canonical_tower.py`：L0 schema、导出、**GT 通过严格门禁** 断言。
+- `test_tower_geometry.py`：`_align_matrix` 杆轴映射 + 杆端落节点 <1mm 回归。
+- 全量 **172 passed**。
 
 ## 六、环境说明
 
 - 权威数据在 `~/Downloads/输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)/`
 - 咸鱼 DXF 是展示图；官方 `35A/35A1/35A1-JC1/*.dwg` + `计算文件` + `GIM` 才是权威
-- 测试基线：145 passed（含本次改动，无回归）
+- 测试基线：172 passed（含本次改动，无回归）
