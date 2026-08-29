@@ -105,5 +105,9 @@ recall 数字都只能标注为「旧模型 + 新评测引擎」的对照值。
 2. 阶段 2 实际召回修复（crop 覆盖、重叠去重、短杆/斜材）——诊断工具已就位，
    修复未开始。
 3. blind_test 集：引入独立塔型（如 35C2-SJG1）并单独标注 GT 后启用。
-4. `reconstructed` 语义在求解器层的显式标记（当前通过 mirrored + generated_4face
-   兼容判定，闭合边/拼接续接尚未显式打 `reconstructed` 标签）。
+
+> 注：原待办 #4「reconstructed 在求解器层的显式标记」经核查已撤销——DXF 提取
+> 层的共线缝合（stitch_collinear_segments）与斜材吸附（snap_diagonals_to_legs）
+> 发生在 intake 层，产出仍是「直接识别」的 recognized 杆件（非「识别→求解」）；
+> 真正的确定性重建是四面镜像展开（mirrored）。因此 `reconstructed` 语义已由
+> `mirrored` 证据状态完整覆盖，无需额外标签。
