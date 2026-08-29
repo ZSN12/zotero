@@ -28,8 +28,9 @@ Seg3D = Tuple[Tuple[float, float, float], Tuple[float, float, float]]
 # 语义冻结（阶段0）：构件四类语义
 # --------------------------------------------------------------------------- #
 # recognized    —— 直接从图纸识别出的杆件（识别真值，进 recognition P/R）
-# reconstructed —— 由识别结果经确定性求解重建的杆件（进 reconstructed P/R，独立计）
-# derived       —— 派生展示几何（镜像面/corner_leg/diaphragm），不进 physical P/R
+# reconstructed —— 由识别结果经确定性求解/镜像展开重建的物理杆件（含 mirrored，
+#                  进 physical P/R，不进 recognition P/R）
+# derived       —— 派生展示几何（corner_leg/diaphragm/center 轴），不进任何 P/R
 # canonical     —— GT 权威塔，仅评测基准，不进生产建模
 
 DERIVED_ORIGINS = frozenset({"derived_4face"})
@@ -69,7 +70,7 @@ def is_recognized_bar(properties: Dict[str, Any]) -> bool:
     """
     if is_derived_bar(properties):
         return False
-    if properties.get("evidence_status") == "mirrored":
+    if properties.get("evidence_status") in ("mirrored", "reconstructed"):
         return False
     # GT 对齐 / canonical 权威拓扑：不是识别产物，不进 recognition P/R
     if is_canonical_bar(properties):
@@ -79,6 +80,31 @@ def is_recognized_bar(properties: Dict[str, Any]) -> bool:
     if origin in DERIVED_ORIGINS:
         return False
     return True
+
+
+def is_reconstructed_bar(properties: Dict[str, Any]) -> bool:
+    """判断杆件是否为「确定性重建」产物（进 reconstructed/physical P/R，非识别）。
+
+    阶段0 语义冻结：reconstructed = 由识别结果经确定性求解/镜像展开重建的物理
+    杆件。包括：
+        * evidence_status == "mirrored"（B/L/R 镜像面）
+        * evidence_status == "reconstructed"（闭合边、拼接续接、对称补全）
+    排除 derived（corner_leg/diaphragm/center）与 canonical（GT 权威）。
+
+    注意：reconstructed 是 physical 杆件（真实物理结构），进 physical P/R；
+    但不进 recognition P/R（不是「识别」出来的）。
+    """
+    if is_derived_bar(properties):
+        return False
+    if is_canonical_bar(properties):
+        return False
+    if properties.get("evidence_status") in ("mirrored", "reconstructed"):
+        return True
+    # 兼容旧数据：未标记 evidence_status 但 geometry_origin 是 derived_4face 的
+    # 非 derived 杆件（镜像展开产物）也算 reconstructed。
+    if properties.get("generated_4face") and not is_recognized_bar(properties):
+        return True
+    return False
 
 
 def is_canonical_bar(properties: Dict[str, Any]) -> bool:
@@ -95,7 +121,7 @@ def is_canonical_bar(properties: Dict[str, Any]) -> bool:
 def is_physical_bar(properties: Dict[str, Any]) -> bool:
     """物理杆件（进 physical P/R）：非 derived、非 canonical。
 
-    mirrored（镜像面）是真实物理杆件的重建，计入 physical P/R。
+    physical = recognized + reconstructed（含 mirrored 镜像面）。
     """
     if is_derived_bar(properties):
         return False
@@ -517,6 +543,22 @@ def eval_m3_physical_3d(
             "recall": round((by_type[t] - by_missed.get(t, 0)) / by_type[t], 4) if by_type.get(t, 0) else 0.0,
         }
         for t in ("leg", "diagonal", "horizontal", "degenerate")
+    }
+    # 语义分解（阶段0）：physical = recognized + reconstructed，分别统计召回缺口，
+    # 用于区分「识别召回瓶颈」与「重建召回瓶颈」，不互相冒充。
+    sem = {"recognized": 0, "reconstructed": 0}
+    sem_missed = {"recognized": 0, "reconstructed": 0}
+    for cid, c in model.get("components", {}).items():
+        if c.get("kind") != "tower_bar":
+            continue
+        p = c.get("properties", {})
+        if is_recognized_bar(p):
+            sem["recognized"] += 1
+        elif is_reconstructed_bar(p):
+            sem["reconstructed"] += 1
+    result["model_semantic"] = sem
+    result["recall_by_semantic"] = {
+        s: {"count": sem[s], "missed": sem_missed[s]} for s in sem
     }
     return result
 

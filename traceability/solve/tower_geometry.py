@@ -30,39 +30,16 @@ Vec3 = Tuple[float, float, float]
 NodeMap = Dict[str, Vec3]
 
 
+# GT 剖面拟合函数已移入 debug/gt_profile.py（阶段 0.2 GT 隔离）。
+# 保留向后兼容的 re-export，但生产建模路径严禁调用这些 GT 数值。
 def gt_tower_half_width(z: float) -> float:
-    """35A1-JC1 30m 铁塔的权威塔身主腿半宽（真实 mm），由 GT 剖面拟合。
-
-    塔身（含塔头主腿）是规则四棱台，截面半宽只随标高线性收窄：
-        - 塔身 z ∈ [0, 29000]：2649 - 0.0687*z（塔脚 2649 → 塔身顶 656）
-        - 塔头主腿 z ∈ [30000, 36600]：662 - 0.0687*(z-30000)（延续收窄到 200）
-    注意：这里不含横担（crossarm）外伸；横担是塔头段的水平悬臂，半宽会
-    突然跳到 1400/1900/2200mm，需另行处理（本函数按主腿四棱台返回）。
-    """
-    if z < 30000.0:
-        return max(0.0, 2649.0 - 0.0687 * z)
-    # 塔头主腿延续（662 → 200）
-    return max(0.0, 662.0 - 0.0687 * (z - 30000.0))
+    from ..debug.gt_profile import gt_tower_half_width as _f
+    return _f(z)
 
 
 def gt_crossarm_half_width(z: float) -> float:
-    """35A1-JC1 塔头横担（水平悬臂）的权威外伸半宽（真实 mm）。
-
-    横担只存在于塔头段，按标高分层（外层主导值）：
-        z ≈ 30000：外层 2200（下层横担）
-        z ≈ 33500：外层 1900（中层横担）
-        z ≈ 33850：1134（上层横担）
-    其余标高无横担，返回 0。用「就近横担层」把塔头段横担节点锚定到权威外伸。
-    """
-    if z < 30000.0:
-        return 0.0
-    # 就近横担层
-    layers = [(30000.0, 2200.0), (30400.0, 1403.0), (33500.0, 1900.0), (33850.0, 1134.0)]
-    best_z, best_hw = min(layers, key=lambda lz: abs(lz[0] - z))
-    # 若离最近横担层超过 1500mm，则无横担（塔头主腿区段）
-    if abs(best_z - z) > 1500.0:
-        return 0.0
-    return best_hw
+    from ..debug.gt_profile import gt_crossarm_half_width as _f
+    return _f(z)
 
 
 # --------------------------------------------------------------------------- #
@@ -569,6 +546,7 @@ def expand_4_face_symmetry(
     add_diaphragms: bool = True,
     node_tol: float = 50.0,
     half_width_fn: Optional[Callable[[float], float]] = None,
+    crossarm_half_width_fn: Optional[Callable[[float], float]] = None,
     crossarm_ratio: float = 1.3,
 ) -> Tuple[NodeMap, List[dict]]:
     """单立面 → 四面封闭空间网架（Phase 2 核心映射）。
@@ -629,13 +607,15 @@ def expand_4_face_symmetry(
     def _classify(t: float, z: float) -> Tuple[str, float, float]:
         """返回 (kind, w_gt, w_arm)。kind ∈ {"body", "crossarm"}。
 
-        crossarm 判定：该标高确有横担层（gt_crossarm_half_width>0）且 |t| 远超
+        crossarm 判定：该标高确有横担层（crossarm_half_width_fn(z)>0）且 |t| 远超
         塔身权威半宽（crossarm_ratio 倍），即横担水平悬臂外伸节点。
+        无 GT 横担剖面（crossarm_half_width_fn=None）时一律按 body 四棱台展开，
+        不区分横担——这是 GT 隔离的默认生产行为。
         """
         if half_width_fn is None:
             return ("body", 0.0, 0.0)
         w_gt = float(half_width_fn(z))
-        w_arm = gt_crossarm_half_width(z) if z >= 30000.0 else 0.0
+        w_arm = crossarm_half_width_fn(z) if crossarm_half_width_fn is not None else 0.0
         if w_arm > 0.0 and abs(t) > w_gt * crossarm_ratio:
             return ("crossarm", w_gt, w_arm)
         return ("body", w_gt, w_arm)
@@ -644,10 +624,10 @@ def expand_4_face_symmetry(
         w = abs(t)
         if half_width_fn is not None:
             w_gt = float(half_width_fn(z))
-            # 仅在「真正有横担的标高」才区分横担节点：gt_crossarm_half_width(z)
+            # 仅在「真正有横担的标高」才区分横担节点：crossarm_half_width_fn(z)
             # > 0 表示该 z 在横担层附近。其余标高（塔身主体 + 塔头主腿 + 塔尖
             # 污染残影）一律按 body 四棱台投影到权威半宽。
-            w_arm = gt_crossarm_half_width(z) if z >= 30000.0 else 0.0
+            w_arm = crossarm_half_width_fn(z) if crossarm_half_width_fn is not None else 0.0
             is_crossarm = w_arm > 0.0 and abs(t) > w_gt * crossarm_ratio
             if not is_crossarm:
                 # 塔身四棱台节点：
@@ -1023,8 +1003,16 @@ def generate_diaphragms(
     return new_nodes, new_bars
 
 
-def inspect_model_topology(nodes: NodeMap, bars: List[dict]) -> Dict[str, object]:
+def inspect_model_topology(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    half_width_fn: Optional[Callable[[float], float]] = None,
+) -> Dict[str, object]:
     """拓扑度数统计（量化验收 1：悬空断裂节点 Degree=1 应为 0）。
+
+    half_width_fn：可选，塔身半宽剖面函数（真实 mm）。仅 debug/eval 显式传入
+    GT 剖面；生产默认 None，此时横担端头判定退化为仅依赖 role == "CROSS"。
 
     返回 {"degree_histogram": {degree: count}, "dangling_degree1": n,
           "max_degree": k, "components": c, "total_nodes": N, "total_bars": M}。
@@ -1044,9 +1032,10 @@ def inspect_model_topology(nodes: NodeMap, bars: List[dict]) -> Dict[str, object
     # 区分「合法横担悬臂端头」与「真悬空断裂」：横担（CROSS）与横担斜材
     # 的水平外伸端是物理上自由悬臂端（degree=1 属正常），不应计入悬空断裂。
     # 判定：degree=1 节点，其唯一杆件的 role == "CROSS"，或该节点水平径向
-    # 距离远超该标高处塔身权威半宽（横担外伸区），即为横担端头。
-    # 注意：塔身半宽不能用节点 |x| 中位数（会被横担端头污染），用 GT 权威
-    # 半宽 gt_tower_half_width(z)（四棱台 2649→200mm）才准确。
+    # 距离远超该标高处塔身半宽（横担外伸区），即为横担端头。
+    # 注意：塔身半宽不能用节点 |x| 中位数（会被横担端头污染）。生产默认
+    # half_width_fn=None，仅凭 role == "CROSS" 判定横担端头；debug/eval 可
+    # 显式传入 GT 权威半宽（debug.gt_profile.gt_tower_half_width）提升精度。
     roles: Dict[str, str] = {}
     try:
         roles = classify_members(nodes, bars)
@@ -1066,7 +1055,7 @@ def inspect_model_topology(nodes: NodeMap, bars: List[dict]) -> Dict[str, object
         p = nodes.get(nid)
         radial = float(np.hypot(p[0], p[1])) if p is not None else 0.0
         z = float(p[2]) if p is not None else 0.0
-        body_hw_at_z = gt_tower_half_width(z)
+        body_hw_at_z = half_width_fn(z) if half_width_fn is not None else 0.0
         # 横担端头：role=CROSS，或径向远超该标高权威塔身半宽（>1.4x，横担外伸）
         is_crossarm_tip = (
             bar_role == "CROSS"

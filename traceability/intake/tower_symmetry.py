@@ -56,7 +56,6 @@ def expand_4_face_symmetry_model(
         expand_4_face_symmetry,
         classify_members,
         inspect_model_topology,
-        gt_tower_half_width,
     )
 
     spec = {}
@@ -68,11 +67,16 @@ def expand_4_face_symmetry_model(
             spec = {}
     if snap_tol is None:
         snap_tol = float(spec.get("snap_tol_mm", 80.0))
-    # GT 权威半宽：当 overlay 声明 use_gt_half_width 时，塔身四棱台截面半宽
-    # 直接用 GT 剖面（按 z 线性收窄），不再信任被横担/节点板污染的立面图 x。
+    # GT 权威半宽（阶段 0.2 GT 隔离）：仅当 overlay 显式 use_gt_half_width=true
+    # （debug/eval）时才从 debug.gt_profile 注入 GT 剖面；生产默认不注入，
+    # 四面展开退回「信任立面图 x」的纯几何路径。注入 GT 半宽时产物必须打
+    # gt_aligned 标记，正式评测检测到后拒绝评测。
     half_width_fn = None
+    crossarm_half_width_fn = None
     if spec.get("use_gt_half_width"):
+        from ..debug.gt_profile import gt_tower_half_width, gt_crossarm_half_width
         half_width_fn = gt_tower_half_width
+        crossarm_half_width_fn = gt_crossarm_half_width
 
     bars = [c for _, c in _tower_bars(model)]
     if not bars:
@@ -158,8 +162,9 @@ def expand_4_face_symmetry_model(
         weld_corner_legs=weld_corner_legs,
         add_diaphragms=add_diaphragms,
         half_width_fn=half_width_fn,
+        crossarm_half_width_fn=crossarm_half_width_fn,
     )
-    topology = inspect_model_topology(face_nodes, face_bars)
+    topology = inspect_model_topology(face_nodes, face_bars, half_width_fn=half_width_fn)
     roles = classify_members(face_nodes, face_bars)
 
     # 重建模型组件
@@ -187,16 +192,20 @@ def expand_4_face_symmetry_model(
 
     for nid, pos in face_nodes.items():
         orig_nid = node_orig.get(nid, nid)
+        node_props = {
+            "x": round(pos[0], 4), "y": round(pos[1], 4), "z": round(pos[2], 4),
+            "solve_status": "solved",
+            "generated_4face": True,
+            "original_node_id": orig_nid,
+            "geometry_origin": "derived_4face",
+        }
+        # 阶段 0.2 GT 隔离：GT 半宽注入时，产物打 gt_aligned 标记（评测拒绝）。
+        if half_width_fn is not None:
+            node_props["gt_aligned"] = True
         keep_components[f"4f_{nid}"] = Component(
             id=f"4f_{nid}", name=orig_nid, kind="tower_node",
             source=src_ref,
-            properties={
-                "x": round(pos[0], 4), "y": round(pos[1], 4), "z": round(pos[2], 4),
-                "solve_status": "solved",
-                "generated_4face": True,
-                "original_node_id": orig_nid,
-                "geometry_origin": "derived_4face",
-            },
+            properties=node_props,
         )
 
     new_bar_ids: List[str] = []
@@ -245,33 +254,37 @@ def expand_4_face_symmetry_model(
             bar_source = src_ref
             evidence_status = "derived"
 
+        bar_props = {
+            "bar_id": bid,
+            "from_node": f"4f_{b['from']}",
+            "to_node": f"4f_{b['to']}",
+            "section": b.get("section"),
+            "layer": b.get("layer"),
+            "face": face,
+            "generated_face": generated_face,
+            "role": b.get("role") or roles.get(b["id"], "DIAG"),
+            "corner_leg": bool(b.get("corner_leg")),
+            "diaphragm": is_diaphragm,
+            "generated_4face": True,
+            "solve_status": "solved",
+            # 证据链
+            "derived_from": derived_from,
+            "drawing_view": drawing_view,
+            "source_file": source_file,
+            "geometry_origin": geometry_origin,
+            "projection_refs": projection_refs,
+            "evidence_status": evidence_status,
+            "length_mm_3d": round(
+                math.sqrt(sum((face_nodes[b["to"]][i] - face_nodes[b["from"]][i]) ** 2 for i in range(3))), 2,
+            ),
+        }
+        # 阶段 0.2 GT 隔离：GT 半宽注入时，产物打 gt_aligned 标记（评测拒绝）。
+        if half_width_fn is not None:
+            bar_props["gt_aligned"] = True
         keep_components[comp_id] = Component(
             id=comp_id, name=b["id"], kind="tower_bar",
             source=bar_source,
-            properties={
-                "bar_id": bid,
-                "from_node": f"4f_{b['from']}",
-                "to_node": f"4f_{b['to']}",
-                "section": b.get("section"),
-                "layer": b.get("layer"),
-                "face": face,
-                "generated_face": generated_face,
-                "role": b.get("role") or roles.get(b["id"], "DIAG"),
-                "corner_leg": bool(b.get("corner_leg")),
-                "diaphragm": is_diaphragm,
-                "generated_4face": True,
-                "solve_status": "solved",
-                # 证据链
-                "derived_from": derived_from,
-                "drawing_view": drawing_view,
-                "source_file": source_file,
-                "geometry_origin": geometry_origin,
-                "projection_refs": projection_refs,
-                "evidence_status": evidence_status,
-                "length_mm_3d": round(
-                    math.sqrt(sum((face_nodes[b["to"]][i] - face_nodes[b["from"]][i]) ** 2 for i in range(3))), 2,
-                ),
-            },
+            properties=bar_props,
         )
         new_bar_ids.append(comp_id)
 

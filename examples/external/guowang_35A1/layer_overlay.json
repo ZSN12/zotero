@@ -1103,7 +1103,7 @@
     "node_file": "/Users/zsn/Downloads/输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)/计算文件/35A/35A1/35A1-JC1/35A1-JC1.NODE",
     "gt_json": "../../gt/35A1-JC1_ground_truth.json"
   },
-  "use_gt_half_width": true,
+  "use_gt_half_width": false,
   "subdivide_views_by_stem": {
     "35A1-JC1-05": true,
     "35A1-JC1-06": true

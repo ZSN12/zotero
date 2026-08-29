@@ -124,6 +124,45 @@ class SemanticFreezeTest(unittest.TestCase):
         self.assertEqual(len(rec), 1, "recognition 应只含 front 面 1 根")
         self.assertEqual(len(phy), 2, "physical 应含 recognized+mirrored 共 2 根")
 
+    def test_reconstructed_is_physical_but_not_recognized(self):
+        """阶段0：reconstructed（确定性重建）进 physical P/R，不进 recognition P/R。"""
+        from traceability.eval.metrics import (
+            is_recognized_bar, is_reconstructed_bar, is_physical_bar,
+        )
+        # mirrored 是 reconstructed 的一种实现
+        self.assertTrue(is_reconstructed_bar({"evidence_status": "mirrored", "face": "b"}))
+        self.assertTrue(is_reconstructed_bar({"evidence_status": "reconstructed"}))
+        self.assertFalse(is_reconstructed_bar({"evidence_status": "recognized", "face": "f"}),
+                         "recognized 不是 reconstructed")
+        self.assertFalse(is_reconstructed_bar({"evidence_status": "derived", "diaphragm": True}),
+                         "derived 不是 reconstructed")
+        self.assertFalse(is_reconstructed_bar({"gt_aligned": True}), "canonical 不是 reconstructed")
+        # reconstructed 是 physical 杆件，但不是 recognized
+        self.assertTrue(is_physical_bar({"evidence_status": "reconstructed"}))
+        self.assertFalse(is_recognized_bar({"evidence_status": "reconstructed"}))
+        # 兼容旧数据：generated_4face 且非 recognized 的非 derived 杆件算 reconstructed
+        self.assertTrue(is_reconstructed_bar({"generated_4face": True, "evidence_status": "mirrored"}))
+
+    def test_m3_physical_semantic_split(self):
+        """M3 语义分解：physical = recognized + reconstructed，各自计数。"""
+        from traceability.eval.metrics import eval_m3_physical_3d
+        gt = {"nodes": {"n1": (0.0, 0.0, 0.0), "n2": (1000.0, 0.0, 0.0)},
+              "bars": [{"id": "PM_0001", "from": "n1", "to": "n2"}]}
+        model = {"components": {
+            "n1": {"kind": "tower_node", "properties": {"x": 0.0, "y": 0.0, "z": 0.0}},
+            "n2": {"kind": "tower_node", "properties": {"x": 1000.0, "y": 0.0, "z": 0.0}},
+            "b_rec": {"kind": "tower_bar", "properties": {"from_node": "n1", "to_node": "n2",
+                      "evidence_status": "recognized", "face": "f"}},
+            "b_recon": {"kind": "tower_bar", "properties": {"from_node": "n1", "to_node": "n2",
+                      "evidence_status": "reconstructed", "face": "b"}},
+            "b_der": {"kind": "tower_bar", "properties": {"from_node": "n1", "to_node": "n2",
+                      "evidence_status": "derived", "diaphragm": True}},
+        }}
+        r = eval_m3_physical_3d(gt, model)
+        sem = r["model_semantic"]
+        self.assertEqual(sem["recognized"], 1)
+        self.assertEqual(sem["reconstructed"], 1, "reconstructed 应单独计数，derived 不计入")
+
 
 class GtLeakageTest(unittest.TestCase):
     """P0 阶段 0.2：GT 泄漏检测——GT 对齐过的模型拒绝评测。"""
@@ -163,6 +202,61 @@ class GtLeakageTest(unittest.TestCase):
         # 即使不显式拒绝，is_physical_bar 也应把 GT 杆件排除（n_model=0）
         r = eval_m3_physical_3d(gt, model)
         self.assertEqual(r["n_model"], 0, "GT 对齐杆件必须被排除出 physical P/R")
+
+    def test_expand_4_face_no_gt_half_width_marks_nothing(self):
+        """GT 隔离：默认（无 use_gt_half_width）四面展开不注入 GT 半宽，不打 gt_aligned。"""
+        from traceability.model import Component, EngineeringModel, SourceRef, SourceType
+        from traceability.intake.tower_symmetry import expand_4_face_symmetry_model
+
+        m = EngineeringModel(name="test")
+        m.add_component(Component(
+            id="drawing_file", name="df", kind="drawing_file",
+            source=SourceRef(SourceType.DRAWING, "35A1-JC1-02.dxf"),
+            properties={"view_kinds": ["front"]},
+        ))
+        for nid, (x, z) in {"L1": (1500.0, 0.0), "L2": (1500.0, 3000.0),
+                            "R1": (-1500.0, 0.0), "R2": (-1500.0, 3000.0)}.items():
+            m.add_component(Component(id=nid, name=nid, kind="tower_node",
+                properties={"x": x, "y": 0.0, "z": z, "view_type": "front", "solve_status": "solved"}))
+        m.add_component(Component(id="leg", name="leg", kind="tower_bar",
+            properties={"from_node": "L1", "to_node": "L2", "view_type": "front",
+                        "bar_id": "105", "geometry_origin": "dxf_geom"}))
+
+        expand_4_face_symmetry_model(m, None)
+        aligned = [c for c in m.components.values()
+                   if c.kind in ("tower_bar", "tower_node") and c.properties.get("gt_aligned")]
+        self.assertEqual(len(aligned), 0, "无 GT 半宽时不得打 gt_aligned")
+
+    def test_expand_4_face_with_gt_half_width_marks_gt_aligned(self):
+        """GT 隔离：显式 use_gt_half_width=true 时，产物全部打 gt_aligned（评测拒绝）。"""
+        import json
+        import tempfile
+        from pathlib import Path
+        from traceability.model import Component, EngineeringModel, SourceRef, SourceType
+        from traceability.intake.tower_symmetry import expand_4_face_symmetry_model
+
+        m = EngineeringModel(name="test")
+        m.add_component(Component(
+            id="drawing_file", name="df", kind="drawing_file",
+            source=SourceRef(SourceType.DRAWING, "35A1-JC1-02.dxf"),
+            properties={"view_kinds": ["front"]},
+        ))
+        for nid, (x, z) in {"L1": (1500.0, 0.0), "L2": (1500.0, 3000.0),
+                            "R1": (-1500.0, 0.0), "R2": (-1500.0, 3000.0)}.items():
+            m.add_component(Component(id=nid, name=nid, kind="tower_node",
+                properties={"x": x, "y": 0.0, "z": z, "view_type": "front", "solve_status": "solved"}))
+        m.add_component(Component(id="leg", name="leg", kind="tower_bar",
+            properties={"from_node": "L1", "to_node": "L2", "view_type": "front",
+                        "bar_id": "105", "geometry_origin": "dxf_geom"}))
+
+        with tempfile.TemporaryDirectory() as d:
+            ov = Path(d) / "overlay.json"
+            ov.write_text(json.dumps({"use_gt_half_width": True}))
+            expand_4_face_symmetry_model(m, str(ov))
+        total = [c for c in m.components.values()
+                 if c.kind in ("tower_bar", "tower_node")]
+        aligned = [c for c in total if c.properties.get("gt_aligned")]
+        self.assertEqual(len(aligned), len(total), "GT 半宽开启时所有重建构件应打 gt_aligned")
 
 
 class AssemblyFallbackTest(unittest.TestCase):
