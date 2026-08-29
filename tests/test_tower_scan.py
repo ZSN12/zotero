@@ -81,7 +81,10 @@ class TowerScanTest(unittest.TestCase):
         from traceability.io import load_model
         with tempfile.TemporaryDirectory() as d:
             out = Path(d) / "compiled.json"
-            main(["compile-drawing", str(self.front), "--tower", "--out", str(out)])
+            # 强制 rule-based-scan 确定性后端，隔离宿主 MLLM API key 干扰，
+            # 避免 MLLM 服务不可用/返回 0 候选时本测试误失败。
+            main(["compile-drawing", str(self.front), "--tower", "--out", str(out),
+                  "--backend", "rule-based-scan"])
             model = load_model(out)
             self.assertGreater(len(model.rules), 0)
             self.assertGreater(

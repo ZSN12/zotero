@@ -233,6 +233,7 @@ def main():
     ap.add_argument("--tol-3d", type=float, default=800.0, help="3D 匹配容差 mm")
     ap.add_argument("--max-fn", type=int, default=20)
     ap.add_argument("--max-fp", type=int, default=20)
+    ap.add_argument("--save", help="把 FN/FP 样例导出为 hard-case JSON（错误回放数据集）")
     args = ap.parse_args()
 
     gt = json.loads(Path(args.gt).read_text(encoding="utf-8"))
@@ -259,6 +260,18 @@ def main():
     _print_buckets("FP 分桶（模型多余）", d3["fp_by"])
     _print_samples("FN 样例（未召回 GT）", d3["fn_samples"])
     _print_samples("FP 样例（模型多余）", d3["fp_samples"])
+
+    if args.save:
+        hard_cases = {
+            "gt": str(Path(args.gt).resolve()),
+            "model": str(Path(args.model).resolve()),
+            "tol_2d": args.tol_2d, "tol_3d": args.tol_3d, "view": args.view,
+            "a2_2d": {"fn": d2["fn_samples"], "fp": d2["fp_samples"]},
+            "m3_3d": {"fn": d3["fn_samples"], "fp": d3["fp_samples"]},
+        }
+        save_path = Path(args.save)
+        save_path.write_text(json.dumps(hard_cases, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n✓ hard-case 回放数据集已保存 -> {save_path}")
 
 
 if __name__ == "__main__":

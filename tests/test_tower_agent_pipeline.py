@@ -183,9 +183,15 @@ class LayoutRegionTest(unittest.TestCase):
 class RunTowerAgentPipelineTest(unittest.TestCase):
     def test_scan_writes_five_agent_steps(self):
         from traceability.harness.tower_harness import run_tower
+        from traceability.intake.mllm_backend import MLLMBackend
         with tempfile.TemporaryDirectory() as d:
             out = Path(d)
-            result = run_tower(EXAMPLES / "clear" / "tower_front_hd.png", out)
+            # 显式禁用 MLLM API（api_key=""），让 A2 走霍夫确定性兜底，
+            # 隔离宿主环境变量，避免真实 MLLM 调用拖慢/污染本测试。
+            result = run_tower(
+                EXAMPLES / "clear" / "tower_front_hd.png", out,
+                mllm=MLLMBackend(api_key=""),
+            )
             steps = json.loads((out / "steps.json").read_text(encoding="utf-8"))
             ids = [s["id"] for s in steps["steps"]]
         self.assertEqual(ids[:5], ["a0_layout", "a1_labels", "a2_geom", "a3_link", "a4_harness"])
@@ -198,10 +204,14 @@ class RunTowerAgentPipelineTest(unittest.TestCase):
 
     def test_scan_model_pending_review(self):
         from traceability.harness.tower_harness import run_tower
+        from traceability.intake.mllm_backend import MLLMBackend
         from traceability.io import load_model
         with tempfile.TemporaryDirectory() as d:
             out = Path(d)
-            result = run_tower(EXAMPLES / "clear" / "tower_front_hd.png", out)
+            result = run_tower(
+                EXAMPLES / "clear" / "tower_front_hd.png", out,
+                mllm=MLLMBackend(api_key=""),
+            )
             model = load_model(out / "model.json")
         bars = [c for c in model.components.values() if c.kind == "tower_bar"]
         nodes = [c for c in model.components.values() if c.kind == "tower_node"]

@@ -1,0 +1,35 @@
+{
+  "_comment": "数据切分约定（阶段7）。三集互斥，禁止同塔调参后汇报成绩。",
+  "_policy": [
+    "calibration：只用于工程调试/管线跑通，绝不汇报任何指标。",
+    "development：用于迭代优化（调容差/修召回）。JC1 归此集，指标仅供内部跟踪。",
+    "blind_test：最终验收汇报的唯一合法集。当前为空——在引入第二座独立塔型前，",
+    "    任何数字都只能标注为 development 指标，不得对外宣称最终成绩。"
+  ],
+  "splits": {
+    "calibration": {
+      "datasets": [
+        "examples/tower_110kv.dxf (演示塔，管线自检)",
+        "examples/tower_demo.dxf (演示塔，单元测试 fixture)"
+      ],
+      "purpose": "单元测试 + 管线冒烟，不参与任何指标汇报"
+    },
+    "development": {
+      "datasets": [
+        "examples/external/guowang_35A1/ (35A1-JC1，唯一 GT：examples/gt/35A1-JC1_ground_truth.json)"
+      ],
+      "purpose": "迭代优化。所有当前评测数字（A1/A2/A3/M3）均属 development，",
+      "note": "禁止用 development 塔调参后，把同一塔的指标当作 blind_test 成绩汇报。"
+    },
+    "blind_test": {
+      "datasets": [],
+      "purpose": "最终验收。当前为空；引入独立塔型（如 35C2-SJG1）并单独标注 GT 后启用。",
+      "note": "35C2-SJG1-ML.dxf 已存在于国网目录但无独立 GT，暂不能作为 blind test。"
+    }
+  },
+  "rules": {
+    "no_same_tower_tuning_report": "禁止：在 JC1 上调参，然后用 JC1 的指标对外汇报最终成绩。",
+    "gt_only_eval": "GT 只能用于评测，禁止注入生产建模（use_gt_half_width 默认 false）。",
+    "report_labels": "所有指标输出必须标注数据切分（development / blind_test），无标注视为 development。"
+  }
+}
