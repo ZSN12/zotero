@@ -763,6 +763,9 @@ def deliver_project(
     # 导出/门禁失败
     export_failed = bool(skeleton_glb_error) or (export_glb and not skeleton_gate_ok)
 
+    # 阶段 6.2 & 6.3: 显式失败与降级传播
+    # - 任何必要 sheet 失败 / 几何门禁未通过 / 规则 failed -> 强置 failed (exit code 2)
+    # - 存在降级回退 (degraded fallback) / 未匹配投影 / pending 审核 -> review_required (exit code 1)
     has_failed = bool(
         sheet_failures
         or single_failed
@@ -772,7 +775,11 @@ def deliver_project(
         or merged_model is None
         or nodes_solved <= 0
     )
-    has_pending = bool(single_pending or proj_pending)
+    has_pending = bool(
+        single_pending
+        or proj_pending
+        or (merged_model and getattr(merged_model, "degraded", False))
+    )
 
     if has_failed:
         status = "failed"

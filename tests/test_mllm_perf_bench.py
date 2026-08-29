@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = REPO / "examples"
 FRONT_HD = EXAMPLES / "clear" / "tower_front_hd.png"
@@ -240,6 +242,8 @@ class MLLMBackendMetaTest(unittest.TestCase):
 
 
 class StepsJsonMllmFailureTest(unittest.TestCase):
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_mllm_failure_reason_written_to_steps(self):
         """P1 多 Agent 编排：A1 件号 OCR 失败 -> 该步 pending，不级联猜值，
         且 MLLM 调用日志（model/raw_length/failure_reason）写入 steps.json。"""

@@ -26,6 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from traceability.eval.metrics import (
     DEFAULT_TOLS,
     eval_a2_geometry_2d,
+    eval_a1_labels,
+    eval_a3_association,
     model_has_gt_alignment,
 )
 

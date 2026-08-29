@@ -7,12 +7,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = REPO / "examples"
 OVERLAY = EXAMPLES / "external" / "guowang_35A1" / "layer_overlay.json"
 
 
+@pytest.mark.integration
 class BarInventoryTest(unittest.TestCase):
+    @pytest.mark.slow
     def test_guowang_bar_inventory_has_entries(self):
         from traceability.project.model import build_project_from_directory
         from traceability.io import load_model
@@ -37,7 +41,9 @@ class BarInventoryTest(unittest.TestCase):
         self.assertGreater(len(inv["entries"]), 0)
 
 
+@pytest.mark.integration
 class ProjectHarnessTest(unittest.TestCase):
+    @pytest.mark.slow
     def test_run_project_harness_guowang(self):
         from traceability.project.model import build_project_from_directory
         from traceability.io import load_model
@@ -78,6 +84,8 @@ class ProjectHarnessTest(unittest.TestCase):
 
 
 class DeliverProjectM7Test(unittest.TestCase):
+    @pytest.mark.integration
+    @pytest.mark.slow
     def test_deliver_includes_project_harness(self):
         from traceability.project.delivery import deliver_project
 

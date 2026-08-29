@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = REPO / "examples"
 OVERLAY = EXAMPLES / "external" / "guowang_35A1" / "layer_overlay.json"
@@ -45,6 +47,7 @@ class PreprocessTest(unittest.TestCase):
         self.assertGreater(report["raw_hough"]["raw_segments"], 0)
 
 
+@pytest.mark.integration
 class CrossFileBatchTest(unittest.TestCase):
     def test_merge_cross_file_views_preserves_view_type(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf
@@ -60,6 +63,7 @@ class CrossFileBatchTest(unittest.TestCase):
         df = merged.components.get("drawing_file")
         self.assertEqual(df.properties.get("view_mode"), "cross_file_multi_view")
 
+    @pytest.mark.slow
     def test_cross_file_batch_runs(self):
         from traceability.intake.tower_batch import cross_file_batch
         d = EXAMPLES / "external" / "guowang_35A1"
@@ -113,6 +117,7 @@ class CrossFileBatchTest(unittest.TestCase):
         self.assertIn("35A1-JC1-02", stems)
         self.assertIn("35C2-SJG1-ML", stems)
 
+    @pytest.mark.slow
     def test_cross_file_partial_3d_rule_passes(self):
         from traceability.intake.tower_batch import cross_file_batch
         from traceability.harness.harness import run_harness
@@ -128,6 +133,7 @@ class CrossFileBatchTest(unittest.TestCase):
         self.assertIn("r_cross_file_3d_partial", results)
         self.assertEqual(results["r_cross_file_3d_partial"].status.value, "passed")
 
+    @pytest.mark.slow
     def test_cross_file_all_front_nodes_solved(self):
         from traceability.intake.tower_batch import cross_file_batch
 
@@ -156,6 +162,7 @@ class CrossFileBatchTest(unittest.TestCase):
         mr = r.get("merge_report") or {}
         self.assertGreater(mr.get("nodes_solved", 0), 0)
 
+    @pytest.mark.slow
     def test_cross_file_merge_report_has_front_side_pairings(self):
         from traceability.intake.tower_batch import cross_file_batch
 
@@ -176,6 +183,7 @@ class CrossFileBatchTest(unittest.TestCase):
         self.assertEqual(props.get("face_count"), 4, "四向展开应产出 4 个立面")
         self.assertGreater(props.get("corner_legs", 0), 0, "四向展开应产出角腿")
 
+    @pytest.mark.slow
     def test_unresolved_nodes_block_strict_export(self):
         from traceability.intake.tower_batch import cross_file_batch
         from traceability.solve.tower_solver import export_tower_glb, SolveError
@@ -193,6 +201,7 @@ class CrossFileBatchTest(unittest.TestCase):
             except SolveError as exc:
                 self.fail(f"strict export 不应再被阻断：{exc}")
 
+    @pytest.mark.slow
     def test_real_side_suppresses_synthetic_side(self):
         """P3 架构迁移：synthetic side 已被四向镜像展开替代。
 
@@ -220,6 +229,7 @@ class CrossFileBatchTest(unittest.TestCase):
         ]
         self.assertEqual(len(syn), 0, "四向展开应替代 synthetic side，不再产出该 y_origin 标记")
 
+    @pytest.mark.slow
     def test_strict_export_requires_all_nodes_solved(self):
         from traceability.intake.tower_batch import cross_file_batch
         from traceability.solve.tower_solver import export_tower_glb, solve_tower
@@ -235,6 +245,7 @@ class CrossFileBatchTest(unittest.TestCase):
             # 未配对节点 Y 已补齐：所有节点三轴解算，无待补测项
             self.assertEqual(len(problems), 0)
 
+    @pytest.mark.slow
     def test_cross_file_gusset_auto_anchored(self):
         from traceability.intake.tower_batch import cross_file_batch
         from traceability.harness.harness import run_harness
@@ -254,6 +265,7 @@ class CrossFileBatchTest(unittest.TestCase):
         gussets = [c for c in model.components.values() if c.kind == "gusset_plate"]
         self.assertEqual(len(gussets), 0)
 
+    @pytest.mark.slow
     def test_guowang_merged_bars_drop_self_loops(self):
         from traceability.intake.tower_batch import cross_file_batch
 
@@ -316,6 +328,7 @@ class CrossFileBatchTest(unittest.TestCase):
         self.assertGreater(len(bolt_results), 0)
         self.assertTrue(all(r.validator == "bolt-group" for r in bolt_results))
 
+    @pytest.mark.slow
     def test_run_tower_guowang_cross_file_nodes_solved(self):
         from traceability.harness.tower_harness import run_tower
 

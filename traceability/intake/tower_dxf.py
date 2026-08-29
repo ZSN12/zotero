@@ -786,6 +786,15 @@ def extract_tower_from_dxf(
 
     doc = ezdxf.readfile(dxf_path)
     msp = doc.modelspace()
+    # 比例尺自动标定（从 DIMENSION 实体中推断真实 scale，覆盖硬编码 overlay）
+    try:
+        from .scale_calibration import extract_dim_samples, calibrate_region_scales
+        _dim_samples = extract_dim_samples(msp)
+        if _dim_samples and regions:
+            regions = calibrate_region_scales(_dim_samples, regions)
+    except Exception:
+        # 标定异常时安全降级，不阻断 DXF 解析
+        pass
     model = EngineeringModel(name=f"tower-{stem}")
 
     # 图纸文件上下文（带 drawing_kind，供 B2 分流与验收）

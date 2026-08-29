@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+addopts = "-q"
+markers = [
+    "slow: 耗时测试（>2s，读取大图/跑全链），可用 -m 'not slow' 跳过",
+    "integration: 依赖外部文件/端到端的集成测试",
+    "online: 需要网络或真实 MLLM API 的测试",
+]

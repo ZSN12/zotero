@@ -14,6 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 from traceability.intake.tower_dxf import extract_tower_from_dxf
 from traceability.intake.tower_bom import parse_bom_csv, cross_check_bom
 from traceability.intake.tower_views import merge_view_coordinates, merge_view_bars
@@ -150,6 +152,8 @@ class Tower110kVIntakeTest(unittest.TestCase):
             self.assertEqual(path, str(out))
             self.assertGreater(out.stat().st_size, 1000)
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_cli_end_to_end_chain(self):
         from traceability.cli import main
         with tempfile.TemporaryDirectory() as d:

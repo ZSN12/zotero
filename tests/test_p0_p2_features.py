@@ -28,6 +28,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = REPO / "examples"
 
@@ -54,6 +56,8 @@ class ProcessingGraphTest(unittest.TestCase):
 
 
 class RunTowerTest(unittest.TestCase):
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_run_tower_full_chain(self):
         from traceability.cli import main
         with tempfile.TemporaryDirectory() as d:
@@ -68,6 +72,8 @@ class RunTowerTest(unittest.TestCase):
             self.assertTrue((out / "model.json").exists())
             self.assertTrue((out / "harness_summary.json").exists())
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_deliver_tower(self):
         from traceability.cli import main
         with tempfile.TemporaryDirectory() as d:
@@ -352,6 +358,7 @@ class ScanGateTest(unittest.TestCase):
 
 
 class ScanPdfTest(unittest.TestCase):
+    @pytest.mark.slow
     def test_intake_scan_pdf(self):
         from traceability.cli import main
         from traceability.io import load_model

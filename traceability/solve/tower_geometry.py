@@ -1282,3 +1282,85 @@ def _nearest_existing_node_id(nodes: NodeMap, pos: Vec3, eps: float) -> str:
         if float(np.linalg.norm(_v(p) - _v(pos))) <= eps:
             return nid
     return _get_or_add_node(nodes, pos, tol=eps)
+
+
+def stitch_segment_boundaries(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    boundary_tol_mm: float = 5.0,
+    dedup_collinear: bool = True,
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """多段塔拼接边界缝合（阶段 5.3）：段边界节点去重 + 重叠横向杆件消除。
+
+    多段立面（02/04/05/06/07/40 各带 z_offset / z_span_mm）拼接后，相邻段
+    在接头处会各自生成一组「空间上几乎重合」的节点与横向连接杆。本函数：
+
+        1. 节点去重：把相距 <= boundary_tol_mm 的节点合并为共享节点 ID
+           （保留先出现的 ID，后出现的杆件端点重指到共享 ID），消除段边界
+           的重复节点冗余；
+        2. 杆件去重：合并后若出现「端点相同（无向）」的重复杆件，只保留
+           一根（消除相邻段重叠的横向连接杆）；
+        3. 长度保真：合并只改节点身份与重复杆件，不重算/缩放坐标，因此
+           拼接前后每根物理杆件的几何长度不失真。
+
+    返回 (new_nodes, new_bars, report)：
+        report = {"merged_nodes": int, "dedup_bars": int, "pairs": [(a_id, b_id), ...]}
+
+    注意：本函数是纯几何操作，输入输出都是 dict/list，不依赖 EngineeringModel。
+    """
+    new_nodes: NodeMap = dict(nodes)
+    merged_nodes = 0
+    pairs: List[Tuple[str, str]] = []
+
+    # 1) 节点去重：把相距 <= boundary_tol_mm 的节点合并为共享节点。
+    #    用「坐标就近复用」的贪心：按字典序遍历，每个节点找最近的已保留节点。
+    id_map: Dict[str, str] = {}
+    keep_ids: List[str] = []
+    keep_pos: List[np.ndarray] = []
+    for nid in sorted(nodes.keys()):
+        pos = _v(nodes[nid])
+        best_i, best_d = -1, float(boundary_tol_mm)
+        for i, kp in enumerate(keep_pos):
+            d = float(np.linalg.norm(kp - pos))
+            if d <= best_d:
+                best_d = d
+                best_i = i
+        if best_i >= 0:
+            id_map[nid] = keep_ids[best_i]
+            merged_nodes += 1
+            pairs.append((nid, keep_ids[best_i]))
+        else:
+            keep_ids.append(nid)
+            keep_pos.append(pos)
+            id_map[nid] = nid
+
+    # 2) 杆件端点重指到共享节点，并去除端点退化（from==to）的杆件。
+    new_bars: List[dict] = []
+    for b in bars:
+        nb = dict(b)
+        nb["from"] = id_map.get(nb["from"], nb["from"])
+        nb["to"] = id_map.get(nb["to"], nb["to"])
+        if nb["from"] == nb["to"]:
+            continue  # 合并后端点退化（同一物理节点），剔除
+        new_bars.append(nb)
+
+    # 3) 重叠杆件去重：无向端点相同即视为同一根物理杆件，只保留先出现者。
+    dedup_bars = 0
+    if dedup_collinear:
+        seen: set = set()
+        deduped: List[dict] = []
+        for b in new_bars:
+            key = (min(b["from"], b["to"]), max(b["from"], b["to"]))
+            if key in seen:
+                dedup_bars += 1
+                continue
+            seen.add(key)
+            deduped.append(b)
+        new_bars = deduped
+
+    return new_nodes, new_bars, {
+        "merged_nodes": merged_nodes,
+        "dedup_bars": dedup_bars,
+        "pairs": pairs,
+    }

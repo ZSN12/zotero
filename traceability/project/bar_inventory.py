@@ -21,13 +21,34 @@ def aggregate_bar_inventory(
     by_id: Dict[str, Dict[str, Any]] = {}
     qty_by_source: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
+    # 证据链真实统计（阶段 2）：逐根杆件统计溯源覆盖情况，而非假设 100%。
+    bars_with_sheet_evidence = 0
+    bars_with_view_evidence = 0
+    bars_with_multiple_projections = 0
+    bars_total = 0
+
     sources = model_sources or [m.name for m in models]
     for i, model in enumerate(models):
         src = sources[i] if i < len(sources) else model.name
         for comp in model.components.values():
             if comp.kind != "tower_bar":
                 continue
-            bid = str(comp.properties.get("bar_id") or "")
+            bars_total += 1
+            props = comp.properties
+            # sheet 证据：source_file / drawing_view 存在且非空占位
+            sheet = props.get("source_file") or props.get("drawing_view")
+            if sheet not in (None, "", "None"):
+                bars_with_sheet_evidence += 1
+            # view 证据：view_type / face / generated_face 任一存在
+            view = props.get("view_type") or props.get("face") or props.get("generated_face")
+            if view not in (None, "", "None"):
+                bars_with_view_evidence += 1
+            # 多投影：projection_refs 数量 > 1
+            prs = props.get("projection_refs") or []
+            if len(prs) > 1:
+                bars_with_multiple_projections += 1
+
+            bid = str(props.get("bar_id") or "")
             if not bid or bid.startswith("UNLABELED"):
                 continue
             qty_by_source[bid][src] += 1
@@ -41,7 +62,7 @@ def aggregate_bar_inventory(
             node = by_id[bid]
             if src not in node["sources"]:
                 node["sources"].append(src)
-            sec = comp.properties.get("section")
+            sec = props.get("section")
             if sec and sec not in node["sections"]:
                 node["sections"].append(str(sec))
 
@@ -64,4 +85,13 @@ def aggregate_bar_inventory(
         "total_unique_bar_ids": len(entries),
         "cross_sheet_groups": cross_sheet,
         "cross_sheet_count": len(cross_sheet),
+        # 证据链真实统计（阶段 2）
+        "evidence_chain": {
+            "bars_total": bars_total,
+            "bars_with_sheet_evidence": bars_with_sheet_evidence,
+            "bars_with_view_evidence": bars_with_view_evidence,
+            "bars_with_multiple_projections": bars_with_multiple_projections,
+            "sheet_evidence_rate": round(bars_with_sheet_evidence / bars_total, 4) if bars_total else 0.0,
+            "view_evidence_rate": round(bars_with_view_evidence / bars_total, 4) if bars_total else 0.0,
+        },
     }

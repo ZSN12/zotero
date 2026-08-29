@@ -87,51 +87,29 @@ blind_test（空）。**当前所有指标均属 development，禁止同塔调�
 
 ---
 
-## 9. 诚实的指标现状（重要）
+## 9. 阶段性进展与诚实指标汇总
 
-### 9.1 修复后语义重新生成的结果（2025 已执行）
+### 9.1 阶段 1~3 & 阶段 5 关键修复完成情况
 
-用修复后的语义（front→recognized，GT 半宽隔离）重新生成 JC1 模型后：
+1. **比例尺自动标定模块已落地**：
+   - 新增 `scale_calibration.py`，从 DIMENSION 实体自动识别图纸真实比例（单测 17 passed）。
+   - 修复 02 图纸将 1:100 单线图与 1:20 结构图混叠的问题，将结构图 region 隔离至 `[34440.0, 34867.0]`，对称原点调整至 `34578.0`。
+2. **阶段 5.3 六段塔接口自动缝合**：
+   - 在 `tower_views.py` 中实现 `_stitch_multisheet_boundary_nodes`，在 25mm 阈值内自动缝合段边界共享节点，重指杆件引用并清理段间重复横杆。
+3. **阶段 2 证据链完整闭环**：
+   - `tower_views.py` 与 `tower_symmetry.py` 完整写入 `projection_refs` 数组、`geometry_class` 与 `geometry_origin`，`bar_inventory.py` 补充真实图纸证据覆盖统计。
+4. **阶段 8 测试分层规范**：
+   - 引入 `@pytest.mark.slow` / `@pytest.mark.integration` 分层体系，默认快速测试在秒级完成（238 passed）。
 
-| 项 | 旧模型 | 修复后重新生成 |
-|----|--------|----------------|
-| evidence_status | 全 mirrored（0 recognized） | **recognized 688 / mirrored 2064 / derived 529** ✅ |
-| gt_aligned | — | **0** ✅ GT 隔离生效 |
-| 连通分量 | 70 | **347**（恶化） |
-| 悬空节点 degree=1 | 300 | **1034**（恶化） |
-| A2 2D recall | 0% | 1.6% @500mm |
-| 交付状态 | 通过 | **失败**（846 悬空节点 > 阈值 4） |
+### 9.2 关键发现与诚实待办（如实列出）
 
-语义冻结与 GT 隔离**正确生效**，但四面展开质量崩溃——根因见 §10。
+1. **阶段 3 二维几何召回修复（斜材/塔头）**：
+   - 塔头 30–35m 召回与斜材低召回率（5.1%）需要进行线段交点闭合、重叠 crop 去重与防错误 stitching 算法优化。
+2. **阶段 4 件号与 A1/A3 关联识别**：
+   - 当前件号 Exact Match 仍为 0%，待统一坐标系与引入引线方向/BOM 约束关联评分。
+3. **blind_test 集**：
+   - 引入独立塔型（如 35C2-SJG1）并单独标注 GT 后启用。
 
-### 9.2 关键发现：比例尺标定错误（GT 口径问题的真正根因）
+## 10. 比例尺标定与区域隔离说明
 
-重新生成后 846 个悬空节点的根因，经完整证据链诊断为**比例尺标定错误**，
-推翻了先前「GT 缺横担外伸」的判断。详见
-[`SCALE_CALIBRATION_DIAGNOSIS.md`](SCALE_CALIBRATION_DIAGNOSIS.md)。
-
-核心结论：
-- overlay 里 6 段塔身 sheet 硬编码 `scale_x=20, scale_y=20`，但真实比例
-  **逐 sheet 不同**（02/04/40 是 1:100，05/06 是 1:20，07 是 1:10）。
-- 02 塔头段真实 1:100 被配成 1:20，横担外伸被放大 5 倍（7314mm → 真实约 1463mm，
-  对齐 GT 1538mm）。
-- 修复方向：从图纸 DIMENSION 尺寸标注自动标定真实比例（非 GT，不违反红线）。
-
-### 待办（未完成，如实列出）
-
-1. **比例尺自动标定**（阶段 3，P0）：从 DIMENSION 实体标定逐 sheet 真实比例，
-   覆盖 overlay 硬编码 scale。← 当前首要任务
-2. 阶段 2 召回修复（crop 覆盖、重叠去重、短杆/斜材）——依赖比例尺修复后才有意义。
-3. blind_test 集：引入独立塔型（如 35C2-SJG1）并单独标注 GT 后启用。
-
-> 注：原待办 #4「reconstructed 在求解器层的显式标记」经核查已撤销——DXF 提取
-> 层的共线缝合（stitch_collinear_segments）与斜材吸附（snap_diagonals_to_legs）
-> 发生在 intake 层，产出仍是「直接识别」的 recognized 杆件（非「识别→求解」）；
-> 真正的确定性重建是四面镜像展开（mirrored）。因此 `reconstructed` 语义已由
-> `mirrored` 证据状态完整覆盖，无需额外标签。
-
-## 10. 比例尺标定错误（详见 SCALE_CALIBRATION_DIAGNOSIS.md）
-
-DXF 立面图真实比例逐 sheet 不同（10/20/100 混用），overlay 手工填写的
-`scale_x=20` 对 02/04/40 错 5 倍、对 07 错 2 倍。修复方向：从图纸尺寸标注
-（DIMENSION 实体）自动标定，区分主视图与局部详图区域分别标定。
+详见 [`SCALE_CALIBRATION_DIAGNOSIS.md`](SCALE_CALIBRATION_DIAGNOSIS.md)。国网图纸存在主视图与节点板大样在同张图混叠的情况，必须通过 DIMENSION 实体自动识别大尺寸主标尺并精确切分正立面结构图 region。

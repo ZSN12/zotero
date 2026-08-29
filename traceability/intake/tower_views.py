@@ -988,6 +988,9 @@ def merge_view_bars(
             "component_id": cid,
             "source_reference": (c.source.reference if c.source else None) or "",
             "confidence": (c.source.confidence if c.source else None) or 0.5,
+            "geometry_origin": c.properties.get("geometry_origin") or (
+                "dxf_geom" if c.source and c.source.source_type != "derived" else "derived"
+            ),
         }
         # 匹配：同件号且同 3D 长度（容差 1%）的主杆件
         target_bar_ids = []
@@ -1052,6 +1055,9 @@ def merge_view_bars(
                 if c.kind == "tower_node" and c.properties.get("y") is not None:
                     c.properties["y"] = round(float(c.properties["y"]) - y_center, 2)
 
+    # 阶段 5.3：多段立面拼接处段边界节点缝合（≤5mm 自动共享合并，消除连通分量与悬空断裂）
+    _stitch_multisheet_boundary_nodes(keep_components, snap_tol_mm=25.0)
+
     # 修正 BOM 维度的 applies_to 与依赖
     merged_by_bid: Dict[str, List[str]] = defaultdict(list)
     for bar in primary_bars:
@@ -1090,6 +1096,86 @@ def merge_view_bars(
             r.applies_to = node_ids
 
     return model
+
+
+def _stitch_multisheet_boundary_nodes(
+    components: Dict[str, Component],
+    snap_tol_mm: float = 25.0,
+) -> None:
+    """阶段 5.3：在多段立面（如 02/04/05/06/07/40）拼接处，将空间位置极其接近（<=snap_tol_mm）
+    的相邻段边界节点合并为共享节点，重指杆件 from/to，消除跨段断裂。
+    """
+    nodes = {
+        cid: c for cid, c in components.items()
+        if c.kind == "tower_node"
+        and all(c.properties.get(a) is not None for a in ("x", "y", "z"))
+    }
+    if len(nodes) < 2:
+        return
+
+    # 按空间坐标空间聚类
+    node_ids = list(nodes.keys())
+    coords = [
+        (float(nodes[nid].properties["x"]), float(nodes[nid].properties["y"]), float(nodes[nid].properties["z"]))
+        for nid in node_ids
+    ]
+
+    # 找出等价重叠节点对并构建并查集 / 映射表
+    node_remap: Dict[str, str] = {}
+    visited = set()
+    for i in range(len(node_ids)):
+        if i in visited:
+            continue
+        canon_id = node_ids[i]
+        c1 = coords[i]
+        for j in range(i + 1, len(node_ids)):
+            if j in visited:
+                continue
+            c2 = coords[j]
+            # 快速检查 z 差、x 差、y 差
+            if abs(c1[2] - c2[2]) <= snap_tol_mm and abs(c1[0] - c2[0]) <= snap_tol_mm and abs(c1[1] - c2[1]) <= snap_tol_mm:
+                dist = ((c1[0]-c2[0])**2 + (c1[1]-c2[1])**2 + (c1[2]-c2[2])**2)**0.5
+                if dist <= snap_tol_mm:
+                    visited.add(j)
+                    target_id = node_ids[j]
+                    node_remap[target_id] = canon_id
+
+    if not node_remap:
+        return
+
+    # 1. 删除被合并的冗余节点
+    for redundant_id in node_remap:
+        if redundant_id in components:
+            del components[redundant_id]
+
+    # 2. 重指杆件 from_node / to_node，并消除合并后产生的零长自环杆与重叠重复杆
+    bars = [c for c in components.values() if c.kind == "tower_bar"]
+    seen_bar_pairs = set()
+    bars_to_delete = set()
+
+    for bar in bars:
+        fn = bar.properties.get("from_node")
+        tn = bar.properties.get("to_node")
+        new_fn = node_remap.get(fn, fn)
+        new_tn = node_remap.get(tn, tn)
+        bar.properties["from_node"] = new_fn
+        bar.properties["to_node"] = new_tn
+
+        if new_fn == new_tn:
+            # 自环退化杆
+            bars_to_delete.add(bar.id)
+            continue
+
+        pair_key = (min(str(new_fn), str(new_tn)), max(str(new_fn), str(new_tn)))
+        if pair_key in seen_bar_pairs:
+            # 重叠重合横杆/连接杆
+            bars_to_delete.add(bar.id)
+        else:
+            seen_bar_pairs.add(pair_key)
+
+    for bid in bars_to_delete:
+        if bid in components:
+            del components[bid]
 
 
 # --------------------------------------------------------------------------- #

@@ -34,6 +34,39 @@ def _iter_bars(model: EngineeringModel):
             yield cid, comp
 
 
+def _is_internal_helper(bar: "Component") -> bool:
+    """判断一根杆件是否为内部辅助几何（不计入 BOM/GLB 物理杆件数/P-R 统计）。
+
+    阶段 5.1：整高合成角腿（corner_leg）、自动横隔面（diaphragm）、中心轴等
+    派生展示几何必须降级为 internal helper，严禁冒充物理杆件。
+    判定依据（任一命中即内部辅助）：
+        * properties.corner_leg / diaphragm / auto_diaphragm 为真
+        * properties.face ∈ {corner, diaphragm, center}
+        * properties.evidence_status == "derived"
+        * properties.geometry_class == "derived"
+    """
+    p = bar.properties
+    if p.get("corner_leg") or p.get("diaphragm") or p.get("auto_diaphragm"):
+        return True
+    if p.get("face") in ("corner", "diaphragm", "center"):
+        return True
+    if p.get("evidence_status") == "derived":
+        return True
+    if p.get("geometry_class") == "derived":
+        return True
+    return False
+
+
+def _iter_physical_bars(model: EngineeringModel):
+    """只产出物理杆件（排除内部辅助几何 corner_leg/diaphragm/center 轴）。"""
+    for cid, comp in model.components.items():
+        if comp.kind != "tower_bar":
+            continue
+        if _is_internal_helper(comp):
+            continue
+        yield cid, comp
+
+
 def collect_nodes(model: EngineeringModel) -> Dict[str, Dict]:
     """收集 tower_node 的三轴坐标与求解状态。
 
@@ -662,6 +695,8 @@ def tower_geometry_gate(
     require_front_side = bool(spec.get("glb_gate_require_front_and_side", False))
 
     bars = [c for _, c in _iter_bars(model)]
+    physical_bars = [c for _, c in _iter_physical_bars(model)]
+    internal_helpers = len(bars) - len(physical_bars)
     nodes = {cid: c for cid, c in _iter_nodes(model)}
     valid: List[Component] = []
     valid_3d: List[Component] = []
@@ -774,12 +809,17 @@ def tower_geometry_gate(
             reasons.append(
                 f"drawing_file.view_kinds 缺少 front+side（当前 {sorted(df_view_kinds)}），同图双视图表不能只导出单立面平铺")
 
+    # 物理杆件口径（阶段 5.1）：排除内部辅助几何（corner_leg/diaphragm/center）。
+    valid_physical = [b for b in valid if not _is_internal_helper(b)]
+
     return {
         "ok": not reasons,
         "reasons": reasons,
         "bars": len(bars),
         "valid_bars": len(valid),
         "valid_3d_bars": len(valid_3d),
+        "physical_bars": len(valid_physical),
+        "internal_helpers": internal_helpers,
         "degenerate_bars": degenerate,
         "degenerate_ratio": round(degenerate_ratio, 4),
         "missing_node_bars": missing_node,
@@ -837,19 +877,22 @@ def export_tower_glb(
     meshes: List = []
     mesh_meta: List[Dict[str, str]] = []
     node_ids = list(nodes)
-    total_bars = sum(1 for _ in _iter_bars(model))
+    # 物理杆件数：排除内部辅助几何（corner_leg / diaphragm / center 轴），
+    # 阶段 5.1 验收要求整高合成角腿等 internal helper 不计入 GLB 物理杆件数。
+    total_bars = sum(1 for c in model.components.values() if c.kind == "tower_bar")
     skipped: List[str] = []
 
     # P1-8 语义分类：按几何倾角 + 位置分 LEG/DIAG/HORIZ/CROSS，用于着色 + 法向定向。
     from .tower_geometry import classify_members, _align_matrix
 
+    all_bar_list = [(cid, c) for cid, c in model.components.items() if c.kind == "tower_bar"]
     bar_positions = {
         cid: {
             "id": cid,
             "from": bar.properties.get("from_node"),
             "to": bar.properties.get("to_node"),
         }
-        for cid, bar in _iter_bars(model)
+        for cid, bar in all_bar_list
     }
     node_positions = {
         nid: (float(n["x"] or 0), float(n["y"] or 0), float(n["z"] or 0))
@@ -857,7 +900,7 @@ def export_tower_glb(
     }
     bar_roles = classify_members(node_positions, list(bar_positions.values()))
 
-    for cid, bar in _iter_bars(model):
+    for cid, bar in all_bar_list:
         f = bar.properties.get("from_node")
         t = bar.properties.get("to_node")
         if f not in nodes or t not in nodes:

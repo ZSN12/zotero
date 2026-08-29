@@ -18,6 +18,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 sys = __import__("sys")
 sys.path.insert(0, str(REPO))
@@ -92,6 +94,8 @@ class EvidenceChain4FaceTest(unittest.TestCase):
 class DeliveryFailurePropagationTest(unittest.TestCase):
     """P0-2：sheet 失败导致 delivery 失败；pending 返回 review_required。"""
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_sheet_failure_sets_status_failed(self):
         from traceability.project.model import ProjectModel, ProjectSheet
         from traceability.project.delivery import deliver_project

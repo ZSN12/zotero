@@ -254,6 +254,17 @@ def expand_4_face_symmetry_model(
             bar_source = src_ref
             evidence_status = "derived"
 
+        # geometry_class（阶段 2 语义冻结）：
+        #   derived      —— corner_leg / diaphragm / center 轴（纯展示几何）
+        #   reconstructed—— 对称展开重建产物（mirrored b/l/r 面，含闭合补全）
+        #   recognized   —— primary（front）面识别原貌（非派生）
+        if evidence_status == "derived":
+            geometry_class = "derived"
+        elif evidence_status == "mirrored":
+            geometry_class = "reconstructed"
+        else:
+            geometry_class = "recognized"
+
         bar_props = {
             "bar_id": bid,
             "from_node": f"4f_{b['from']}",
@@ -272,6 +283,7 @@ def expand_4_face_symmetry_model(
             "drawing_view": drawing_view,
             "source_file": source_file,
             "geometry_origin": geometry_origin,
+            "geometry_class": geometry_class,
             "projection_refs": projection_refs,
             "evidence_status": evidence_status,
             "length_mm_3d": round(

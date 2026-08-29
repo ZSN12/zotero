@@ -7,12 +7,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = REPO / "examples"
 OVERLAY = EXAMPLES / "external" / "guowang_35A1" / "layer_overlay.json"
 
 
+@pytest.mark.integration
 class DeliverProjectTest(unittest.TestCase):
+    @pytest.mark.slow
     def test_deliver_project_guowang(self):
         from traceability.project.delivery import deliver_project
 
@@ -37,6 +41,7 @@ class DeliverProjectTest(unittest.TestCase):
             self.assertIn(result.get("status"), ("verified", "review_required", "failed"))
             self.assertIsInstance(result.get("sheet_failures"), list)
 
+    @pytest.mark.slow
     def test_deliver_splits_l0_skeleton_index(self):
         # Phase A3：交付 manifest 明确三层产物，不混评；
         # detail/模块页不进 spatial_merge，只留在 index.json。
@@ -75,6 +80,7 @@ class DeliverProjectTest(unittest.TestCase):
             # detail_qa_atlas 是非真实 3D 的 QA 视图，标记 non_structural
             self.assertTrue(manifest["products"][3]["non_structural"])
 
+    @pytest.mark.slow
     def test_cli_deliver_project(self):
         from traceability.cli import main
 
@@ -94,6 +100,8 @@ class DeliverProjectTest(unittest.TestCase):
 
 
 class BoltGlbTest(unittest.TestCase):
+    @pytest.mark.integration
+    @pytest.mark.slow
     def test_glb_includes_bolt_hole_meshes(self):
         from traceability.intake.tower_batch import cross_file_batch
         from traceability.io import load_model

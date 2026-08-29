@@ -81,6 +81,55 @@ def _len_bucket(length: float) -> str:
     return ">3000mm"
 
 
+# --------------------------------------------------------------------------- #
+# sheet / view_type / has_label 提取（阶段 1.4 新增维度）
+# --------------------------------------------------------------------------- #
+
+SHEET_NONE = "<none>"
+VIEW_NONE = "<none>"
+
+
+def _bar_sheet(props: dict) -> str:
+    """杆件来源图纸 sheet：drawing_view / source_file，缺失则占位。"""
+    for key in ("drawing_view", "source_file"):
+        v = props.get(key)
+        if v not in (None, "", "None"):
+            return str(v)
+    return SHEET_NONE
+
+
+def _bar_view_type(props: dict, fallback: str = "") -> str:
+    """视图类型：优先 view_type / face（物理面），回退 2D 投影视图。"""
+    vt = props.get("view_type")
+    if vt not in (None, "", "None"):
+        return str(vt)
+    face = props.get("face")
+    if face not in (None, "", "None"):
+        return str(face)
+    if fallback:
+        return fallback
+    return VIEW_NONE
+
+
+def _bar_has_label(props: dict) -> bool:
+    bid = props.get("bar_id")
+    return bool(bid) and not str(bid).startswith("UNLABELED")
+
+
+def _nearest_model_ctx(seg, model_items, cost_fn):
+    """FN 匹配上下文：找几何最接近的模型杆件，返回 (sheet, view_type, has_label)。"""
+    if not model_items:
+        return SHEET_NONE, VIEW_NONE, False
+    best_i, best_c = None, float("inf")
+    for i, (mseg, _) in enumerate(model_items):
+        c = cost_fn(seg, mseg)
+        if c < best_c:
+            best_c = c
+            best_i = i
+    props = model_items[best_i][1]
+    return _bar_sheet(props), _bar_view_type(props), _bar_has_label(props)
+
+
 def _classify_fn_failure(seg, model_segs, cost_fn, tol: float) -> str:
     """给一根未匹配的 GT 杆件分类失败原因（找最近模型杆件的代价特征）。"""
     if not model_segs:
@@ -115,28 +164,43 @@ def diagnose_2d(gt, model, view, tol, max_fn, max_fp):
         zb = _z_bucket(z_mid)
         lb = _len_bucket(length)
         failure = _classify_fn_failure(seg, model_segs, segment_cost, tol)
-        for key in (("type", typ), ("z", zb), ("len", lb)):
+        sheet, vtype, _ = _nearest_model_ctx(seg, m, segment_cost)
+        has_label = bool(bar_id) and not str(bar_id).startswith("UNLABELED")
+        for key in (
+            ("type", typ), ("z", zb), ("len", lb),
+            ("sheet", sheet), ("view_type", vtype), ("has_label", has_label),
+        ):
             fn_buckets[key] += 1
         if len(fn_samples) < max_fn:
             fn_samples.append({
                 "bar_id": bar_id, "view": view, "length_mm": round(length, 1),
                 "type": typ, "z_bucket": zb, "len_bucket": lb,
+                "sheet": sheet, "view_type": vtype, "has_label": has_label,
                 "failure": failure, "section": section,
             })
 
     for j in un_m:
         seg = model_segs[j]
+        props = m[j][1] if j < len(m) else {}
         length = _len_2d(seg)
         z_mid = (seg[1] + seg[3]) / 2.0
         typ = _classify_3d(((seg[0], 0.0, seg[1]), (seg[2], 0.0, seg[3])))
         zb = _z_bucket(z_mid)
         lb = _len_bucket(length)
-        for key in (("type", typ), ("z", zb), ("len", lb)):
+        sheet = _bar_sheet(props)
+        vtype = _bar_view_type(props, view)
+        has_label = _bar_has_label(props)
+
+        for key in (
+            ("type", typ), ("z", zb), ("len", lb),
+            ("sheet", sheet), ("view_type", vtype), ("has_label", has_label),
+        ):
             fp_buckets[key] += 1
         if len(fp_samples) < max_fp:
             fp_samples.append({
                 "length_mm": round(length, 1), "type": typ,
                 "z_bucket": zb, "len_bucket": lb, "failure": FP_EXTRA,
+                "sheet": sheet, "view_type": vtype, "has_label": has_label,
             })
 
     return {
@@ -170,29 +234,44 @@ def diagnose_3d(gt, model, tol, max_fn, max_fp):
         zb = _z_bucket(z_mid)
         lb = _len_bucket(length)
         failure = _classify_fn_failure(seg, model_segs, segment_cost_3d, tol)
-        for key in (("type", typ), ("z", zb), ("len", lb)):
+        sheet, vtype, _ = _nearest_model_ctx(seg, m, segment_cost_3d)
+        has_label = bool(bar_id) and not str(bar_id).startswith("UNLABELED")
+        for key in (
+            ("type", typ), ("z", zb), ("len", lb),
+            ("sheet", sheet), ("view_type", vtype), ("has_label", has_label),
+        ):
             fn_buckets[key] += 1
         if len(fn_samples) < max_fn:
             fn_samples.append({
                 "bar_id": bar_id, "length_mm": round(length, 1),
                 "type": typ, "z_bucket": zb, "len_bucket": lb,
+                "sheet": sheet, "view_type": vtype, "has_label": has_label,
                 "failure": failure, "section": section,
             })
 
     for j in un_m:
         seg = model_segs[j]
+        props = m[j][1] if j < len(m) else {}
         length = _len_3d(seg)
         p, q = seg
         z_mid = (p[2] + q[2]) / 2.0
         typ = _classify_3d(seg)
         zb = _z_bucket(z_mid)
         lb = _len_bucket(length)
-        for key in (("type", typ), ("z", zb), ("len", lb)):
+        sheet = _bar_sheet(props)
+        vtype = _bar_view_type(props)
+        has_label = _bar_has_label(props)
+
+        for key in (
+            ("type", typ), ("z", zb), ("len", lb),
+            ("sheet", sheet), ("view_type", vtype), ("has_label", has_label),
+        ):
             fp_buckets[key] += 1
         if len(fp_samples) < max_fp:
             fp_samples.append({
                 "length_mm": round(length, 1), "type": typ,
                 "z_bucket": zb, "len_bucket": lb, "failure": FP_EXTRA,
+                "sheet": sheet, "view_type": vtype, "has_label": has_label,
             })
 
     return {
@@ -209,7 +288,7 @@ def _print_buckets(title, buckets):
         return
     print(f"  {title}:")
     for key, cnt in sorted(buckets.items(), key=lambda kv: -kv[1]):
-        print(f"    {key[0]}={key[1]:16s}  {cnt:5d}")
+        print(f"    {key[0]}={str(key[1]):16s}  {cnt:5d}")
 
 
 def _print_samples(title, samples):
@@ -219,15 +298,27 @@ def _print_samples(title, samples):
         return
     for s in samples:
         sid = s.get("bar_id", "-")
-        print(f"  bar={sid:14s} view={s.get('view','-'):6s} len={s['length_mm']:9.1f} "
+        sheet = s.get("sheet", "-")
+        vtype = s.get("view_type", "-")
+        has_label = s.get("has_label")
+        print(f"  bar={sid:14s} sheet={sheet:14s} view={s.get('view','-'):6s} "
+              f"vt={vtype:10s} label={has_label!s:5s} len={s['length_mm']:9.1f} "
               f"type={s['type']:10s} z={s['z_bucket']:10s} lenB={s['len_bucket']:12s} "
               f"failure={s['failure']}")
 
 
+def _stringify_buckets(buckets):
+    """把 tuple key 的分桶表转成 JSON 可序列化的 dict（"维度=值" -> count）。"""
+    return {f"{k[0]}={k[1]}": v for k, v in buckets.items()}
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("gt", help="GT json 路径")
-    ap.add_argument("model", help="管线输出 model.json")
+    # 兼容命名参数（--gt/--model，阶段 1.4 验收命令）与旧位置参数两种形式
+    ap.add_argument("gt", nargs="?", help="GT json 路径（位置参数形式）")
+    ap.add_argument("model", nargs="?", help="管线输出 model.json（位置参数形式）")
+    ap.add_argument("--gt", dest="gt_named", help="GT json 路径")
+    ap.add_argument("--model", dest="model_named", help="管线输出 model.json")
     ap.add_argument("--view", choices=["front", "side"], default="front")
     ap.add_argument("--tol-2d", type=float, default=200.0, help="2D 匹配容差 mm")
     ap.add_argument("--tol-3d", type=float, default=800.0, help="3D 匹配容差 mm")
@@ -236,8 +327,13 @@ def main():
     ap.add_argument("--save", help="把 FN/FP 样例导出为 hard-case JSON（错误回放数据集）")
     args = ap.parse_args()
 
-    gt = json.loads(Path(args.gt).read_text(encoding="utf-8"))
-    model = json.loads(Path(args.model).read_text(encoding="utf-8"))
+    gt_path = args.gt_named or args.gt
+    model_path = args.model_named or args.model
+    if not gt_path or not model_path:
+        ap.error("需要提供 GT 与 model 路径（--gt/--model 或位置参数）")
+
+    gt = json.loads(Path(gt_path).read_text(encoding="utf-8"))
+    model = json.loads(Path(model_path).read_text(encoding="utf-8"))
 
     print("=" * 70)
     print(f"召回诊断（只诊断，不调容差）: tol_2d={args.tol_2d}mm tol_3d={args.tol_3d}mm")
@@ -263,11 +359,19 @@ def main():
 
     if args.save:
         hard_cases = {
-            "gt": str(Path(args.gt).resolve()),
-            "model": str(Path(args.model).resolve()),
+            "gt": str(Path(gt_path).resolve()),
+            "model": str(Path(model_path).resolve()),
             "tol_2d": args.tol_2d, "tol_3d": args.tol_3d, "view": args.view,
-            "a2_2d": {"fn": d2["fn_samples"], "fp": d2["fp_samples"]},
-            "m3_3d": {"fn": d3["fn_samples"], "fp": d3["fp_samples"]},
+            "a2_2d": {
+                "fn_by": _stringify_buckets(d2["fn_by"]),
+                "fp_by": _stringify_buckets(d2["fp_by"]),
+                "fn": d2["fn_samples"], "fp": d2["fp_samples"],
+            },
+            "m3_3d": {
+                "fn_by": _stringify_buckets(d3["fn_by"]),
+                "fp_by": _stringify_buckets(d3["fp_by"]),
+                "fn": d3["fn_samples"], "fp": d3["fp_samples"],
+            },
         }
         save_path = Path(args.save)
         save_path.write_text(json.dumps(hard_cases, ensure_ascii=False, indent=2), encoding="utf-8")

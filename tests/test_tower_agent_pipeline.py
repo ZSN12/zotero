@@ -16,6 +16,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = REPO / "examples"
 
@@ -181,6 +183,8 @@ class LayoutRegionTest(unittest.TestCase):
 
 @unittest.skipUnless(_cv2_available(), "opencv-python 未安装")
 class RunTowerAgentPipelineTest(unittest.TestCase):
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_scan_writes_five_agent_steps(self):
         from traceability.harness.tower_harness import run_tower
         from traceability.intake.mllm_backend import MLLMBackend
@@ -202,6 +206,8 @@ class RunTowerAgentPipelineTest(unittest.TestCase):
         a2 = steps["steps"][2]
         self.assertGreaterEqual(a2["detail"]["bars"], 100)
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_scan_model_pending_review(self):
         from traceability.harness.tower_harness import run_tower
         from traceability.intake.mllm_backend import MLLMBackend

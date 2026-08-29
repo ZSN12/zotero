@@ -115,6 +115,13 @@ MLLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "default_model": "kimi-k2.7-code",
         "label": "Moonshot 开放平台（kimi-k2.7-code 按量）",
     },
+    "workbuddy": {
+        "api_key_envs": ["WORKBUDDY_API_KEY", "OPENAI_API_KEY"],
+        "base_url_env": "WORKBUDDY_BASE_URL",
+        "default_base_url": "http://127.0.0.1:10101/v1",
+        "default_model": "deepseek-v4-pro",
+        "label": "WorkBuddy 本地代理（deepseek-v4-pro 免费稳定无鉴权）",
+    },
     "antigravity-ocx": {
         # Google Antigravity / Cloud Code Assist 经本地 opencodex relay（DSH 同款）。
         # relay 已用 OAuth 鉴权，本地无需 client key；但 OpenAI SDK 要求 Authorization
@@ -146,14 +153,14 @@ def resolve_mllm_config(
         resolved_key = api_key
     else:
         resolved_key = _first_env(preset["api_key_envs"])
-        if not resolved_key and provider_id == "antigravity-ocx":
-            resolved_key = "ocx-relay"
+        if not resolved_key and provider_id in ("antigravity-ocx", "workbuddy"):
+            resolved_key = "workbuddy-key"
     resolved_base = base_url or os.environ.get(preset["base_url_env"]) or preset["default_base_url"]
     # 模型解析：显式传参 > 全局 MLLM_MODEL > preset 默认。
     # 但 agent-vision / antigravity-ocx 是「免 key 本地/中继」专用 provider，
     # 全局 MLLM_MODEL（通常写给 Kimi 的 k3-256k）不应污染它们的模型命名空间；
     # 这两个 provider 只在显式传 model 时才覆盖 preset 默认值。
-    if provider_id in ("agent-vision", "antigravity-ocx"):
+    if provider_id in ("agent-vision", "antigravity-ocx", "workbuddy"):
         resolved_model = model or preset["default_model"]
     else:
         resolved_model = model or os.environ.get("MLLM_MODEL") or preset["default_model"]
