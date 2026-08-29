@@ -1143,8 +1143,23 @@ def classify_members(nodes: NodeMap, bars: List[dict]) -> Dict[str, str]:
     # 塔身半宽估计（用于 CROSS/横担判定）：节点 |x| 中位数更稳健（避开横担端头）。
     xs = [abs(float(p[0])) for p in nodes.values()]
     body_halfwidth = float(np.median(xs)) if xs else 0.0
-    # 立面外缘宽度（用于主腿边缘判定）：节点最大 |x|。
-    wall = float(max(xs)) if xs else 0.0
+    # 立面外缘宽度（用于主腿边缘判定）：用「近竖直杆件」的端点 |x| 上分位数，
+    # 避免被横担（近水平外伸）端点把 wall 拉到塔身外，导致主腿 min|x| 判定失效。
+    vertical_xs: List[float] = []
+    for b in bars:
+        d = _bar_vector(nodes, b)
+        if d is None:
+            continue
+        if abs(_inclination_deg(d)) >= 45.0:
+            f, t = nodes[b["from"]], nodes[b["to"]]
+            vertical_xs.append(abs(float(f[0])))
+            vertical_xs.append(abs(float(t[0])))
+    if vertical_xs:
+        # 上分位数（85%）作为立面外缘，稳健于 max（后者被横担污染）
+        vertical_xs.sort()
+        wall = float(vertical_xs[int(len(vertical_xs) * 0.85)])
+    else:
+        wall = float(max(xs)) if xs else 0.0
     if body_halfwidth <= 0:
         radial_vals = [r for _, _, r in info.values() if r > 0]
         body_halfwidth = float(np.median(radial_vals)) if radial_vals else 0.0

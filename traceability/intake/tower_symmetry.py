@@ -218,11 +218,23 @@ def expand_4_face_symmetry_model(
         face = b.get("face")
         generated_face = face.upper() if face and face not in ("diaphragm", "center", "corner") else face
 
-        # 来源引用：横隔面/纯推导杆件用 DERIVED 来源；镜像杆件继承原组件 SourceRef。
-        if is_diaphragm or b.get("corner_leg"):
+        # 来源引用 + 语义冻结（阶段0）：
+        #   recognized   —— primary 面（front）杆件，直接从 DXF 识别，进 physical P/R
+        #   mirrored     —— 镜像派生面（b/l/r），几何派生但继承原组件 SourceRef
+        #   derived      —— corner_leg / diaphragm / center 轴，纯展示几何，不进 P/R
+        if is_diaphragm or b.get("corner_leg") or face in ("diaphragm", "center", "corner"):
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "derived_4face"
             evidence_status = "derived"
+        elif face and str(face).lower() == "f":
+            # front（primary）面：识别原貌，非镜像派生。
+            bar_source = orig_comp.source if (orig_comp is not None and orig_comp.source is not None) else (b.get("_source_ref") or src_ref)
+            evidence_status = "recognized"
+            # 保持原始 geometry_origin（dxf_geom 等），不覆盖为 derived_4face
+        elif face and str(face).lower() in ("b", "l", "r"):
+            # 镜像派生面：语义上就是 mirrored，不受 source 有无影响。
+            bar_source = orig_comp.source if (orig_comp is not None and orig_comp.source is not None) else (b.get("_source_ref") or src_ref)
+            evidence_status = "mirrored"
         elif orig_comp is not None and orig_comp.source is not None:
             bar_source = orig_comp.source
             evidence_status = "mirrored"

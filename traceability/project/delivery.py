@@ -14,6 +14,12 @@ from typing import Any, Dict, List, Optional
 from ..harness.harness import run_harness
 from ..model import EngineeringModel
 from .model import ProjectModel, build_project_from_directory, save_project
+from .module_build import (
+    physical_bar_counts,
+    resolve_master_bom_path,
+    try_assembly_from_merged,
+    try_assembly_m1_m6_from_merged,
+)
 
 
 def export_detail_qa_atlas(
@@ -156,25 +162,6 @@ def _resolve_canonical_tower_path(
         if c.exists() and c.is_file():
             return c
     return None
-
-
-def _align_skeleton_to_canonical(model: EngineeringModel, canonical: Any) -> None:
-    """用 CanonicalTower（.mod/.NODE 权威拓扑）重建骨架的 tower_node/tower_bar。
-
-    原地替换 model 的 tower_node / tower_bar 组件为 GT 权威拓扑（358 节点 +
-    1071 杆），使召回对齐 GT（可达 100%）。保留其它上下文组件（gusset/bolt/
-    BOM 等）。GT 自带的 section / material 一并写入，精确到 GT 13 种角钢。
-    """
-    # 移除旧 tower_node / tower_bar
-    for cid in list(model.components):
-        if model.components[cid].kind in ("tower_node", "tower_bar"):
-            del model.components[cid]
-
-    gt_model = canonical.to_engineering_model(prefix="gt_")
-    for cid, comp in gt_model.components.items():
-        # 统一 source 标注为 GT 权威对齐
-        comp.properties["gt_aligned"] = True
-        model.components[cid] = comp
 
 
 def _sheet_model_stats(models: List[EngineeringModel], sources: List[str]) -> Dict[str, Any]:
@@ -352,6 +339,36 @@ def _build_hybrid_project(
     return project, project_path, sheet_models
 
 
+def _select_assembly(
+    merged_model: EngineeringModel,
+    layer_map_path: Optional[str | Path],
+    ov: Dict[str, Any],
+) -> tuple[Optional[Dict[str, Any]], bool]:
+    """Phase 3 装配选择：真 M1-M6 优先，仅显式请求 demo 时才回退 z 拆分。
+
+    清单 P1：真 M1-M6（module_definitions 已配置）装配失败时不得用
+    assembly_demo_z_split 冒充成功——返回带 error 的 dict（enabled=False），
+    由 deliver_project 判 failed（不闭合）。
+
+    返回 (assembly_info, fallback_to_demo)。
+    """
+    from .module_build import try_assembly_from_merged, try_assembly_m1_m6_from_merged
+
+    if isinstance(ov, dict) and ov.get("module_definitions"):
+        info = try_assembly_m1_m6_from_merged(merged_model, layer_map_path)
+        if info is None:
+            info = {
+                "model": None,
+                "mode": "m1_m6_rigid_chain",
+                "enabled": False,
+                "error": "M1-M6 长链条装配未闭合（模块不足或刚性链失败），"
+                         "拒绝回退 assembly_demo_z_split 冒充成功",
+            }
+        return info, False
+    info = try_assembly_from_merged(merged_model, layer_map_path)
+    return info, info is not None
+
+
 def deliver_project(
     input_dir: str | Path,
     out_dir: str | Path,
@@ -378,12 +395,6 @@ def deliver_project(
     from .bar_inventory import aggregate_bar_inventory
     from .bom_tree import aggregate_bom_tree
     from .harness import run_project_harness
-    from .module_build import (
-        physical_bar_counts,
-        resolve_master_bom_path,
-        try_assembly_from_merged,
-        try_assembly_m1_m6_from_merged,
-    )
 
     input_dir = Path(input_dir)
     out_dir = Path(out_dir)
@@ -520,17 +531,17 @@ def deliver_project(
     if merged_model is not None and ov.get("enable_4_face_expansion"):
         expand_4_face_symmetry_model(merged_model, layer_map_path)
 
-    # Phase 2.5（可选）：GT 权威拓扑对齐——用 .mod/.NODE 的 358 节点 + 1071 杆
-    # 拓扑替换 M3 骨架的 tower_node/tower_bar，使召回对齐 GT（可达 100%）。
-    # DXF 加工详图是 fabrication 图，碎片化 + 40° 方向旋转 + 横隔缺失（X-Y 平面
-    # 结构上不可达），纯几何合并实测不可达 80%；此步以权威拓扑重建骨架，
-    # 同时保留 GT 自带的 section/material（精确到 GT 13 种角钢）。
-    # overlay 开关：gt_align = true（默认关闭，保持 M3 纯 DXF 语义）。
+    # Phase 2.5（仅调试/评测）：GT 权威拓扑对齐。默认关闭，生产交付永不启用。
+    # 阶段 0.2 GT 隔离：此路径只允许 overlay 显式 `gt_align: true`（debug/eval），
+    # 且必须由 debug.gt_align 模块执行，每根替换杆件打 gt_aligned=True 标记。
+    # 正式评测脚本检测到该标记时直接拒绝评测。
+    gt_aligned = False
     if merged_model is not None and ov.get("gt_align"):
         canonical_tower_path = _resolve_canonical_tower_path(
             input_dir, ov, layer_map_path,
         )
         if canonical_tower_path and canonical_tower_path.exists():
+            from ..debug.gt_align import align_skeleton_to_canonical
             from ..solve.canonical_tower import load_gt, load_from_mod
             node_file = None
             if canonical_tower_path.suffix.lower() == ".mod":
@@ -541,13 +552,14 @@ def deliver_project(
                 canonical = load_from_mod(canonical_tower_path, node_file=node_file, merge=False)
             else:
                 canonical = load_gt(canonical_tower_path)
-            _align_skeleton_to_canonical(merged_model, canonical)
+            align_skeleton_to_canonical(merged_model, canonical)
+            gt_aligned = True
 
-            # 图纸件号 ↔ 计算模型件号映射（打通 BOM 追溯）。
+            # 图纸件号 ↔ 计算模型件号映射（仅用于调试/评测，不改变骨架语义）。
             # 用 section + 长度（容差 60mm）把 BOM 数字件号（105/108/...）映射到
             # GT 的 PM_XXXX 杆集合；主腿合并件按 4 象限 1:1 映射。
             try:
-                from ..project.bar_id_mapping import build_bar_id_mapping, mapping_to_bar_map
+                from ..project.bar_id_mapping import build_bar_id_mapping
                 import csv as _csv
                 gt_dict = canonical.to_dict()
                 bom_rows = []
@@ -586,11 +598,11 @@ def deliver_project(
     ) if sheet_model_list or physical_counts else {}
 
     assembly_info: Optional[Dict[str, Any]] = None
+    assembly_fallback_to_demo = False
     if merged_model is not None:
-        # Phase 3：优先 M1–M6 长链条装配；否则回退 Gap 1 的 M1/M2 z 拆分 demo。
-        assembly_info = try_assembly_m1_m6_from_merged(merged_model, layer_map_path)
-        if assembly_info is None:
-            assembly_info = try_assembly_from_merged(merged_model, layer_map_path)
+        assembly_info, assembly_fallback_to_demo = _select_assembly(
+            merged_model, layer_map_path, ov,
+        )
         if assembly_info and assembly_info.get("model"):
             asm_path = out_dir / "assembly_model.json"
             save_model(assembly_info["model"], asm_path)
@@ -743,6 +755,10 @@ def deliver_project(
     assembly_failed = False
     if assembly_enabled and assembly_reports:
         assembly_failed = not bool(assembly_closed)
+    # P1 修复：真 M1-M6 被请求但装配失败（assembly_info.error 且未 enabled），
+    # 不得静默回退 demo 冒充成功——判 failed（不闭合）。
+    if assembly_info and assembly_info.get("error") and not assembly_enabled:
+        assembly_failed = True
 
     # 导出/门禁失败
     export_failed = bool(skeleton_glb_error) or (export_glb and not skeleton_gate_ok)
@@ -836,6 +852,9 @@ def deliver_project(
     delivery = {
         "ok": delivery_ok,
         "status": status,
+        # 阶段 0.2 GT 隔离：manifest 必须标明是否发生过 GT 对齐。
+        # gt_aligned=True 的交付只可用于调试/评测对齐，正式评测应拒绝。
+        "gt_aligned": gt_aligned,
         "sheet_failures": sheet_failures,
         "harness_all_passed": harness_all_passed,
         "project_harness_all_passed": project_harness.get("all_passed"),

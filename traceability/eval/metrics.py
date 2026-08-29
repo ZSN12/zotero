@@ -33,35 +33,93 @@ Seg3D = Tuple[Tuple[float, float, float], Tuple[float, float, float]]
 # canonical     —— GT 权威塔，仅评测基准，不进生产建模
 
 DERIVED_ORIGINS = frozenset({"derived_4face"})
-DERIVED_EVIDENCE_STATUS = frozenset({"derived", "mirrored"})
+# derived（纯展示几何，不进任何 P/R）：corner_leg / diaphragm / center 轴
+DERIVED_EVIDENCE_STATUS = frozenset({"derived"})
+# mirrored（镜像派生面 B/L/R）：进 physical P/R，但不进 recognition P/R
+MIRRORED_EVIDENCE_STATUS = frozenset({"mirrored"})
 # 整高合成角腿 / 自动 diaphragm 的显式标记
 DERIVED_COMPONENT_FLAGS = ("corner_leg", "diaphragm", "auto_diaphragm")
 
 
 def is_derived_bar(properties: Dict[str, Any]) -> bool:
-    """判断一根杆件是否为派生展示几何（不计入 physical Precision/Recall）。
+    """判断一根杆件是否为派生展示几何（不进任何 Precision/Recall）。
 
     判定依据（任一命中即 derived）：
-        * geometry_origin in DERIVED_ORIGINS（derived_4face）
-        * evidence_status in {"derived", "mirrored"}
+        * evidence_status == "derived"（corner_leg/diaphragm/center 轴）
         * 显式 corner_leg / diaphragm / auto_diaphragm 标记
+        * face in {"diaphragm", "center", "corner"}
+
+    注意：mirrored（镜像面 B/L/R）不是 derived——它们是 4-face 展开的正常
+    重建产物，进 physical P/R（但不进 recognition P/R，见 is_recognized_bar）。
     """
-    if properties.get("geometry_origin") in DERIVED_ORIGINS:
-        return True
     if properties.get("evidence_status") in DERIVED_EVIDENCE_STATUS:
         return True
     if properties.get("corner_leg") or properties.get("diaphragm") or properties.get("auto_diaphragm"):
+        return True
+    if properties.get("face") in ("diaphragm", "center", "corner"):
+        return True
+    return False
+
+
+def is_recognized_bar(properties: Dict[str, Any]) -> bool:
+    """判断一根杆件是否为「直接识别」产物（进 recognition P/R）。
+
+    仅 evidence_status == "recognized"（或未标记但 geometry_origin 是 dxf/识别
+    来源、且非 derived/mirrored/canonical）的杆件才计入识别召回。
+    """
+    if is_derived_bar(properties):
+        return False
+    if properties.get("evidence_status") == "mirrored":
+        return False
+    # GT 对齐 / canonical 权威拓扑：不是识别产物，不进 recognition P/R
+    if is_canonical_bar(properties):
+        return False
+    # 未标记 evidence_status 的杆件：按 geometry_origin 判断
+    origin = properties.get("geometry_origin")
+    if origin in DERIVED_ORIGINS:
+        return False
+    return True
+
+
+def is_canonical_bar(properties: Dict[str, Any]) -> bool:
+    """判断杆件是否为 GT 权威拓扑（canonical，评测基准，不进生产 P/R）。"""
+    if properties.get("gt_aligned"):
+        return True
+    if properties.get("geometry_class") == "canonical":
+        return True
+    if properties.get("geometry_origin") == "gim":
         return True
     return False
 
 
 def is_physical_bar(properties: Dict[str, Any]) -> bool:
-    """物理杆件（进 physical P/R）：非 derived、非 canonical。"""
+    """物理杆件（进 physical P/R）：非 derived、非 canonical。
+
+    mirrored（镜像面）是真实物理杆件的重建，计入 physical P/R。
+    """
     if is_derived_bar(properties):
         return False
-    if properties.get("gt_aligned") or properties.get("canonical"):
+    if is_canonical_bar(properties):
         return False
     return True
+
+
+def model_has_gt_alignment(model: Dict[str, Any]) -> bool:
+    """检测模型是否被 GT 对齐污染（阶段 0.2：评测拒绝 GT 泄漏）。
+
+    任一 tower_bar / tower_node 的 properties.gt_aligned 为真即视为污染。
+    正式评测必须在本函数返回 True 时退出失败。
+    """
+    comps = model.get("components") or {}
+    if isinstance(comps, dict):
+        for comp in comps.values():
+            props = comp.get("properties") if isinstance(comp, dict) else None
+            if isinstance(props, dict) and props.get("gt_aligned"):
+                return True
+    df = model.get("drawing_file")
+    if isinstance(df, dict) and (df.get("properties") or {}).get("gt_aligned"):
+        return True
+    return False
 
 
 # --------------------------------------------------------------------------- #
@@ -198,7 +256,10 @@ def hungarian_match(
 
     import numpy as np
 
-    cost = np.full((n_gt, n_m), np.inf)
+    # 用一个大数（远大于 max_cost）替代 inf，避免 linear_sum_assignment 报
+    # "infeasible"；匹配后再把 cost >= max_cost 的对过滤掉（视为不匹配）。
+    big = max(max_cost * 10.0, 1.0)
+    cost = np.full((n_gt, n_m), big)
     for i, g in enumerate(gt):
         for j, m in enumerate(model):
             c = cost_fn(g, m)
@@ -211,7 +272,7 @@ def hungarian_match(
     matched = []
     used_m = set()
     for i, j in zip(row_ind, col_ind):
-        if cost[i, j] < max_cost and not math.isinf(cost[i, j]):
+        if cost[i, j] < max_cost:
             matched.append((int(i), int(j)))
             used_m.add(int(j))
 
@@ -274,12 +335,17 @@ def bars_from_model_2d(
     model: Dict[str, Any],
     *,
     view: Optional[str] = None,
-    exclude_derived: bool = True,
+    mode: str = "physical",
 ) -> List[Tuple[Seg2D, Dict[str, Any]]]:
-    """从 model.json 提取 2D 杆件（排除 derived 构件）。
+    """从 model.json 提取 2D 杆件。
 
-    返回 [( (x1,y1,x2,y2), properties ), ...]，仅物理杆件（exclude_derived=True）。
+    mode="recognition"：仅 recognized（直接识别，排除 mirrored/derived）——A2 几何检测。
+    mode="physical"：非 derived（含 mirrored 镜像面）——M3 物理重建。
+    返回 [( (x1,y1,x2,y2), properties ), ...]。
     """
+    if mode not in ("recognition", "physical"):
+        raise ValueError(f"未知 mode={mode}，应为 recognition|physical")
+    filter_fn = is_recognized_bar if mode == "recognition" else is_physical_bar
     comps = model.get("components", {})
     nodes = {cid: c for cid, c in comps.items() if c.get("kind") == "tower_node"}
     out: List[Tuple[Seg2D, Dict[str, Any]]] = []
@@ -288,7 +354,7 @@ def bars_from_model_2d(
         if c.get("kind") != "tower_bar":
             continue
         p = c.get("properties", {})
-        if exclude_derived and is_derived_bar(p):
+        if not filter_fn(p):
             continue
         vt = p.get("view_type")
         if view is not None and vt is not None and vt != view:
@@ -324,9 +390,15 @@ def bars_from_model_2d(
 def bars_from_model_3d(
     model: Dict[str, Any],
     *,
-    exclude_derived: bool = True,
+    mode: str = "physical",
 ) -> List[Tuple[Seg3D, Dict[str, Any]]]:
-    """从 model.json 提取 3D 物理杆件（排除 derived 构件）。"""
+    """从 model.json 提取 3D 杆件。
+
+    mode="recognition"：仅 recognized；mode="physical"：非 derived（含 mirrored）。
+    """
+    if mode not in ("recognition", "physical"):
+        raise ValueError(f"未知 mode={mode}，应为 recognition|physical")
+    filter_fn = is_recognized_bar if mode == "recognition" else is_physical_bar
     comps = model.get("components", {})
     nodes: Dict[str, Tuple[float, float, float]] = {}
     for cid, c in comps.items():
@@ -339,7 +411,7 @@ def bars_from_model_3d(
         if c.get("kind") != "tower_bar":
             continue
         p = c.get("properties", {})
-        if exclude_derived and is_derived_bar(p):
+        if not filter_fn(p):
             continue
         f, t = p.get("from_node"), p.get("to_node")
         if f in nodes and t in nodes:
@@ -396,7 +468,8 @@ def eval_a2_geometry_2d(
 ) -> Dict[str, Any]:
     """A2 几何检测（2D 投影）：GT 投影 vs 模型物理 2D 杆件。"""
     g = gt_bars_2d(gt, view)
-    m = bars_from_model_2d(model, view=view, exclude_derived=True)
+    # A2 几何检测 = recognition 评测：只算直接识别的杆件（排除 mirrored/derived）
+    m = bars_from_model_2d(model, view=view, mode="recognition")
     gt_segs = [s for s, _, _ in g]
     model_segs = [s for s, _ in m]
     result = eval_segment_pr(gt_segs, model_segs, segment_cost, tols)
@@ -422,7 +495,8 @@ def eval_m3_physical_3d(
 ) -> Dict[str, Any]:
     """M3 物理 3D：GT 3D vs 模型物理 3D 杆件（排除 derived）。"""
     g = gt_bars_3d(gt)
-    m = bars_from_model_3d(model, exclude_derived=True)
+    # M3 物理 3D = physical 评测：非 derived（含 mirrored 镜像面）
+    m = bars_from_model_3d(model, mode="physical")
     gt_segs = [s for s, _, _ in g]
     model_segs = [s for s, _ in m]
     result = eval_segment_pr(gt_segs, model_segs, segment_cost_3d, tols)
@@ -458,3 +532,104 @@ def _classify_3d(seg: Seg3D) -> str:
     if dz < 0.3:
         return "horizontal"
     return "diagonal"
+
+
+# --------------------------------------------------------------------------- #
+# A1 件号识别 / A3 件号关联（独立评测，不混入几何 P/R）
+# --------------------------------------------------------------------------- #
+
+def _label_ids(gt: Dict[str, Any]) -> set:
+    """GT 件号集合（bar id 去重）。"""
+    return {b.get("id") for b in gt.get("bars", []) if b.get("id")}
+
+
+def _model_label_ids(model: Dict[str, Any]) -> set:
+    """模型识别件号集合（tower_bar 的 bar_id，排除 UNLABELED/derived/canonical）。"""
+    comps = model.get("components", {})
+    ids: set = set()
+    for c in comps.values():
+        if c.get("kind") != "tower_bar":
+            continue
+        p = c.get("properties", {})
+        if not is_physical_bar(p):
+            continue
+        bid = p.get("bar_id")
+        if bid and not str(bid).startswith("UNLABELED"):
+            ids.add(str(bid))
+    return ids
+
+
+def eval_a1_labels(
+    gt: Dict[str, Any],
+    model: Dict[str, Any],
+    *,
+    id_mapping: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """A1 件号识别：GT 件号集合 vs 模型识别件号集合（Exact Match）。
+
+    id_mapping：图纸数字件号（105/108/...）→ GT 件号（PM_XXXX）的映射表。
+    若提供，模型件号先映射到 GT 命名空间再比较；否则直接字符串比较。
+
+    注意：A1 只评测「件号是否被识别出来」，不评测几何位置（那是 A2/A3 的职责）。
+    """
+    gt_ids = _label_ids(gt)
+    model_ids = _model_label_ids(model)
+    if id_mapping:
+        mapped = {id_mapping.get(m, m) for m in model_ids}
+        model_ids = mapped
+    tp = len(gt_ids & model_ids)
+    fp = len(model_ids - gt_ids)
+    fn = len(gt_ids - model_ids)
+    return {
+        "n_gt": len(gt_ids),
+        "n_model": len(model_ids),
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "precision": round(tp / len(model_ids), 4) if model_ids else 0.0,
+        "recall": round(tp / len(gt_ids), 4) if gt_ids else 0.0,
+        "exact_match_rate": round(tp / len(gt_ids), 4) if gt_ids else 0.0,
+    }
+
+
+def eval_a3_association(
+    gt: Dict[str, Any],
+    model: Dict[str, Any],
+    view: str = "front",
+    tols: Sequence[float] = DEFAULT_TOLS,
+    *,
+    id_mapping: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """A3 件号关联：几何匹配对中，件号是否也正确关联到对应杆件。
+
+    先做 A2 几何一对一匹配，再在「匹配对」里检查件号是否一致（经 id_mapping
+    归一化后）。这评测的是「识别出的件号贴在正确杆件上」的能力，而非单纯识别。
+
+    注意：本指标依赖几何匹配（A2），但不与 A2 的几何 P/R 混算——它是独立的口径。
+    """
+    g = gt_bars_2d(gt, view)
+    m = bars_from_model_2d(model, view=view, mode="recognition")
+    gt_segs = [s for s, _, _ in g]
+    model_segs = [s for s, _ in m]
+    result = eval_segment_pr(gt_segs, model_segs, segment_cost, tols)
+    matched = result["matched_at_default"]
+    correct = 0
+    for gi, mj in matched:
+        gid = g[gi][1]
+        mid = m[mj][1].get("bar_id", "")
+        if not mid or str(mid).startswith("UNLABELED"):
+            continue
+        if id_mapping:
+            mid = id_mapping.get(str(mid), str(mid))
+        if str(gid) == str(mid):
+            correct += 1
+    n = len(matched)
+    return {
+        "matched_pairs": n,
+        "correct_association": correct,
+        "association_rate": round(correct / n, 4) if n else 0.0,
+        "n_gt": result["n_gt"],
+        "n_model": result["n_model"],
+        "fn": result["sweep"][-1]["fn"],
+        "fp": result["sweep"][-1]["fp"],
+    }
