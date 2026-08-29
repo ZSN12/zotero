@@ -656,14 +656,19 @@ async function deliverProjectDemo() {
       renderProjectHarness(ph);
       renderProjectBom(payload);
       renderProjectModules(payload);
+      const products = (payload.products || [])
+        .map((prod) => `${prod.id}(${prod.layer})${prod.present ? ' ✓' : ' ✗'}`)
+        .join(' | ');
+      const glbUrl = payload.skeleton_glb_path || payload.glb_path;
       $('project-merge').textContent =
-        `交付完成：nodes=${mr.nodes_solved} bars=${mr.bars} GLB=${payload.glb_path}\n` +
+        `交付完成：nodes=${mr.nodes_solved} bars=${mr.bars}\n` +
+        `产物 ${products}\n` +
         `图册 Harness: ${JSON.stringify(phCounts)} | 件号 ${inv.total_unique_bar_ids || 0} | ` +
         `master BOM 冲突 ${(payload.bom_tree_summary || {}).conflict_count || 0}` +
         (payload.assembly && payload.assembly.enabled ? ` | 装配 ${payload.assembly.mode}` : '') +
         (payload.harness_all_passed === false ? '（模型 Harness 待复核）' : '');
       if (payload.model_path) await renderBars(payload.model_path);
-      if (payload.glb_path) loadGlb(payload.glb_path);
+      if (glbUrl) loadGlb(glbUrl);
     } else {
       $('project-merge').textContent = '交付失败：' + (payload.glb_error || payload.error || '未知');
     }

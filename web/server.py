@@ -302,7 +302,10 @@ def deliver_project_demo(
     )
     _audit("deliver_project", reviewer=reviewer, ok=result.get("ok"), out=str(out_dir))
     payload = dict(result)
-    for key in ("project_path", "model_path", "glb_path", "manifest_path"):
+    for key in (
+        "project_path", "model_path", "glb_path", "manifest_path",
+        "canonical_glb_path", "skeleton_glb_path", "index_path",
+    ):
         if payload.get(key):
             payload[key] = _public_path(str(payload[key]))
     payload["out_dir"] = _public_path(str(out_dir))

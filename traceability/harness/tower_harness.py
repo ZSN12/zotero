@@ -147,6 +147,7 @@ def run_tower(
     input_dir: Optional[str | Path] = None,
     mllm: Optional[Any] = None,
     use_ocr_fallback: bool = True,
+    agent_mode: str = "ezdxf",
 ) -> Dict[str, Any]:
     """一步命令跑完全链：intake → compile → cross_check → verify → retry → export。
 
@@ -301,40 +302,63 @@ def run_tower(
     else:
         # ============ 单文件 intake ============
         graph.start("intake", "图纸接入", input=str(source), source=str(source))
-        try:
-            model = build_intake_model(source, layer_map_path=layer_map_path, backend=backend,
-                                       bom_path=bom_path, merge=merge, scale=scale,
-                                       mm_per_px=mm_per_px)
-            detail: Dict[str, Any] = {
-                "output": model_path.as_posix(),
-                "components": len(model.components),
-                "bars": _n(model, "tower_bar"),
-                "nodes": _n(model, "tower_node"),
-            }
-            mllm_meta = getattr(model, "mllm_meta", None)
-            if mllm_meta:
-                detail["mllm"] = mllm_meta
-            mllm_warnings = getattr(model, "mllm_warnings", None)
-            if mllm_warnings:
-                detail["mllm_warnings"] = mllm_warnings
-            graph.finish(**detail)
-        except Exception as exc:
-            # P1：MLLM 失败时把 model / raw 长度 / 失败原因写进 steps.json
-            from ..intake.mllm_backend import MLLMAnalysisError
-            if isinstance(exc, MLLMAnalysisError):
-                graph.fail(
-                    str(exc),
-                    failure_reason=exc.meta.get("failure_reason"),
-                    model=exc.meta.get("model"),
-                    elapsed_s=exc.meta.get("elapsed_s"),
-                    raw_length=exc.meta.get("raw_length"),
-                    parse_warnings=exc.meta.get("parse_warnings"),
+        # P1-5 统一入口：单文件 DXF 的 --agent-mode hybrid 走 hybrid Agent 链
+        # （ezdxf 矢量几何 + 可插拔多模态件号），与图册 deliver-project 同源；
+        # 不再维护独立的 run_agent_sheet.py 业务实现。
+        if agent_mode == "hybrid" and source_path.suffix.lower() == ".dxf":
+            try:
+                from ..intake.hybrid_dxf_agent import run_hybrid_dxf_agent_pipeline
+                hybrid_result = run_hybrid_dxf_agent_pipeline(
+                    source, out_dir,
+                    layer_map_path=layer_map_path,
+                    mllm=mllm,
+                    bom_path=bom_path,
+                    use_ocr_fallback=use_ocr_fallback,
                 )
-            else:
+                # hybrid 管线内部已完成 A0-A4（含 finalize + Harness verify + export），
+                # 直接返回其结果，不再走下方通用的 compile/verify/export 流程
+                # （否则会二次 compile/verify，属重复执行路径）。
+                return hybrid_result
+            except Exception as exc:
                 graph.fail(str(exc))
-            graph.export_json(steps_path)
-            return {"ok": False, "graph": graph, "steps_path": steps_path.as_posix(),
-                    "error": str(exc)}
+                graph.export_json(steps_path)
+                return {"ok": False, "graph": graph, "steps_path": steps_path.as_posix(),
+                        "error": str(exc)}
+        else:
+            try:
+                model = build_intake_model(source, layer_map_path=layer_map_path, backend=backend,
+                                           bom_path=bom_path, merge=merge, scale=scale,
+                                           mm_per_px=mm_per_px)
+                detail: Dict[str, Any] = {
+                    "output": model_path.as_posix(),
+                    "components": len(model.components),
+                    "bars": _n(model, "tower_bar"),
+                    "nodes": _n(model, "tower_node"),
+                }
+                mllm_meta = getattr(model, "mllm_meta", None)
+                if mllm_meta:
+                    detail["mllm"] = mllm_meta
+                mllm_warnings = getattr(model, "mllm_warnings", None)
+                if mllm_warnings:
+                    detail["mllm_warnings"] = mllm_warnings
+                graph.finish(**detail)
+            except Exception as exc:
+                # P1：MLLM 失败时把 model / raw 长度 / 失败原因写进 steps.json
+                from ..intake.mllm_backend import MLLMAnalysisError
+                if isinstance(exc, MLLMAnalysisError):
+                    graph.fail(
+                        str(exc),
+                        failure_reason=exc.meta.get("failure_reason"),
+                        model=exc.meta.get("model"),
+                        elapsed_s=exc.meta.get("elapsed_s"),
+                        raw_length=exc.meta.get("raw_length"),
+                        parse_warnings=exc.meta.get("parse_warnings"),
+                    )
+                else:
+                    graph.fail(str(exc))
+                graph.export_json(steps_path)
+                return {"ok": False, "graph": graph, "steps_path": steps_path.as_posix(),
+                        "error": str(exc)}
 
         # compile（finalize：BOM + merge + 规则注入）
         graph.start("compile", "模型编译（规则注入/视图合并）")

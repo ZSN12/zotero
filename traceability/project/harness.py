@@ -36,13 +36,17 @@ class ProjectValidationResult:
 def _summarize(results: List[ProjectValidationResult]) -> Dict[str, Any]:
     counts: Dict[str, int] = {}
     failed: List[str] = []
+    pending: List[str] = []
     for r in results:
         counts[r.status.value] = counts.get(r.status.value, 0) + 1
         if r.status == ValidationStatus.FAILED:
             failed.append(r.rule_id)
+        elif r.status == ValidationStatus.PENDING:
+            pending.append(r.rule_id)
     return {
         "counts": counts,
         "failed": failed,
+        "pending": pending,
         "results": [r.to_dict() for r in results],
         "all_passed": len(failed) == 0,
     }

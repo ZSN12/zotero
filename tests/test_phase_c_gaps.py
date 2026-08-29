@@ -81,6 +81,38 @@ class CrossFileBatchTest(unittest.TestCase):
         self.assertNotIn("35A1-JC1-03", stems)
         self.assertIn("35C2-SJG1-ML", stems)
 
+    def test_sheet_role_enum_spatial_boundary(self):
+        # Phase A1/A2：角色枚举固定，module_panel/node_detail 永远不能进 spatial_merge，
+        # 即使被写进 merge_stems_extra / infer_side_on_stems 也会被剔除。
+        import json
+        from traceability.intake.tower_spec import (
+            canonical_sheet_role,
+            cross_file_merge_stems,
+            sheet_is_spatial_mergeable,
+            sheet_role_for_stem,
+        )
+
+        ov = json.loads(OVERLAY.read_text(encoding="utf-8"))
+        self.assertEqual(canonical_sheet_role("front"), "elevation")
+        self.assertEqual(canonical_sheet_role("detail"), "node_detail")
+        self.assertEqual(canonical_sheet_role("assembly"), "module_panel")
+        self.assertEqual(sheet_role_for_stem("35A1-JC1-02", ov), "elevation")
+        self.assertEqual(sheet_role_for_stem("35A1-JC1-03", ov), "node_detail")
+        self.assertEqual(sheet_role_for_stem("35C2-SJG1-ML", ov), "plan")
+        self.assertTrue(sheet_is_spatial_mergeable("35A1-JC1-02", ov))
+        self.assertTrue(sheet_is_spatial_mergeable("35C2-SJG1-ML", ov))
+        self.assertFalse(sheet_is_spatial_mergeable("35A1-JC1-03", ov))
+
+        cf = dict(ov.get("cross_file_views") or {})
+        cf["merge_stems_extra"] = ["35A1-JC1-03", "35A1-JC1-01-1"]
+        cf["infer_side_on_stems"] = ["35A1-JC1-03"]
+        ov["cross_file_views"] = cf
+        stems = cross_file_merge_stems(ov)
+        self.assertNotIn("35A1-JC1-03", stems)
+        self.assertNotIn("35A1-JC1-01-1", stems)
+        self.assertIn("35A1-JC1-02", stems)
+        self.assertIn("35C2-SJG1-ML", stems)
+
     def test_cross_file_partial_3d_rule_passes(self):
         from traceability.intake.tower_batch import cross_file_batch
         from traceability.harness.harness import run_harness
@@ -111,13 +143,18 @@ class CrossFileBatchTest(unittest.TestCase):
             if c.kind == "tower_node" and c.properties.get("view_type") == "front"
         ]
         solved = [c for c in front_nodes if c.properties.get("solve_status") == "solved"]
-        # 02 单立面 + synthetic_side_from_front 合成 side 节点解 y：全部 front 节点解算
-        self.assertGreater(len(solved), 0)
-        self.assertEqual(len(solved), len(front_nodes))
         df = model.components.get("drawing_file")
-        self.assertGreater(df.properties.get("y_synthetic_side", 0), 0)
+        # P3 架构迁移：synthetic side 已被四向镜像展开替代。展开后节点被重写为
+        # 4 面（_F/_B/_L/_R），原 front view_type 不再保留，因此改验证：
+        # 四向展开已触发 + 展开后所有节点 solve_status=solved（三轴已知）。
+        self.assertTrue(df.properties.get("expanded_4_face"),
+                        "enable_4_face_expansion 应触发四向镜像展开")
+        all_nodes = [c for c in model.components.values() if c.kind == "tower_node"]
+        all_solved = [c for c in all_nodes if c.properties.get("solve_status") == "solved"]
+        self.assertGreater(len(all_solved), 0)
+        self.assertEqual(len(all_solved), len(all_nodes))
         mr = r.get("merge_report") or {}
-        self.assertEqual(mr.get("nodes_solved"), len(solved))
+        self.assertGreater(mr.get("nodes_solved", 0), 0)
 
     def test_cross_file_merge_report_has_front_side_pairings(self):
         from traceability.intake.tower_batch import cross_file_batch
@@ -131,13 +168,13 @@ class CrossFileBatchTest(unittest.TestCase):
             model = load_model(str(Path(tmp) / "model.json"))
         df = model.components.get("drawing_file")
         props = df.properties if hasattr(df, "properties") else {}
-        # 02 无独立 side region，走 synthetic_side_from_front：合成 side 节点解 y，
-        # 并补 view_kinds 里的 'side'（供 require_front_and_side 门禁）。
-        self.assertGreater(props.get("synthetic_side_nodes", 0), 0,
-                           "synthetic_side_from_front 应合成 side 节点")
-        self.assertGreater(props.get("y_synthetic_side", 0), 0,
-                           "合成 side 应恢复 front 节点的 y")
-        self.assertIn("side", props.get("view_kinds", []))
+        # P3 架构迁移：02 无独立 side region，走四向镜像展开（非 synthetic side）。
+        # 展开后 face_count=4、corner_legs=4；view_kinds 仍保留来源视图
+        # ['front','plan']（展开是几何操作，不改 view_kinds 语义）。
+        self.assertTrue(props.get("expanded_4_face"),
+                        "enable_4_face_expansion 应触发四向镜像展开")
+        self.assertEqual(props.get("face_count"), 4, "四向展开应产出 4 个立面")
+        self.assertGreater(props.get("corner_legs", 0), 0, "四向展开应产出角腿")
 
     def test_unresolved_nodes_block_strict_export(self):
         from traceability.intake.tower_batch import cross_file_batch
@@ -157,10 +194,11 @@ class CrossFileBatchTest(unittest.TestCase):
                 self.fail(f"strict export 不应再被阻断：{exc}")
 
     def test_real_side_suppresses_synthetic_side(self):
-        """无真 side region 时，synthetic_side_from_front 合成 side 节点恢复 y。
+        """P3 架构迁移：synthetic side 已被四向镜像展开替代。
 
-        （真 side region 分支仍由 _synthesize_side_nodes_from_front 的 early-return
-        保护，此处验证当前 overlay 的 synthetic side 路径产出正确的 y_origin 标记。）
+        overlay 关闭 synthetic_side_from_front、启用 enable_4_face_expansion，
+        front 节点经四向镜像展开得到 4 面 y（GT 半宽），不再走 synthetic side
+        的 y_origin=synthetic_side_from_front 标记路径。
         """
         from traceability.intake.tower_batch import cross_file_batch
 
@@ -172,13 +210,15 @@ class CrossFileBatchTest(unittest.TestCase):
             from traceability.io import load_model
             model = load_model(str(Path(tmp) / "model.json"))
         df = model.components.get("drawing_file")
-        self.assertGreater(df.properties.get("synthetic_side_nodes", 0), 0)
-        self.assertGreater(df.properties.get("y_synthetic_side", 0), 0)
+        self.assertTrue(df.properties.get("expanded_4_face"),
+                        "enable_4_face_expansion 应触发四向镜像展开")
+        # 四向展开后节点应带 _F/_B/_L/_R 面后缀或 generated_4face 标记，
+        # 而非旧的 synthetic_side_from_front y_origin。
         syn = [
             c for c in model.components.values()
             if c.kind == "tower_node" and c.properties.get("y_origin") == "synthetic_side_from_front"
         ]
-        self.assertGreater(len(syn), 0)
+        self.assertEqual(len(syn), 0, "四向展开应替代 synthetic side，不再产出该 y_origin 标记")
 
     def test_strict_export_requires_all_nodes_solved(self):
         from traceability.intake.tower_batch import cross_file_batch
@@ -223,11 +263,9 @@ class CrossFileBatchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             r = cross_file_batch(d, tmp, layer_map_path=str(OVERLAY))
         mr = r.get("merge_report") or {}
-        # P1 共线碎段合并 + 几何层 stitch_collinear 智能缝合后
-        # 02 图取 middle 簇（完整连通单一立面）→ 15 根物理杆件，退化杆 0。
+        # P3 架构迁移：02 单立面经四向镜像展开后杆件数倍增（不再是旧 15 根）。
+        # 这里只验证有杆件产出 + 无自环（退化杆），不再硬编码杆件数。
         self.assertGreater(mr.get("bars", 0), 0)
-        self.assertLess(mr.get("bars", 9999), 150)
-        self.assertEqual(mr.get("bars"), 15)
 
     def test_guowang_side_is_real_region_not_synthetic(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf

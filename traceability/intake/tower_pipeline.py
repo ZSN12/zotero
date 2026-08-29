@@ -40,9 +40,12 @@ def finalize_tower_model(
     if merge:
         merge_view_coordinates(model, overlay=layer_map_path)
         model = merge_view_bars(model, overlay=layer_map_path)
-        if layer_map_path:
-            from ..connection.gusset_anchor import auto_anchor_gussets
-            auto_anchor_gussets(model, overlay=layer_map_path)
+    # P2 修复：gusset 锚定独立于跨视图合并——只要 overlay 配置了 gusset_anchors /
+    # gusset_auto_anchor，且模型含 gusset_plate 组件，就应执行（含 hybrid 单页产物，
+    # 它们 merge=False 但也需要把详图大样锚到主塔 front 节点）。
+    if layer_map_path:
+        from ..connection.gusset_anchor import auto_anchor_gussets
+        auto_anchor_gussets(model, overlay=layer_map_path)
     inject_tower_rules(model)
     if allow_scan:
         # 只做「允许进入求解链」的标记；是否 verified 仍由 r_scan_reviewed 规则判定

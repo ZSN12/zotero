@@ -648,13 +648,16 @@ def merge_view_coordinates(
     """
     stem = _model_stem(model)
     meta = _region_meta(stem, overlay=overlay)
+    from .tower_spec import canonical_view_type
 
     eps = 50.0
     nodes_by_view: Dict[str, List[Tuple[str, Component]]] = defaultdict(list)
     for cid, comp in _tower_nodes(model):
         vk = comp.properties.get("view_type")
         if vk:
-            nodes_by_view[vk].append((cid, comp))
+            # P2 统一视图类型：front/elevation 归一化为 front，避免 elevation
+            # 来源节点被分到 nodes_by_view["elevation"] 而查不到 "front"。
+            nodes_by_view[canonical_view_type(vk)].append((cid, comp))
 
     # front/side/section 的分桶键：view_y（即 Z）
     def bucket(z: Optional[float]) -> Optional[int]:
@@ -695,6 +698,61 @@ def merge_view_coordinates(
             p["x"], p["y"], p["z"] = round(x, 2), round(float(y_plan), 2), round(float(z), 2)
             p["solve_status"] = "solved"
             merged[cid] = {"x": x, "y": y_plan, "z": z}
+
+    # ---- front 单立面（无 side 视图）：view_x=x, view_y=z ----
+    # 国网 35A1-JC1-02 只有正立面、无独立侧立面。此类图走四向镜像展开
+    # （expand_4_face_symmetry_model 会从节点 x/z 重建 (x, y=0, z)），
+    # 因此这里只需把 view_x→x、view_y→z 落进节点属性，y 先置 0（镜像展开时
+    # 会重新生成 4 面 y）。若存在 plan 视图，则优先用 plan 的 y 补半宽。
+    side_kinds_present = bool(nodes_by_view.get("side") or nodes_by_view.get("section"))
+    if not side_kinds_present:
+        from .tower_spec import view_z_offset, view_z_span_mm
+        front_nodes = nodes_by_view.get("front", [])
+        # 分段立面图沿 Z 堆叠：每张图局部 view_y 的 0 点未必在塔段底部
+        # （region origin 通常在图纸左上角，塔段下方还有标注空间），因此先按
+        # drawing_view 求该段局部 view_y 最小值/最大值（=该段塔身几何上下界），
+        # 再线性归一化到标注段高 z_span_mm（消除相邻段接头重叠），最后加 z_offset。
+        seg_span = {}
+        for _cid, comp in front_nodes:
+            dv = comp.properties.get("drawing_view") or stem
+            vy = comp.properties.get("view_y")
+            if vy is None:
+                continue
+            lo, hi = seg_span.get(dv, (float("inf"), float("-inf")))
+            seg_span[dv] = (min(lo, float(vy)), max(hi, float(vy)))
+
+        for cid, comp in front_nodes:
+            p = comp.properties
+            ux, uz = p.get("view_x"), p.get("view_y")
+            if ux is None or uz is None:
+                continue
+            node_stem = p.get("drawing_view") or stem
+            z_off = view_z_offset(str(node_stem), "front", overlay=overlay)
+            span_mm = view_z_span_mm(str(node_stem), "front", overlay=overlay)
+            lo, hi = seg_span.get(node_stem, (float(uz), float(uz)))
+            if span_mm is not None and hi > lo:
+                # 线性归一化到标注段高：几何 [lo,hi] -> [0, span_mm]
+                local = (float(uz) - lo) / (hi - lo) * span_mm
+            else:
+                local = float(uz) - lo
+            uz_global = z_off + local
+            # 尝试从 plan 视图按 x 就近取 y（四向镜像前只是参考，展开会重算）
+            y = 0.0
+            plan_nodes = nodes_by_view.get("plan", [])
+            best_d = float("inf")
+            for _pcid, pc in plan_nodes:
+                px = pc.properties.get("view_x")
+                py = pc.properties.get("view_y")
+                if px is None or py is None:
+                    continue
+                d = abs(float(px) - float(ux))
+                if d < best_d:
+                    best_d = d
+                    y = float(py)
+            p["x"], p["y"], p["z"] = round(float(ux), 2), round(float(y), 2), round(uz_global, 2)
+            p["solve_status"] = "solved"
+            p.setdefault("solve_method", "single_front")
+            merged[cid] = {"x": float(ux), "y": float(y), "z": uz_global}
 
     # ---- front + side 同 Z 带配对（P0-4：同图双视图真 3D 解）----
     # 有 section 视图时，下面的三视图线性解耦更严格，不要提前抢占。
@@ -906,10 +964,68 @@ def merge_view_bars(
     for cid, c in model.components.items():
         if c.kind in _KEEP_KINDS:
             keep_components[cid] = c
+
+    # P2-6 跨视图身份：删除非主视图投影前，把它们的二维投影来源挂到主物理杆件。
+    # 严禁静默丢弃 side/plan/detail 投影——每条投影必须要么挂到匹配的主杆件
+    # （projection_refs），要么进入 unresolved_projection_refs 供人工复核。
+    projection_refs_by_bar: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    unresolved_projection_refs: List[Dict[str, Any]] = []
+
+    # 按「件号 + 3D 长度」把非主视图投影匹配回主杆件；匹配不了则记录 unresolved。
+    for cid, c in model.components.items():
+        if c.kind != "tower_bar":
+            continue
+        vt = c.properties.get("view_type")
+        if vt == primary:
+            continue
+        # 非主视图投影的件号与来源信息
+        bid = c.properties.get("bar_id", "")
+        if bid.startswith("UNLABELED"):
+            bid = ""
+        proj_ref = {
+            "sheet_id": c.properties.get("source_file") or c.properties.get("drawing_view") or cid,
+            "view_type": vt,
+            "component_id": cid,
+            "source_reference": (c.source.reference if c.source else None) or "",
+            "confidence": (c.source.confidence if c.source else None) or 0.5,
+        }
+        # 匹配：同件号且同 3D 长度（容差 1%）的主杆件
+        target_bar_ids = []
+        if bid:
+            for bar in primary_bars:
+                if bar.properties.get("bar_id", "") == bid:
+                    target_bar_ids.append(bar.id)
+        # 未按件号匹配时，尝试按 3D 长度匹配（更松）
+        if not target_bar_ids:
+            p_ln = _bar_3d_length(c, model)
+            if p_ln is not None:
+                for bar in primary_bars:
+                    b_ln = bar.properties.get("length_mm_3d")
+                    if b_ln is not None and abs(p_ln - b_ln) / b_ln <= 0.01:
+                        target_bar_ids.append(bar.id)
+        if len(target_bar_ids) == 1:
+            projection_refs_by_bar[target_bar_ids[0]].append(proj_ref)
+        elif len(target_bar_ids) > 1:
+            # 多个候选：无法唯一定位，进入 unresolved
+            unresolved_projection_refs.append({**proj_ref, "candidates": target_bar_ids})
+        else:
+            unresolved_projection_refs.append(proj_ref)
+
     for cid in sorted(primary_nodes):
         keep_components[cid] = model.components[cid]
     for bar in primary_bars:
+        # 把匹配到的投影引用挂到主物理杆件
+        if projection_refs_by_bar.get(bar.id):
+            existing = list(bar.properties.get("projection_refs") or [])
+            existing.extend(projection_refs_by_bar[bar.id])
+            bar.properties["projection_refs"] = existing
         keep_components[bar.id] = bar
+
+    # unresolved 投影不静默丢弃：写入 drawing_file 供报告/人工复核。
+    if unresolved_projection_refs:
+        df = keep_components.get("drawing_file")
+        if df is not None:
+            df.properties["unresolved_projection_refs"] = unresolved_projection_refs
 
     # 主立面 X/Y 中心归零（view_align.*.normalize_x）：国网/闲鱼立面图坐标常
     # 落在图纸绝对坐标（如 x≈34000），归零后 X/Y 关于 0 对称、GLB 不再偏在一边。
@@ -980,183 +1096,5 @@ def merge_view_bars(
 # Phase 2  单立面 -> 四面封闭空间网架（EngineeringModel 包装）
 # --------------------------------------------------------------------------- #
 
-def expand_4_face_symmetry_model(
-    model: EngineeringModel,
-    overlay: Optional[str | Path | dict] = None,
-    *,
-    snap_tol: Optional[float] = None,
-    weld_corner_legs: bool = True,
-    add_diaphragms: bool = True,
-) -> EngineeringModel:
-    """Phase 2：把模型里的单立面杆件展开为四面封闭空间网架（原地改写）。
-
-    流程：
-        1. 取主视图（front/elevation）杆件与其已解算节点，构造单立面平面
-           (t=x, z) 节点图（忽略当前可能错误的 y 合成值）；
-        2. Phase 1：snap_diagonals_to_legs 吸附斜材端点到主腿工作线；
-        3. Phase 2：expand_4_face_symmetry 四向镜像 + 四角主腿熔合 + 横隔面；
-        4. 写回 EngineeringModel（旧 tower_node/tower_bar 替换为 4 面构件，
-           保留 drawing_file / BOM / 节点板等上下文）。
-
-    返回原 model（原地修改）。overlay 可覆盖 snap_tol 与开关。
-    """
-    from ..solve.tower_geometry import (
-        snap_diagonals_to_legs,
-        expand_4_face_symmetry,
-        classify_members,
-        inspect_model_topology,
-    )
-
-    spec = {}
-    if overlay is not None:
-        try:
-            from .tower_spec import load_tower_spec
-            spec = load_tower_spec(overlay)
-        except Exception:
-            spec = {}
-    if snap_tol is None:
-        snap_tol = float(spec.get("snap_tol_mm", 80.0))
-
-    bars = [c for _, c in _tower_bars(model)]
-    if not bars:
-        return model
-    counts: Dict[str, int] = defaultdict(int)
-    for c in bars:
-        counts[c.properties.get("view_type") or "_all"] += 1
-    primary = "front" if counts.get("front") else "elevation" if counts.get("elevation") else (
-        max(counts, key=lambda k: counts[k])
-    )
-
-    # 单立面节点：t=x、z=z（y 归零，避免 synthetic side 的对角线污染）
-    src_nodes: NodeMap = {}
-    node_meta: Dict[str, Tuple[str, Component]] = {}
-    for cid, comp in _tower_nodes(model):
-        p = comp.properties
-        if p.get("view_type") != primary:
-            continue
-        if p.get("x") is None or p.get("z") is None:
-            continue
-        x, z = float(p["x"]), float(p["z"])
-        src_nodes[cid] = (x, 0.0, z)
-        node_meta[cid] = (primary, comp)
-
-    src_bars: List[dict] = []
-    bar_meta: Dict[str, Component] = {}
-    for cid, comp in _tower_bars(model):
-        p = comp.properties
-        if p.get("view_type") != primary:
-            continue
-        f, t = p.get("from_node"), p.get("to_node")
-        if f not in src_nodes or t not in src_nodes:
-            continue
-        if f == t:
-            continue
-        src_bars.append({
-            "id": cid,
-            "from": f,
-            "to": t,
-            "bar_id": p.get("bar_id"),
-            "section": p.get("section"),
-            "layer": p.get("layer"),
-        })
-        bar_meta[cid] = comp
-
-    if not src_bars:
-        return model
-
-    work_nodes, work_bars = src_nodes, src_bars
-
-    # 可选：T 形交点打断，把「端点落在其它杆件线段上」的 2D 线段闭合为共享节点。
-    if bool(spec.get("close_face_intersections")):
-        from ..solve.tower_geometry import close_face_intersections
-        work_nodes, work_bars = close_face_intersections(
-            work_nodes, work_bars,
-            snap_tol=float(spec.get("intersection_snap_tol_mm", 30.0)),
-        )
-
-    # Phase 1（可选）：斜材端点吸附到主腿工作线。
-    # 系统重构：默认不启用 snap_diagonals_to_legs，因为它会把原本共享的
-    # 节点重新吸附到新坐标，破坏已连通的杆件网络（实测 15 杆 1 组件 →
-    # 48 杆 3 组件）。仅当 overlay 显式启用 snap_diagonals 时才执行。
-    if bool(spec.get("snap_diagonals")):
-        snapped_nodes, snapped_bars = snap_diagonals_to_legs(
-            work_nodes, work_bars, snap_tol=snap_tol,
-        )
-    else:
-        snapped_nodes, snapped_bars = work_nodes, work_bars
-
-    # Phase 2：四面镜像展开 + 四角主腿熔合 + 横隔面
-    face_nodes, face_bars = expand_4_face_symmetry(
-        snapped_nodes, snapped_bars,
-        weld_corner_legs=weld_corner_legs,
-        add_diaphragms=add_diaphragms,
-    )
-    topology = inspect_model_topology(face_nodes, face_bars)
-    roles = classify_members(face_nodes, face_bars)
-
-    # 重建模型组件
-    _KEEP_KINDS = frozenset({
-        "drawing_file", "bom_row", "gusset_plate", "bolt_group", "detail_view",
-    })
-    keep_components: Dict[str, Component] = {}
-    for cid, comp in model.components.items():
-        if comp.kind in _KEEP_KINDS:
-            keep_components[cid] = comp
-
-    bar_id_count: Dict[str, int] = defaultdict(int)
-    src_ref = model.components.get("drawing_file")
-    src_ref = src_ref.source if src_ref is not None else None
-    for nid, pos in face_nodes.items():
-        keep_components[f"4f_{nid}"] = Component(
-            id=f"4f_{nid}", name=nid, kind="tower_node",
-            source=src_ref,
-            properties={
-                "x": round(pos[0], 4), "y": round(pos[1], 4), "z": round(pos[2], 4),
-                "solve_status": "solved",
-                "generated_4face": True,
-            },
-        )
-
-    new_bar_ids: List[str] = []
-    for b in face_bars:
-        bid = str(b.get("bar_id") or b["id"])
-        n = bar_id_count[bid]
-        bar_id_count[bid] = n + 1
-        comp_id = f"4f_{b['id']}"
-        keep_components[comp_id] = Component(
-            id=comp_id, name=b["id"], kind="tower_bar",
-            source=src_ref,
-            properties={
-                "bar_id": bid,
-                "from_node": f"4f_{b['from']}",
-                "to_node": f"4f_{b['to']}",
-                "section": b.get("section"),
-                "layer": b.get("layer"),
-                "face": b.get("face"),
-                "role": b.get("role") or roles.get(b["id"], "DIAG"),
-                "corner_leg": bool(b.get("corner_leg")),
-                "diaphragm": bool(b.get("diaphragm")),
-                "generated_4face": True,
-                "solve_status": "solved",
-                "length_mm_3d": round(
-                    math.sqrt(sum((face_nodes[b["to"]][i] - face_nodes[b["from"]][i]) ** 2 for i in range(3))), 2,
-                ),
-            },
-        )
-        new_bar_ids.append(comp_id)
-
-    model.components = keep_components
-    model.staleness = {cid: st for cid, st in model.staleness.items() if cid in model.components}
-    model.dependencies = {}
-
-    df = model.components.get("drawing_file")
-    if df is not None:
-        df.properties.update({
-            "expanded_4_face": True,
-            "face_count": 4,
-            "corner_legs": sum(1 for b in face_bars if b.get("corner_leg")),
-            "diaphragm_count": sum(1 for b in face_bars if b.get("diaphragm")),
-            "topology_degree1": topology["dangling_degree1"],
-            "topology_components": topology["components"],
-        })
-    return model
+# P1 拆分：四向镜像展开已迁到 tower_symmetry，这里 re-import 保留旧名。
+from .tower_symmetry import expand_4_face_symmetry_model  # noqa: F401,E402

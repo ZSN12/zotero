@@ -89,7 +89,13 @@ class P02Guowang02ViewModeTest(unittest.TestCase):
         self.assertGreaterEqual(df.properties.get("association_rate", 0.0), 0.50)
 
     def test_synthetic_side_registers_view_kinds(self):
-        """synthetic_side_from_front 合成 side 节点后，view_kinds 应补 'side'。"""
+        """P3 架构迁移：synthetic side 已被四向镜像展开替代。
+
+        overlay 关闭 synthetic_side_from_front、启用 enable_4_face_expansion，
+        单文件 merge_view_coordinates 只解出 front 单立面的 x/z（y 置 0），
+        不再合成 side 节点、不再往 view_kinds 补 'side'。四向镜像展开由
+        expand_4_face_symmetry_model（cross_file/deliver 阶段）负责。
+        """
         from traceability.intake.tower_dxf import extract_tower_from_dxf
         from traceability.intake.tower_views import merge_view_coordinates
         ov = EXAMPLES / "external" / "guowang_35A1" / "layer_overlay.json"
@@ -99,8 +105,18 @@ class P02Guowang02ViewModeTest(unittest.TestCase):
         )
         merge_view_coordinates(model, overlay=ov)
         df = model.components["drawing_file"]
-        self.assertIn("side", df.properties.get("view_kinds", []))
-        self.assertGreater(df.properties.get("synthetic_side_nodes", 0), 0)
+        # 不再合成 side：view_kinds 只含 front，synthetic_side_nodes 为 0
+        self.assertNotIn("side", df.properties.get("view_kinds", []))
+        self.assertEqual(df.properties.get("synthetic_side_nodes", 0), 0)
+        # front 节点仍解出 x/z（y 置 0，待四向展开）
+        front_solved = [
+            c for c in model.components.values()
+            if c.kind == "tower_node"
+            and c.properties.get("view_type") == "front"
+            and c.properties.get("x") is not None
+            and c.properties.get("z") is not None
+        ]
+        self.assertGreater(len(front_solved), 0)
 
     def test_110kv_multi_view_mode(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf
@@ -148,6 +164,40 @@ class P16AssignViewByBboxTest(unittest.TestCase):
         self.assertEqual(nb[1]["view_type"], "side")
         self.assertEqual(nn[0]["view_type"], "front")
         self.assertEqual(nn[1]["view_type"], "side")
+
+
+class P2SectionExtractionTest(unittest.TestCase):
+    """P2：截面型号文字提取（填充杆件 section 字段）。"""
+
+    def test_angle_sections(self):
+        from traceability.intake.tower_dxf import _extract_section_label
+        self.assertEqual(_extract_section_label("L40X3"), "L40X3")
+        self.assertEqual(_extract_section_label("L50X4"), "L50X4")
+        self.assertEqual(_extract_section_label("L100X7"), "L100X7")
+
+    def test_material_prefix_stripped(self):
+        from traceability.intake.tower_dxf import _extract_section_label
+        # 图纸标 Q345L63X5，GT 词汇是 L63X5：剥离材质前缀对齐 GT
+        self.assertEqual(_extract_section_label("Q345L63X5"), "L63X5")
+        self.assertEqual(_extract_section_label("Q345L100X8"), "L100X8")
+
+    def test_plate_sections(self):
+        from traceability.intake.tower_dxf import _extract_section_label
+        self.assertEqual(_extract_section_label("-6X101"), "-6X101")
+        self.assertEqual(_extract_section_label("Q345-6X188"), "-6X188")
+        self.assertEqual(_extract_section_label("-6X40"), "-6X40")
+
+    def test_plate_noise_rejected(self):
+        from traceability.intake.tower_dxf import _extract_section_label
+        # -3X2 / -4X2 是螺栓/边距标注，宽 < 40mm，不是截面
+        self.assertIsNone(_extract_section_label("-3X2"))
+        self.assertIsNone(_extract_section_label("-4X2"))
+
+    def test_bolt_and_bare_number_rejected(self):
+        from traceability.intake.tower_dxf import _extract_section_label
+        self.assertIsNone(_extract_section_label("M16X40"))
+        self.assertIsNone(_extract_section_label("123"))
+        self.assertIsNone(_extract_section_label(""))
 
 
 if __name__ == "__main__":

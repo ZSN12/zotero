@@ -17,6 +17,9 @@ web/demo/**/*.glb
 web/demo/**/*.json
 web/demo/**/latest_deliver/
 
+# 35A1-JC1 单塔运行产物目录（canonical/skeleton/detail_atlas glb + index.html）
+web/demo/35A1-JC1-hybrid/
+
 # 敏感 / 大体积安装包
 *.dmg
 tools/oda-file-converter/ODAFileConverter.app/
@@ -24,3 +27,9 @@ tools/oda-file-converter/tmp-input/
 
 # 系统
 .DS_Store
+
+# 本地 MLLM 密钥（勿提交）
+.env
+
+# 备份文件
+*.bak

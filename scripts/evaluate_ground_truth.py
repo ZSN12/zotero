@@ -73,11 +73,15 @@ def model_bars_2d(model: dict, view: Optional[str] = None) -> list:
     comps = model.get("components", {})
     nodes = {cid: c for cid, c in comps.items() if c.get("kind") == "tower_node"}
     bars = []
+    dedup: set = set()
     for cid, c in comps.items():
         if c.get("kind") != "tower_bar":
             continue
         p = c.get("properties", {})
-        if view is not None and p.get("view_type") not in (view, None):
+        # view 过滤只对「未展开、带 view_type」的 2D 杆件生效；4-face 展开后的
+        # 3D 杆件没有 view_type，直接参与评测（它们的 x/y/z 已是 3D 坐标）。
+        vt = p.get("view_type")
+        if view is not None and vt is not None and vt not in (view, None):
             continue
         f = p.get("from_node")
         t = p.get("to_node")
@@ -86,13 +90,29 @@ def model_bars_2d(model: dict, view: Optional[str] = None) -> list:
         if nf is None or nt is None:
             continue
         pf, pt = nf.get("properties", {}), nt.get("properties", {})
-        # 优先 view_x/view_y（mm），回退 x/y
-        x1 = pf.get("view_x", pf.get("x"))
-        y1 = pf.get("view_y", pf.get("y"))
-        x2 = pt.get("view_x", pt.get("x"))
-        y2 = pt.get("view_y", pt.get("y"))
+        # 4-face 展开后的 3D 模型没有 view_x/view_y（已替换为 3D x/y/z）。
+        # front 投影取 (x, z)：x 是横向投影，z 是标高（y 是深度，投影时忽略）。
+        # 仅当节点有 view_x/view_y（未展开的 2D 阶段）时用 view_x/view_y。
+        if pf.get("view_x") is not None and pt.get("view_x") is not None:
+            x1 = pf["view_x"]; y1 = pf.get("view_y", pf.get("y"))
+            x2 = pt["view_x"]; y2 = pt.get("view_y", pt.get("y"))
+        elif pf.get("z") is not None and pt.get("z") is not None:
+            # 3D 模型：front 投影 (x, z)
+            x1 = pf.get("x"); y1 = pf.get("z")
+            x2 = pt.get("x"); y2 = pt.get("z")
+        else:
+            x1 = pf.get("x"); y1 = pf.get("y")
+            x2 = pt.get("x"); y2 = pt.get("y")
         if None in (x1, y1, x2, y2):
             continue
+        # 与 GT 侧对称地去重：4-face 展开后对称杆件投影到同一 2D 线段，
+        # 端点排序 + 取整去重，避免 4 面对称杆被算成 4 根误报（FP 虚高）。
+        if (x1, y1) > (x2, y2):
+            x1, y1, x2, y2 = x2, y2, x1, y1
+        key = (round(x1), round(y1), round(x2), round(y2))
+        if key in dedup:
+            continue
+        dedup.add(key)
         bars.append((x1, y1, x2, y2, p.get("bar_id", ""), p.get("section", "")))
     return bars
 

@@ -378,6 +378,7 @@ def cmd_run_tower(args):
         mm_per_px=args.mm_per_px,
         input_dir=getattr(args, "input_dir", None),
         use_ocr_fallback=not getattr(args, "no_ocr_fallback", False),
+        agent_mode=getattr(args, "agent_mode", "ezdxf"),
     )
     if result.get("ok"):
         print("✓ 全链完成")
@@ -433,15 +434,21 @@ def cmd_deliver_project(args):
         layer_map_path=args.layer_map,
         bom_path=args.bom,
         export_glb=not args.no_glb,
+        agent_mode=getattr(args, "agent_mode", "ezdxf"),
     )
-    print(f"✓ deliver-project：ok={result.get('ok')} harness_all_passed={result.get('harness_all_passed')}")
+    print(f"✓ deliver-project：ok={result.get('ok')} status={result.get('status')} harness_all_passed={result.get('harness_all_passed')}")
     print(f"  manifest -> {result.get('manifest_path')}")
     if result.get("model_path"):
         print(f"  model    -> {result['model_path']}")
-    if result.get("glb_path"):
-        print(f"  glb      -> {result['glb_path']} meshes={result.get('mesh_stats')}")
+    # Phase A3：L0 / M3 / M1 三种产物分开打印，不再混评
+    for prod in result.get("products") or []:
+        mark = "✓" if prod.get("present") else "✗"
+        path = prod.get("path") or (prod.get("error") or "未产出")
+        print(f"  {mark} {prod.get('id')} ({prod.get('layer')}) -> {path}")
     if result.get("glb_error"):
-        print(f"  glb ✗    -> {result['glb_error']}")
+        print(f"  skeleton ✗ -> {result['glb_error']}")
+    if result.get("canonical_error"):
+        print(f"  canonical ✗ -> {result['canonical_error']}")
     mr = result.get("merge_report") or {}
     print(f"  merge    -> nodes={mr.get('nodes_solved')} bars={mr.get('bars')} "
           f"gussets={mr.get('gussets_anchored')} synthetic_y={mr.get('y_synthetic_side')}")
@@ -459,8 +466,10 @@ def cmd_deliver_project(args):
     asm = result.get("assembly") or {}
     if asm.get("enabled"):
         print(f"  assembly -> mode={asm.get('mode')} modules={asm.get('module_ids')}")
-    if not result.get("ok"):
-        sys.exit(1)
+    # P0-2 失败传播：verified → 0，review_required → 2，failed → 1。
+    status = result.get("status", "failed")
+    _exit = {"verified": 0, "review_required": 2, "failed": 1}.get(status, 1)
+    sys.exit(_exit)
 
 
 def cmd_intake_tower_batch(args):
@@ -542,6 +551,7 @@ def cmd_deliver_tower(args):
         allow_scan=args.allow_scan,
         allow_derived_y=args.allow_derived_y,
         format=args.format,
+        agent_mode=getattr(args, "agent_mode", "ezdxf"),
     )
     if not result.get("ok"):
         print("✗ 交付链存在失败步骤：")
@@ -709,6 +719,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--no-ocr-fallback", action="store_true",
                        help="扫描图 A1 件号 OCR 不用 Tesseract 兜底（B4，默认启用兜底）")
     p_run.add_argument("--input-dir", help="批量模式：目录内全部 DWG/DXF（A3）")
+    p_run.add_argument("--agent-mode", choices=["ezdxf", "hybrid"], default="ezdxf",
+                       help="单文件 DXF 几何后端：ezdxf（默认）/ hybrid（MLLM Agent 链）")
     p_run.set_defaults(func=cmd_run_tower)
 
     p_batch = sub.add_parser("intake-tower-batch", help="目录内全部 DWG 转 DXF 并批量 intake（A3/B7）")
@@ -739,6 +751,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_dproj.add_argument("--layer-map", help="per-project overlay JSON")
     p_dproj.add_argument("--bom", help="BOM CSV")
     p_dproj.add_argument("--no-glb", action="store_true", help="跳过 GLB 导出")
+    p_dproj.add_argument("--agent-mode", choices=["ezdxf", "hybrid"], default="ezdxf",
+                         help="几何提取后端：ezdxf（默认，纯矢量）/ hybrid（Kimi/MLLM Agent 链）")
     p_dproj.set_defaults(func=cmd_deliver_project)
 
     p_parse = sub.add_parser("parse-report", help="输出 PARSE_RATE_REPORT 同款 JSON（F3）")
@@ -761,6 +775,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_deliver.add_argument("--allow-derived-y", action="store_true",
                            help="允许已复核的 z-peer 插值 y 进入 GLB 导出")
     p_deliver.add_argument("--format", choices=["obj", "glb"], default="glb")
+    p_deliver.add_argument("--agent-mode", choices=["ezdxf", "hybrid"], default="ezdxf",
+                           help="单文件 DXF 几何后端：ezdxf（默认）/ hybrid（MLLM Agent 链）")
     p_deliver.set_defaults(func=cmd_deliver_tower)
 
     p_confirm = sub.add_parser("confirm-scan", help="人工确认扫描候选（P2-5）")

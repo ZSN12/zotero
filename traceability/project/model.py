@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,11 +23,13 @@ class ProjectSheet:
     """一张分册图纸在项目中的登记。"""
     sheet_id: str
     path: str
-    kind: str = "drawing"          # assembly / module / detail / bom / title_block
+    kind: str = "drawing"          # 文件级 kind（兼容旧字段：assembly/drawing/...）
+    role: str = "node_detail"      # Phase A1：规范 sheet_role 枚举
+    spatial_mergeable: bool = False  # Phase A2：是否允许进入 M3 spatial_merge
     module_id: Optional[str] = None
     view_kinds: List[str] = field(default_factory=list)
     model_path: Optional[str] = None
-    evidence_count: int = 0
+    projection_refs: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -53,15 +56,38 @@ class ProjectModel:
                 continue
             mod[k] = v
 
-    def aggregate_evidence(self, model: EngineeringModel, sheet_id: str) -> int:
-        """统计并标记某 sheet 模型上的 SourceRef 数量。"""
-        n = 0
+    def aggregate_evidence(self, model: EngineeringModel, sheet_id: str) -> Dict[str, Any]:
+        """从真实投影引用（projection_refs）汇总某 sheet 的证据链。
+
+        不再只数 SourceRef 数量——改为从每条杆件的 projection_refs 里统计
+        真实跨视图投影来源（front/plan/side/detail），缺失时回退到 SourceRef。
+        返回 {"refs": n, "views": {view_type: count}, "unresolved": n}。
+        """
+        views: Dict[str, int] = defaultdict(int)
+        refs = 0
+        unresolved = 0
         for comp in model.components.values():
-            if comp.source and comp.source.reference:
-                n += 1
+            if comp.kind != "tower_bar":
+                continue
+            prs = comp.properties.get("projection_refs") or []
+            if prs:
+                refs += len(prs)
+                for pr in prs:
+                    vt = pr.get("view_type")
+                    if vt:
+                        views[vt] = views.get(vt, 0) + 1
+            elif comp.source and comp.source.reference:
+                refs += 1
+                vt = comp.properties.get("view_type")
+                if vt:
+                    views[vt] = views.get(vt, 0) + 1
+        df = model.components.get("drawing_file")
+        if df is not None:
+            unresolved = len(df.properties.get("unresolved_projection_refs") or [])
+        summary = {"refs": refs, "views": dict(views), "unresolved": unresolved}
         if sheet_id in self.sheets:
-            self.sheets[sheet_id].evidence_count = n
-        return n
+            self.sheets[sheet_id].projection_refs = summary
+        return summary
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -76,7 +102,12 @@ class ProjectModel:
 
 def load_project(path: str | Path) -> ProjectModel:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    sheets = {k: ProjectSheet(**v) for k, v in (data.get("sheets") or {}).items()}
+    # 过滤旧 JSON 里已废弃的 evidence_count 等未知字段，避免 ProjectSheet(**v) 报错。
+    _sheet_fields = set(ProjectSheet.__dataclass_fields__)
+    sheets = {
+        k: ProjectSheet(**{f: val for f, val in v.items() if f in _sheet_fields})
+        for k, v in (data.get("sheets") or {}).items()
+    }
     return ProjectModel(
         project_id=data["project_id"],
         name=data.get("name", data["project_id"]),
@@ -102,8 +133,9 @@ def build_project_from_directory(
     out_dir: Optional[str | Path] = None,
 ) -> ProjectModel:
     """从目录批量 intake，构建 ProjectModel 索引（不自动 3D 求解）。"""
-    from ..intake.tower_dxf import classify_drawing_kind, extract_tower_from_dxf
     from ..intake.dwg import ensure_dxf_batch
+    from ..intake.tower_dxf import extract_tower_from_dxf, resolve_drawing_kind
+    from ..intake.tower_spec import canonical_sheet_role, sheet_is_spatial_mergeable
 
     input_dir = Path(input_dir)
     out_dir = Path(out_dir or input_dir / ".project_out")
@@ -112,17 +144,27 @@ def build_project_from_directory(
     dxf_paths = ensure_dxf_batch(input_dir, dxf_dir)
 
     project = ProjectModel(project_id=project_id, name=project_id)
+    failures: List[Dict[str, str]] = []
     for dxf in sorted(dxf_paths):
         stem = Path(dxf).stem
-        kind = classify_drawing_kind(stem)
-        model = extract_tower_from_dxf(dxf, layer_map_path=layer_map_path)
+        kind = resolve_drawing_kind(stem, overlay=layer_map_path)
+        # P0-2：单张 sheet 解析失败不得中断整个图册交付——捕获并记录到
+        # project.metadata["sheet_failures"]，由 deliver_project 汇总判 failed。
+        try:
+            model = extract_tower_from_dxf(dxf, layer_map_path=layer_map_path)
+        except Exception as exc:
+            failures.append({"stem": stem, "error": f"{type(exc).__name__}: {exc}"})
+            continue
         model_path = out_dir / f"{stem}.json"
         save_model(model, model_path)
+        role = kind.get("role") or canonical_sheet_role(kind["kind"])
         sheet = ProjectSheet(
             sheet_id=stem,
             path=str(dxf),
             kind=kind["kind"],
-            module_id=_infer_module_id(stem),
+            role=role,
+            spatial_mergeable=sheet_is_spatial_mergeable(stem, overlay=layer_map_path),
+            module_id=_infer_module_id(stem, role=role),
             view_kinds=_view_kinds(model),
             model_path=str(model_path),
         )
@@ -133,20 +175,19 @@ def build_project_from_directory(
                 sheet.module_id,
                 stem,
                 kind=kind["kind"],
+                role=role,
             )
+    if failures:
+        project.metadata["sheet_failures"] = failures
     return project
 
 
-def _infer_module_id(stem: str) -> Optional[str]:
-    """从文件名推断模块段（M1~M6 等）。"""
+def _infer_module_id(stem: str, *, role: Optional[str] = None) -> Optional[str]:
+    """从文件名推断模块段（M1~M6 等，通用，不绑具体塔型）。"""
     import re
     m = re.search(r"[-_](m\d+)[-_]", stem.lower())
     if m:
         return m.group(1).upper()
-    if "jc1-02" in stem.lower():
-        return "M1"
-    if "sjg1" in stem.lower():
-        return "M1"
     return None
 
 

@@ -13,8 +13,11 @@
 from __future__ import annotations
 
 import csv
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
+
+_log = logging.getLogger(__name__)
 
 from ..model import (
     Component,
@@ -135,8 +138,9 @@ def parse_bom_dxf(
                 for v in e.virtual_entities():
                     if v.dxftype() in ("TEXT", "MTEXT"):
                         texts.append(_text_record(v))
-            except Exception:
-                pass
+            except Exception as exc:
+                # P4：块引用损坏时跳过该 INSERT 继续，但记录 debug 而非静默吞。
+                _log.debug("INSERT 块展开失败，跳过：%s", exc)
         elif e.dxftype() in ("TEXT", "MTEXT"):
             texts.append(_text_record(e))
 
@@ -243,9 +247,151 @@ def _map_header_columns(header: List[Dict]) -> Dict[str, int]:
     return mapping
 
 
+def parse_bom_dxf_anchored(
+    dxf_path: str | Path,
+    layer_map_path: Optional[str | Path] = None,
+    *,
+    part_no_x_min: Optional[float] = None,
+    part_no_range: Tuple[int, int] = (100, 999),
+) -> List[Dict]:
+    """C2：国网材料表「件号锚点」解析——不依赖中文表头。
+
+    国网施工图的材料表表头是 SHX 形文件（ezdxf 读出为 \\M+XXXX 乱码），
+    无法靠表头关键词映射列。但材料表结构固定：每一行以「件号」（纯数字）
+    开头，其后按列序为 截面 / 长度(mm) / 数量 / 单重 / 总重 / 备注。
+
+    本解析器以件号为锚点：
+        * 找出所有「纯数字」文本，落在 part_no_range 内且 x 集中（同列）的
+          视为件号列；
+        * 每个件号所在行，按 x 升序取其后文本，依次识别：
+          - section：匹配截面正则（L\\d+X\\d+ / Q345L\\d+X\\d+ / Q345-\\d+ 等）
+          - length_mm：首个纯数字
+          - qty：下一个纯数字
+        * 无表头、无中文、编码损坏都成立；读不到就留空/0，绝不编造。
+
+    返回与 parse_bom_csv 相同结构 list[dict]（bar_id/section/length_mm/qty/name）。
+    """
+    import re
+
+    import ezdxf
+
+    dxf_path = str(dxf_path)
+    doc = ezdxf.readfile(dxf_path)
+    msp = doc.modelspace()
+
+    section_re = re.compile(
+        r"^(?:Q345)?L\d{1,3}\s*[Xx×*]\d{1,3}$"   # L40X3 / Q345L70X5
+        r"|^Q345-?\d+[Xx×*]\d+$"                  # Q345-6X207
+        r"|^-?\d+[Xx×*]\d+$"                      # -6X207 (钢板厚x宽)
+        r"|^Q345-?\d*$"                           # Q345-14
+        r"|^Q\d+$"                                # Q235
+    )
+    part_no_re = re.compile(r"^\d{1,5}$")
+
+    texts: List[Dict] = []
+    for e in msp:
+        if e.dxftype() == "INSERT":
+            try:
+                for v in e.virtual_entities():
+                    if v.dxftype() in ("TEXT", "MTEXT"):
+                        texts.append(_text_record(v))
+            except Exception as exc:
+                # P4：块引用损坏时跳过该 INSERT 继续，但记录 debug 而非静默吞。
+                _log.debug("INSERT 块展开失败，跳过：%s", exc)
+        elif e.dxftype() in ("TEXT", "MTEXT"):
+            texts.append(_text_record(e))
+
+    if not texts:
+        return []
+
+    # 1) 找件号列：纯数字、落在 part_no_range、x 集中（众数 x 附近）
+    part_no_candidates = [
+        t for t in texts
+        if part_no_re.fullmatch(t["text"])
+        and part_no_range[0] <= int(t["text"]) <= part_no_range[1]
+    ]
+    if not part_no_candidates:
+        return []
+
+    # 件号列定位：材料表件号列是「出现次数最多」的紧密数字列。
+    # 在 part_no_range=(100,999) 约束下，件号列 x=34952 出现 59 次，
+    # 长度列 x=34992（如 836/754）只 34 次、几何图散点 <6 次，
+    # 因此众数天然锁定件号列。
+    from collections import Counter
+    x_counter = Counter(round(t["x"]) for t in part_no_candidates)
+    part_no_x = float(x_counter.most_common(1)[0][0])
+    if part_no_x_min is not None and part_no_x < part_no_x_min:
+        return []
+
+    # 件号列容差：取件号 x 的紧密簇
+    x_tol = 3.0
+    part_nos = [
+        t for t in part_no_candidates
+        if abs(t["x"] - part_no_x) <= x_tol
+    ]
+    if not part_nos:
+        return []
+
+    # 2) 按 y 聚类成行，每行内按 x 排序
+    rows = _cluster_table_rows(texts)
+    part_no_by_y = {round(t["y"] / 3): t for t in part_nos}
+
+    out: List[Dict] = []
+    for row in rows:
+        if not row:
+            continue
+        cells = sorted(row, key=lambda d: d["x"])
+        # 该行的件号锚点：行内第一个纯数字且 x≈part_no_x
+        anchor_idx = None
+        anchor_val = None
+        for i, c in enumerate(cells):
+            if part_no_re.fullmatch(c["text"]) and abs(c["x"] - part_no_x) <= x_tol:
+                anchor_idx = i
+                anchor_val = c["text"].strip()
+                break
+        if anchor_idx is None:
+            continue
+
+        bar_id = anchor_val
+        # 3) 件号之后按列序解析：截面 / 长度 / 数量
+        tail = cells[anchor_idx + 1:]
+        section = ""
+        length_mm = 0.0
+        qty = 1
+        seen_length = False
+        for c in tail:
+            t = c["text"].strip()
+            if not t:
+                continue
+            if not section and section_re.match(t):
+                section = t
+                continue
+            if part_no_re.fullmatch(t):
+                num = float(t)
+                if not seen_length:
+                    length_mm = num
+                    seen_length = True
+                else:
+                    qty = int(num)
+                    break  # 长度、数量都拿到即停
+        if section or length_mm > 0:
+            out.append({
+                "bar_id": bar_id,
+                "section": section,
+                "length_mm": length_mm,
+                "qty": qty,
+                "name": "",
+            })
+    return out
+
+
 def parse_bom_auto(path: str | Path, layer_map_path: Optional[str | Path] = None) -> List[Dict]:
     """按扩展名自动选择 BOM 解析器（CSV 或 DXF）。"""
     path = Path(path)
     if path.suffix.lower() == ".dxf":
+        # 优先用件号锚点解析（对国网 SHX 乱码表头更稳健）；空则回退旧表头法
+        anchored = parse_bom_dxf_anchored(path, layer_map_path=layer_map_path)
+        if anchored:
+            return anchored
         return parse_bom_dxf(path, layer_map_path=layer_map_path)
     return parse_bom_csv(path)

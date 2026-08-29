@@ -2,6 +2,10 @@
 
 **从一张图，到可供 AI 使用的工程上下文。**
 
+> 🎯 **最终目的**：三段式管线（接入→编译→交付）× 长上下文重建（多页/多视图/多模块）
+> × 可交互 3D + 三条证据链（图纸读数/BOM核验/几何验证）。详见
+> [`docs/PRODUCT_VISION.md`](docs/PRODUCT_VISION.md)。
+
 工程制图中，AI 生成的 3D 模型「看着像那么回事」，但没人敢拿去做施工、
 检修或改造——因为说不清：
 
@@ -171,8 +175,12 @@ python -m traceability.cli run-tower examples/clear/tower_front_hd.png \
 - A1 无 API → `skipped`，不猜值；A3 无 label → `pending`，不 failed 凑数
 - 全链 `ok=True`（pending 不是失败），模型全部 `solve_status=pending_review`，不导出 strict GLB
 
-矢量主路径保持不变：**DXF/DWG 永远走 `RuleBasedBackend`**，不调用 MLLM；
-`choose_backend()` 继续保证 dxf/dwg 不入 MLLM 主路径。
+**产品主路径（对齐 [仝心圆官网](https://concentriccirclesmrtt.github.io)）：**  
+扫描图 / PDF / **DXF（栅格化或 hybrid）** 均经 **Kimi A1 + Skill + Agent Harness（A0→A4）** 编译工程上下文。  
+详见 [`docs/DELIVERY_NOTE.md`](docs/DELIVERY_NOTE.md) 与 [`docs/PRODUCT_PATH_AND_AGENT_PLAN.md`](docs/PRODUCT_PATH_AND_AGENT_PLAN.md)。
+
+**工程旁路（当前 DXF CLI 默认）：** `choose_backend()` 对 `dxf/dwg` 仍走 `RuleBasedBackend`（ezdxf 快路径）；  
+`deliver-project` / `run_35A1_jc1_full.py` 尚未接入 Agent 链——这是**实现缺口**，不是产品定义。
 
 ### Phase 4：扫描图候选（pixel 坐标，人工复核队列）
 
@@ -300,9 +308,11 @@ MIT
 
 ## 核心架构：Skill + Harness（本质）
 
-系统本质 = **多模态模型（读图）+ Skill（约束行为）+ Harness（验证输出）**。
+系统本质 = **多模态模型（读图）+ Skill（约束行为）+ Harness（验证输出）**。  
+与 [仝心圆官网](https://concentriccirclesmrtt.github.io) 一致：工程 Agent Harness 编排 Skills、工具与验证，输出可核验的工程上下文。
 
-完整说明见 [`SKILL_HARNESS_ARCHITECTURE.md`](SKILL_HARNESS_ARCHITECTURE.md)。
+完整说明见 [`SKILL_HARNESS_ARCHITECTURE.md`](SKILL_HARNESS_ARCHITECTURE.md)。  
+**产品路径 vs 当前 DXF 实现缺口**见 [`docs/PRODUCT_PATH_AND_AGENT_PLAN.md`](docs/PRODUCT_PATH_AND_AGENT_PLAN.md)。
 
 ```bash
 # 一条命令走完：后端选择 -> 模型分析 -> Skill 契约 -> EngineeringModel
@@ -312,19 +322,21 @@ python -m traceability.cli compile-drawing examples/tower_demo.dxf --kind dxf
 python -m traceability.cli compile-drawing examples/tower_demo.png --kind scan
 ```
 
-配置多模态模型（Kimi Coding 套餐 — K2.7 Code）：
+配置多模态模型（**可插拔**，OpenAI 兼容 API）：
 
 ```bash
+# 任选提供商（示例）
+export MLLM_PROVIDER=openai
+export OPENAI_API_KEY=sk-...
+export MLLM_MODEL=gpt-4o
+
+# 或 Kimi Code / Moonshot（见 mllm_providers.py）
 export MLLM_PROVIDER=kimi-code
-export KIMI_API_KEY=sk-...        # Kimi Code 控制台创建的密钥
-export MLLM_MODEL=k3-256k           # K3 视觉（256K）；更高档可用 k3
+export KIMI_API_KEY=sk-...
+export MLLM_MODEL=k3-256k          # 视觉模型；代码模型无法读图
 
-# 检查配置是否读到（不打印完整 key）
-python3 -c "from traceability.intake.mllm_providers import mllm_config_status; print(mllm_config_status())"
-
-# 铁塔扫描图走 MLLM
-python3 -m traceability.cli compile-drawing examples/clear/tower_front_hd.png \
-  --tower --backend mllm --out examples/tower_front_mllm.json
+# DXF hybrid（Phase 1）
+python3 scripts/run_agent_sheet.py path/to.dxf --out-dir out/hybrid --layer-map overlay.json
 ```
 
 OpenAI / Moonshot 开放平台：

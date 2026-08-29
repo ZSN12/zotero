@@ -170,7 +170,7 @@ class MLLMBackend:
         MLLM_MODEL              模型名（kimi-code 默认 k3-256k）
         MLLM_TIMEOUT            单次调用总超时秒（默认 300，大图 OCR 需更久）
         MLLM_CONNECT_TIMEOUT    连接超时秒（默认 30）
-        MLLM_MAX_IMAGE_EDGE     送图前最长边上限（默认 2048，大图件号 OCR 易超时可下调为 1536）
+        MLLM_MAX_IMAGE_EDGE     送图前最长边上限（默认 4096，Kimi 视觉推荐上限；大图 OCR 超时可下调）
     """
 
     name = "mllm"
@@ -191,6 +191,11 @@ class MLLMBackend:
         self.model = cfg["model"] or "gpt-4o"
 
     def available(self) -> bool:
+        # agent-vision：本地 ezdxf 规则提取（0 API 调用，最快）。
+        # antigravity-ocx：经本地 opencodex relay（OAuth 免 client key），
+        # 无显式 api_key 也算可用。
+        if self.provider in ("agent-vision", "antigravity-ocx"):
+            return True
         return bool(self.api_key)
 
     def analyze(self, drawing: DrawingInput) -> ModelCandidate:
@@ -287,19 +292,45 @@ class MLLMBackend:
 
         与 analyze() 不同：这里每次只跑一个小任务（只读件号 / 只检几何），
         用独立 prompt + 小 Schema，单步日志 duration_ms。
-        返回 (parsed_json, meta)：
-            * 成功：parsed 为解析后的 dict，meta 记录 model/耗时/图片信息
-            * 失败（未配 API / 网络 / Schema 拒绝）：parsed=None，
-              meta["failure_reason"] 写原因；调用方把该步标 pending，绝不猜值。
+        优先读取本地 Agent 视觉缓存（如 out/agent_vision_cache 或与图片同名 .json），
+        若命中则免 API 调用直接返回。
         """
         import time as _time
 
         t0 = _time.time()
         meta: Dict[str, Any] = {"model": self.model, "provider": self.provider, "agent": agent}
+
+        # 1. 优先检查本地 Agent 视觉注入/缓存
+        if image_path:
+            img_p = Path(image_path)
+            candidate_cache_paths = [
+                img_p.with_suffix(".json"),
+                img_p.parent / f"{agent}_{img_p.stem}.json",
+                Path("out/agent_vision_cache") / f"{agent}_{img_p.stem}.json",
+                Path("out/agent_vision_cache") / f"{img_p.stem}.json",
+            ]
+            for cp in candidate_cache_paths:
+                if cp.exists():
+                    try:
+                        parsed = json.loads(cp.read_text(encoding="utf-8"))
+                        meta.update({
+                            "source": "agent_vision_cache",
+                            "cache_file": str(cp),
+                            "elapsed_s": round(_time.time() - t0, 3),
+                            "duration_ms": round((_time.time() - t0) * 1000, 2),
+                        })
+                        return parsed, meta
+                    except Exception as exc:
+                        # P4：缓存文件损坏时记录 warning 并 fallthrough 到下一个候选，
+                        # 不再静默吞异常。
+                        meta.setdefault("warnings", []).append(
+                            f"cache {cp.name} 不可读，跳过：{exc}"
+                        )
+
         if not self.available():
             from .mllm_providers import mllm_config_status
             meta.update({
-                "failure_reason": "未配置 MLLM API Key",
+                "failure_reason": "未配置 MLLM API Key 且无本地视觉缓存",
                 "elapsed_s": 0.0,
                 "duration_ms": 0.0,
                 "note": mllm_config_status(),
@@ -400,18 +431,26 @@ class NullBackend:
 # 后端选择
 # --------------------------------------------------------------------------
 
-def choose_backend(drawing: DrawingInput, mllm: Optional[MLLMBackend] = None) -> DrawingBackend:
+def choose_backend(
+    drawing: DrawingInput,
+    mllm: Optional[MLLMBackend] = None,
+    prefer_mllm: bool = False,
+) -> DrawingBackend:
     """按输入类型选择后端。
 
-    优先级（P1-2 已落地）：
-        * dxf/dwg -> RuleBasedBackend（矢量，规则够用）
+    优先级：
+        * dxf/dwg -> 默认 RuleBasedBackend（矢量规则）；当 prefer_mllm=True
+          且配了 API 时，改走 MLLMBackend（栅格化 + 整塔识别，适用于
+          ezdxf 图层映射失效的真实国网图纸）。
         * tower + png/jpg/scan/pdf -> MLLMBackend 优先（配 API 时）；
           无 API 则降级到 TowerScanBackend（规则线检测），绝不走 Null 丢弃扫描图
         * 其它 png/jpg/scan/pdf -> MLLMBackend（若配置 API），否则 NullBackend
     """
-    if drawing.kind in ("dxf", "dwg"):
-        return RuleBasedBackend()
     mllm = mllm or MLLMBackend()
+    if drawing.kind in ("dxf", "dwg"):
+        if prefer_mllm and mllm.available():
+            return mllm
+        return RuleBasedBackend()
     if drawing.tower and drawing.kind in ("png", "jpg", "jpeg", "scan", "pdf"):
         if mllm.available():
             return mllm
@@ -457,7 +496,7 @@ def _encode_image(path: str, max_edge: Optional[int] = None) -> Tuple[str, Dict[
     import io
 
     if max_edge is None:
-        max_edge = int(os.environ.get("MLLM_MAX_IMAGE_EDGE") or "2048")
+        max_edge = int(os.environ.get("MLLM_MAX_IMAGE_EDGE") or "4096")
 
     p = Path(path)
     meta: Dict[str, Any] = {"max_edge": max_edge}

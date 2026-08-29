@@ -1,69 +1,55 @@
 # 交付说明（Phase A4）
 
-> 一页讲清：交付什么、哪条路径是生产、哪条是样例、Kimi 用在哪、怎么验收。
+> 一页讲清：交付什么、**产品主路径 vs 工程旁路**、多模态用在哪、怎么验收。  
+> 官网：[仝心圆](https://concentriccirclesmrtt.github.io) · 计划：[`PRODUCT_PATH_AND_AGENT_PLAN.md`](PRODUCT_PATH_AND_AGENT_PLAN.md)
 
-## 三条路径，一句话定位
+## 产品主路径（应对外）
 
-| 路径 | 输入 | 产物 | 定位 |
-|---|---|---|---|
-| **矢量主路径（生产）** | 国网 DXF/DWG（`35A1-JC1-02/03` 等） | 杆件/节点/件号关联 + 2D 坐标 | **生产路径**：件号关联率、图层报告、跨文件去重 |
-| **扫描样例路径** | `examples/clear/` 位图（front/side/plan/bom） | 霍夫几何候选 + 多视图融合候选 | **样例/演示**：验证 A0→A4 编排与 merge 结构，默认 `pending_review`，不进终版 |
-| **Kimi 复核** | 清晰扫描图 | 件号 OCR 候选（A1） | **仅清晰扫描**：辅助件号识别；不替代矢量主路径 |
-| **Tesseract 兜底（B4）** | 任意扫描图 | 件号 OCR 候选（A1 兜底） | 无 MLLM API 或 MLLM 0 字时，确定性 OCR 兜底，绝不猜编号 |
+**可插拔多模态（MLLM）+ Skill + 工程 Agent Harness（A0→A4）**
 
-## 关键结论（不要混淆）
-
-1. **矢量 ≠ 扫描**。国网真实图纸走 DXF 解析（ezdxf），件号关联率约 56.8%（02）/ 84.9%（03）；
-   扫描图走霍夫 + VLM，是人工复核候选，`solve_status=pending_review`，无坐标不 export strict GLB。
-2. **单立面 ≠ 3D**。`35A1-JC1-02` 是单张正立面图（`view_mode=single_facade`），无法单文件 merge 出
-   真 3D。要 3D 需立面/平面分文件（多 DWG 各自带 `view_regions`）走 `merge_view_coordinates`；
-   否则按「2D + 件号率」交付。
-3. **`--merge` 两种语义**：
-   - 单文件多视图（`tower_110kv.dxf`）→ 三视图线性解耦，真 3D。
-   - 多文件批量（DWG 目录）→ 只是文件级 ID 前缀拼接，**不是 3D 装配**；额外产出
-     `cross_file_bar_id_report`（按 bar_id 跨文件去重）供人工核对，不假装合 3D。
-
-## 交付物清单
-
-| 文件 | 说明 |
-|---|---|
-| `model.json` | EngineeringModel（组件 + 规则 + 依赖 + staleness） |
-| `steps.json` | ProcessingGraph（每步 status/duration/detail） |
-| `harness_summary.json` | 五条铁塔规则验证结果 |
-| `tower.glb` / `*.obj` | 3D 线框/实体（仅矢量 merge 通过后） |
-| `batch_report.json` | 批量接入 per-file 汇总 + 图层 + 跨文件去重 |
-| `report.md` | 人类可读报告 |
-
-## 验收命令（一条命令证「没退化」）
+| 步骤 | 职责 | 后端 |
+|------|------|------|
+| A0 | 版面 / 视图 | 规则 |
+| **A1** | 件号 OCR | **`MLLMBackend`**（`MLLM_PROVIDER` 可换：openai / kimi-code / moonshot 等） |
+| A2 | 几何 | ezdxf（hybrid）或霍夫（扫描） |
+| A3 | 杆↔件号 | 确定性规则 |
+| A4 | 编译 + Harness | Skill + validators |
 
 ```bash
-cd engineering-trace
-bash scripts/acceptance.sh                 # 全绿：110kV 5/5 + 国网 ≥50% + clear 三 view_type + pytest
-bash scripts/acceptance.sh --with-mllm     # 追加 Kimi 门禁（需 KIMI_API_KEY）
+# 扫描图
+python3 -m traceability.cli run-tower examples/clear/tower_front_hd.png --out-dir out/agent-run
+
+# DXF hybrid（Phase 1）
+python3 scripts/run_agent_sheet.py path/to.dxf --out-dir out/hybrid --layer-map overlay.json
 ```
 
-验收口径：
+## 工程旁路（当前 DXF 全册默认）
 
-- `tower_110kv` `--merge` → 五条规则 5/5 passed，金标准偏差 < 2%
-- 国网 `35A1-JC1-02` → 件号关联率 ≥ 50%
-- `examples/clear/` → front/side/plan 三 view_type 正确 + merged model 存在
-- 全量 pytest 全绿
-- （可选）`tower_front_hd` + k3 → A1 件号 > 0，A3 关联率 > 3%（修复前基线）
+| 路径 | 说明 |
+|------|------|
+| `deliver-project` / `run_35A1_jc1_full.py` | 纯 ezdxf + cross_file，**无** Agent steps |
+| L0 `canonical.glb` | GIM 完整塔真值 |
 
-## 环境依赖
+## 三层产物
 
-| 依赖 | 用途 | 必需 |
-|---|---|---|
-| ezdxf / numpy / scipy / jsonschema | 矢量解析 + 三视图解耦 | ✅ 核心 |
-| opencv-python-headless | 扫描图霍夫/版面分析 | 扫描路径 |
-| trimesh | GLB 实体导出 | 3D 导出 |
-| openai | MLLM 调用 | 仅 Kimi 复核 |
-| pytesseract + tesseract | 件号 OCR 兜底（B4） | 可选（未装则跳过，绝不猜编号） |
+| 层 | 产物 | 来源 |
+|----|------|------|
+| L0 | `canonical.glb` | GIM / GT |
+| L1 | `index.json` | 全册 per-sheet 解析 |
+| M3 | `skeleton.glb` | spatial_merge 正交视图 |
 
-## 已知边界
+## 验收
 
-- 扫描候选默认 `pending_review`，需人工确认（`confirm_tower_scan` / `--allow-scan`）才进终版。
-- A3 关联率受 A2 霍夫噪声影响（图框/标注线误判为杆件会拉低 labeled/bars 比率）；
-  B1 已过滤图框长线/贴边线段，B2 双指标（labeled/bars + label_hit_rate）在高噪声时改用件号命中率作闸门。
-- A1 件号 OCR 在无 MLLM API 或 MLLM 0 字时，B4 会尝试 Tesseract 确定性 OCR 兜底（未安装则跳过）。
-- 国网单立面图纸的 3D 重构需跨文件组合，属 Phase D 范围。
+```bash
+bash scripts/acceptance.sh
+bash scripts/acceptance.sh --with-mllm   # 多模态 A1 门禁（需 API key）
+```
+
+## 环境
+
+| 依赖 | 用途 |
+|------|------|
+| OpenAI 兼容 SDK | `MLLMBackend`（提供商可配置） |
+| ezdxf | 矢量 / hybrid A2 |
+| opencv | 扫描 A2 |
+| trimesh | GLB |

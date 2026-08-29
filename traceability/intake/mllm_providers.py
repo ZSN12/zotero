@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Kimi Code 端点上，用户口语「k2.7 code」映射到官方 Model ID
@@ -29,8 +30,55 @@ KIMI_CODE_MODEL_ALIASES: Dict[str, str] = {
     "k3-256k": "k3-256k",
 }
 
+# 项目根目录 .env 自动加载（懒加载一次）。避免每次运行都要手动 source zshrc。
+# 只填充「尚未在环境变量里」的键，绝不覆盖调用方显式设置的变量。
+_ENV_LOADED = False
+
+
+def _load_dotenv_if_present() -> None:
+    """从项目根目录 .env 补齐缺失的环境变量（幂等，只加载一次）。"""
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+    _ENV_LOADED = True
+    # 从当前文件向上找项目根（含 .git 或 .env 的目录）
+    candidate = Path(__file__).resolve()
+    for _ in range(6):
+        if (candidate / ".env").exists():
+            _load_dotenv_file(candidate / ".env")
+            return
+        candidate = candidate.parent
+    # 回退：当前工作目录
+    cwd_env = Path.cwd() / ".env"
+    if cwd_env.exists():
+        _load_dotenv_file(cwd_env)
+
+
+def _load_dotenv_file(path: Path) -> None:
+    """解析 KEY=VALUE 行，仅当环境变量未设置时导入（支持单/双引号与注释）。"""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip()
+        if not key:
+            continue
+        # 剥离首尾成对引号
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        # 仅当环境变量尚未设置时导入，避免覆盖显式配置
+        if key not in os.environ:
+            os.environ[key] = val
+
 
 def _first_env(names: List[str]) -> str:
+    _load_dotenv_if_present()
     for name in names:
         val = os.environ.get(name, "").strip()
         if val:
@@ -46,6 +94,13 @@ MLLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "default_model": "gpt-4o",
         "label": "OpenAI 兼容（默认官方）",
     },
+    "agent-vision": {
+        "api_key_envs": [],
+        "base_url_env": "",
+        "default_base_url": None,
+        "default_model": "gemini-3.7-flash",
+        "label": "Agent 本地多模态视觉（Gemini 3.7 Flash 提取缓存）",
+    },
     "kimi-code": {
         "api_key_envs": ["KIMI_API_KEY", "OPENAI_API_KEY"],
         "base_url_env": "OPENAI_BASE_URL",
@@ -60,6 +115,16 @@ MLLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "default_model": "kimi-k2.7-code",
         "label": "Moonshot 开放平台（kimi-k2.7-code 按量）",
     },
+    "antigravity-ocx": {
+        # Google Antigravity / Cloud Code Assist 经本地 opencodex relay（DSH 同款）。
+        # relay 已用 OAuth 鉴权，本地无需 client key；但 OpenAI SDK 要求 Authorization
+        # header 非空，因此默认配置占位 key。
+        "api_key_envs": ["OPENCODEX_API_KEY"],
+        "base_url_env": "OPENCODEX_BASE_URL",
+        "default_base_url": "http://127.0.0.1:10100/v1",
+        "default_model": "google-antigravity/gemini-3.7-flash",
+        "label": "Google Antigravity Gemini 3.7 Flash（opencodex relay，OAuth 免 key）",
+    },
 }
 
 
@@ -70,6 +135,7 @@ def resolve_mllm_config(
     model: Optional[str] = None,
 ) -> Dict[str, Optional[str]]:
     """合并环境变量与显式参数，返回 MLLMBackend 用的 api_key/base_url/model。"""
+    _load_dotenv_if_present()
     provider_id = (provider or os.environ.get("MLLM_PROVIDER", "openai")).strip().lower()
     preset = MLLM_PROVIDER_PRESETS.get(provider_id, MLLM_PROVIDER_PRESETS["openai"])
 
@@ -80,8 +146,17 @@ def resolve_mllm_config(
         resolved_key = api_key
     else:
         resolved_key = _first_env(preset["api_key_envs"])
+        if not resolved_key and provider_id == "antigravity-ocx":
+            resolved_key = "ocx-relay"
     resolved_base = base_url or os.environ.get(preset["base_url_env"]) or preset["default_base_url"]
-    resolved_model = model or os.environ.get("MLLM_MODEL") or preset["default_model"]
+    # 模型解析：显式传参 > 全局 MLLM_MODEL > preset 默认。
+    # 但 agent-vision / antigravity-ocx 是「免 key 本地/中继」专用 provider，
+    # 全局 MLLM_MODEL（通常写给 Kimi 的 k3-256k）不应污染它们的模型命名空间；
+    # 这两个 provider 只在显式传 model 时才覆盖 preset 默认值。
+    if provider_id in ("agent-vision", "antigravity-ocx"):
+        resolved_model = model or preset["default_model"]
+    else:
+        resolved_model = model or os.environ.get("MLLM_MODEL") or preset["default_model"]
     if provider_id == "kimi-code":
         key = resolved_model.strip().lower()
         resolved_model = KIMI_CODE_MODEL_ALIASES.get(key, resolved_model)

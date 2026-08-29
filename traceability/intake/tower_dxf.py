@@ -35,6 +35,9 @@ from .tower_spec import (
     region_scale_xy,
     double_line_merge_config,
     collinear_merge_config,
+    canonical_sheet_role,
+    sheet_role_for_stem,
+    sheet_is_spatial_mergeable,
 )
 
 from ..model import (
@@ -78,49 +81,73 @@ _BAR_ID_EXCLUDE_RES = [
     re.compile(r"(?:\d+)?M\s?\d{1,3}\s*[Xx×*]\s*\d+", re.IGNORECASE),  # 螺栓
 ]
 
+# P2：截面型号提取正则（Phase 2 填充杆件 section）。
+# 国网截面标注形态：
+#   * 角钢：L40X3 / L50X4 / L100X7（可带材质前缀 Q345L63X5 / Q345L70X5）
+#   * 连接板钢板：-6X101 / Q345-6X188 / -10X110 / -14X260（厚 X 宽）
+# 只提取「型号本体」，材质前缀（Q345 等）一并保留用于与 master BOM 精确对账。
+_SECTION_RE = re.compile(
+    r"(?:(?:Q\s?(?:235|345|420))\s*)?"
+    r"(?:L\s?\d{1,3}\s*[Xx×*]\s*\d{1,3}|-\s?\d{1,2}\s*[Xx×*]\s*\d{1,4})",
+    re.IGNORECASE,
+)
+
 
 def classify_drawing_kind(stem: str) -> dict:
     """按文件名规则分流国网/外图图纸类型（B2）。
 
     返回：
         * kind: title_block / bom / assembly / node_detail / drawing
+        * role: 规范 sheet_role 枚举值（Phase A1：elevation|plan|section|
+          module_panel|node_detail|index|title）；文件名推不出空间角色时为空。
         * parse_bars: 是否进入杆件解析
         * reason: 分流依据
     """
     s = stem.lower()
     # 国网命名习惯：<塔型>-<序号>[-<分页>]，如 35a1-jc1-00-1 / 35a1-jc1-02 / 35c2-sjg1-ml
     if re.search(r"[-_]0{2}(?:[-_.]|$)", s) or "图签" in s:
-        return {"kind": "title_block", "parse_bars": False,
+        return {"kind": "title_block", "role": "title", "parse_bars": False,
                 "reason": "文件名 -00-* 判定为图签页"}
     if s.endswith("-ml") or s.endswith("_ml") or s == "ml" or "-ml-" in s or "-ml." in s:
-        return {"kind": "bom", "parse_bars": False,
+        return {"kind": "bom", "role": "index", "parse_bars": False,
                 "reason": "文件名 *-ML 判定为材料明细表"}
     # 02 总装、03+ 节点大样都属于可解析的杆件图
     if re.search(r"[-_]0?2(?:[-_.]|$)", s):
-        return {"kind": "assembly", "parse_bars": True,
+        return {"kind": "assembly", "role": "module_panel", "parse_bars": True,
                 "reason": "文件名 -02 判定为总装图"}
     if re.search(r"[-_]0?[3-9]\d*(?:[-_.]|$)", s):
-        return {"kind": "node_detail", "parse_bars": True,
+        return {"kind": "node_detail", "role": "node_detail", "parse_bars": True,
                 "reason": "文件名 03+ 判定为节点/分段图"}
     if s.startswith("00") or s.startswith("02"):
         return {"kind": "assembly" if s.startswith("02") else "title_block",
+                "role": "module_panel" if s.startswith("02") else "title",
                 "parse_bars": s.startswith("02"),
                 "reason": "文件名前导序号判定"}
-    return {"kind": "drawing", "parse_bars": True, "reason": "默认按杆件图解析"}
+    return {"kind": "drawing", "role": "node_detail", "parse_bars": True,
+            "reason": "默认按杆件图解析（无视图声明时按节点大样处理）"}
 
 
 def resolve_drawing_kind(stem: str, overlay: Optional[str | Path | dict] = None) -> dict:
-    """按文件名分流，并允许 overlay view_regions 覆盖 BOM/图签等跳过规则（M3）。"""
+    """按文件名分流，并允许 overlay view_regions 覆盖 BOM/图签等跳过规则（M3）。
+
+    Phase A1：返回里带规范 sheet_role；overlay 声明了带 axes 的正交视图时，
+    role 以 overlay 为准（elevation/plan/section），不再猜「总装/大样」。
+    """
     kind = classify_drawing_kind(stem)
     if kind["parse_bars"]:
+        role = sheet_role_for_stem(stem, overlay=overlay) if overlay else None
+        if role:
+            kind["role"] = role
         return kind
     for region in view_regions(stem, overlay=overlay):
         axes = list(region.get("axes") or [])
         if not axes:
             continue
         vk = region.get("kind", "drawing")
+        role = sheet_role_for_stem(stem, overlay=overlay) or canonical_sheet_role(vk)
         return {
             "kind": vk if vk in ("plan", "front", "side", "section", "elevation", "drawing") else "drawing",
+            "role": role,
             "parse_bars": True,
             "reason": f"overlay view_regions[{vk}] 覆盖 {kind['reason']}",
         }
@@ -581,6 +608,34 @@ def _extract_bar_label(text: str, bar_id_re: re.Pattern) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def _extract_section_label(text: str) -> Optional[str]:
+    """从一条 TEXT/MTEXT 中提取截面型号（L40X3 / Q345L63X5 / -6X101 等）。
+
+    与 _extract_bar_label 互补：后者把截面文字**排除**在件号之外，本函数
+    把截面文字**提取**出来用于填充杆件 section（Phase 2 交叉核验）。
+    返回规范化字符串（去空白、统一 X 大写），无匹配返回 None。
+
+    钢板截面（-厚X宽）额外约束：宽 >= 40mm 才视为真实连接板
+    （master BOM 钢板最小宽 40mm；-3X2 / -4X2 这类是螺栓/边距标注，不是截面）。
+    """
+    if not text:
+        return None
+    m = _SECTION_RE.search(text)
+    if not m:
+        return None
+    norm = re.sub(r"\s+", "", m.group(0)).upper()
+    # 钢板截面 -厚X宽 / Q345-厚X宽：宽 < 40 视为标注噪声，丢弃
+    if norm.startswith("-") or norm.startswith("Q345-"):
+        pm = re.search(r"X(\d{1,4})$", norm)
+        width = int(pm.group(1)) if pm else 0
+        if width < 40:
+            return None
+    # 剥离材质前缀（Q345/Q235/Q420），使 section 与 GT 词汇对齐
+    # （GT 用 L63X5，图纸标 Q345L63X5；材质另由 master BOM 保留）
+    norm = re.sub(r"^(?:Q\s?(?:235|345|420))", "", norm, flags=re.IGNORECASE)
+    return norm
+
+
 def _in_region(x: float, y: float, region: dict) -> bool:
     reg = region.get("region")
     if reg is None:
@@ -742,6 +797,8 @@ def extract_tower_from_dxf(
         properties={
             "path": dxf_path,
             "drawing_kind": drawing_kind["kind"],
+            "sheet_role": drawing_kind.get("role", canonical_sheet_role(drawing_kind["kind"])),
+            "spatial_mergeable": sheet_is_spatial_mergeable(stem, overlay=layer_map_path),
             "drawing_view": stem,
             "parse_bars": drawing_kind["parse_bars"],
             "kind_reason": drawing_kind["reason"],
@@ -1103,6 +1160,46 @@ def extract_tower_from_dxf(
     handle_to_label: Dict[str, str] = {h: v[1] for h, v in handle_best.items()}
     handle_label_dist: Dict[str, float] = {h: v[0] for h, v in handle_best.items()}
 
+    # ---- 4.5) 截面型号关联（Phase 2）：截面文字 → 最近杆段，一对一贪心 ----
+    # 与件号关联共用同一套 texts / 距离 / 贪心机制，但提取的是截面型号
+    # （L40X3 / Q345L63X5 / -6X101），用于填充杆件 section（原硬编码 None）。
+    section_labels: List[Optional[str]] = [
+        _extract_section_label(t["text"]) for t in texts
+    ]
+    sec_pairs: List[Tuple[float, int, int, str]] = []
+    for ti, label in enumerate(section_labels):
+        if label is None:
+            continue
+        view = text_view[ti]
+        cands = segs_by_view.get(view) or segs_by_view.get("_all") or []
+        if not cands:
+            cands = all_seg_indices
+        tx, ty = texts[ti]["insert"]
+        rot_deg = float(texts[ti].get("rotation") or 0.0)
+        for si in cands:
+            seg = bar_segments[si]
+            d = _text_bar_match_distance(tx, ty, rot_deg, seg)
+            if d < TEXT_SNAP:
+                sec_pairs.append((d, si, ti, label))
+    sec_pairs.sort(key=lambda x: x[0])
+    seg_section: Dict[int, str] = {}
+    used_sec_texts: set = set()
+    for d, si, ti, label in sec_pairs:
+        if si in seg_section or ti in used_sec_texts:
+            continue
+        seg_section[si] = label
+        used_sec_texts.add(ti)
+    # 同一 handle 多条线段取最近截面文字（与件号 handle_best 同语义）
+    handle_section: Dict[str, Tuple[float, str]] = {}
+    for si, label in seg_section.items():
+        h = bar_segments[si]["handle"]
+        d = seg_label_dist.get(si, float("inf"))
+        # 截面文字距离单独记录（seg_label_dist 是件号距离，不可混用）；
+        # 这里用 sec_pairs 中对应距离近似即可，直接用贪心序（已按距离升序）。
+        if h not in handle_section or d < handle_section[h][0]:
+            handle_section[h] = (d, label)
+    handle_to_section: Dict[str, str] = {h: v[1] for h, v in handle_section.items()}
+
     # ---- 5) 杆件 → tower_bar 组件 ----
     # 先按「(view_type, bar_id)」收集杆段，供重复件号消歧报告使用。
     dup_segments: Dict[Tuple[str, str], List[Tuple[int, float]]] = {}
@@ -1139,11 +1236,13 @@ def extract_tower_from_dxf(
             "bar_id": bar_id,
             "view_type": vk,
             "length_mm": round(length, 2),
-            "section": None,  # 由 BOM 交叉核验（Phase 2）填充
+            "section": handle_to_section.get(handle),  # Phase 2：截面文字空间关联
             "from_node": f"node_{from_nid}",
             "to_node": f"node_{to_nid}",
             "layer": seg["layer"],
             "drawing_view": stem,
+            "source_file": stem,
+            "geometry_origin": "dxf_geom",
         }
         if handle in handle_label_dist:
             properties["label_distance"] = round(handle_label_dist[handle], 2)

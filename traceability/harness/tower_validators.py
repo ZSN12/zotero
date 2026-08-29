@@ -107,13 +107,24 @@ def validate_bom_section_match(model: EngineeringModel, rule_id: str) -> Optiona
 
 
 def validate_node_fully_solved(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:
-    """关键节点三轴坐标已知；cross_file 插值 y 须 y_review=verified。"""
+    """关键节点三轴坐标已知；cross_file 插值 y 须 y_review=verified。
+
+    P2 语义修正：MLLM/详图页的 2D 节点（view_type=detail，或未声明正交视图）
+    本就不该有三轴坐标，缺轴应视为「待跨视图合并」PENDING，而非 FAILED；
+    只有已进入 3D 求解链的正交视图节点（front/plan/side/elevation）缺轴才报 FAILED。
+    """
     unsolved = []
+    pending_2d = []
     derived_pending = []
     for cid, node in _iter_nodes(model):
         p = node.properties
+        vt = p.get("view_type")
         if p.get("x") is None or p.get("y") is None or p.get("z") is None:
-            unsolved.append(cid)
+            # 2D 视图（detail / 无正交视图声明）缺轴 → pending（待跨视图合并）
+            if vt in ("detail", None) or vt not in ("front", "plan", "side", "elevation", "section"):
+                pending_2d.append(cid)
+            else:
+                unsolved.append(cid)
             continue
         if p.get("y_origin") == "z_peer_interpolate" and p.get("y_review") != "verified":
             derived_pending.append(cid)
@@ -124,6 +135,12 @@ def validate_node_fully_solved(model: EngineeringModel, rule_id: str) -> Optiona
         return ValidationResult(
             rule_id, ValidationStatus.PENDING,
             f"{len(derived_pending)} 个节点 y 为 z-peer 插值，待 confirm-derived-y：{derived_pending[:5]}",
+            "node-solved",
+        )
+    if pending_2d:
+        return ValidationResult(
+            rule_id, ValidationStatus.PENDING,
+            f"{len(pending_2d)} 个 2D 视图节点待跨视图合并（缺三轴）：{pending_2d[:5]}",
             "node-solved",
         )
     return ValidationResult(rule_id, ValidationStatus.PASSED,

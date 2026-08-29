@@ -34,6 +34,8 @@ def intake_tower_batch(
         "files": [...],         # 每文件 {file, dxf, kind, bars, nodes, layers, error}
         "layer_report": {...},  # 汇总图层使用
         "model_path": Optional[str],   # merge=True 时写出的合并模型
+        "models_by_stem": {stem: EngineeringModel},  # 内存模型（供下游复用，避免二次解析）
+        "sheet_model_paths": {stem: path},           # per-sheet model.json 落盘路径
         "ok": bool,
     }
     """
@@ -48,6 +50,8 @@ def intake_tower_batch(
 
     files: List[Dict[str, Any]] = []
     models: List[EngineeringModel] = []
+    models_by_stem: Dict[str, EngineeringModel] = {}
+    sheet_model_paths: Dict[str, str] = {}
     layer_aggregate: Dict[str, Any] = {"files": {}, "total_entities": 0}
     all_ok = True
 
@@ -85,6 +89,14 @@ def intake_tower_batch(
             if not kind["parse_bars"]:
                 entry["note"] = kind["reason"]
             models.append(model)
+            # P1-4：保留内存模型 + 落盘 per-sheet model，供 cross_file_batch 等
+            # 下游直接复用，禁止再次调用 extract_tower_from_dxf。
+            model.name = stem
+            models_by_stem[stem] = model
+            sheet_path = out_dir / f"{stem}.json"
+            from ..io import save_model
+            save_model(model, sheet_path)
+            sheet_model_paths[stem] = sheet_path.as_posix()
         except Exception as exc:  # 单文件失败不中断整批
             entry["error"] = str(exc)
             all_ok = False
@@ -151,6 +163,8 @@ def intake_tower_batch(
         "cross_file_bar_id_dup": cross_file_dup,
         "merge_report": merge_report,
         "model_path": model_path,
+        "models_by_stem": models_by_stem,
+        "sheet_model_paths": sheet_model_paths,
         "batch_report": (out_dir / "batch_report.json").as_posix(),
     }
 
@@ -202,13 +216,26 @@ def merge_cross_file_views(
 
     与 merge_tower_models 的 ID 前缀拼接不同：保留各文件 view_type/局部坐标，
     供 finalize_tower_model(merge=True) 做三视图线性解耦。
+
+    Phase A2 硬边界：传入 layer_map_path 时，只有 overlay 声明为
+    elevation/plan/section（front/side 视为 elevation 历史名）且带 axes 的
+    图纸才参与空间合并；module_panel / node_detail / index / title 一律跳过，
+    绝不把大样/模块页当立面叠坐标。未传 layer_map_path 时保留旧行为。
     """
+    from .tower_spec import sheet_is_spatial_mergeable
+
     merged = EngineeringModel(name="tower-cross-file-merged")
     view_kinds: set = set()
     source_files: List[str] = []
+    skipped_sheets: List[str] = []
 
     for model in models:
         stem = _model_stem(model) or model.name
+        if layer_map_path is not None and not sheet_is_spatial_mergeable(
+            stem, overlay=layer_map_path
+        ):
+            skipped_sheets.append(stem)
+            continue
         source_files.append(stem)
         prefix = f"{stem}__"
         df = model.components.get("drawing_file")
@@ -281,6 +308,9 @@ def merge_cross_file_views(
             "view_kinds": sorted(view_kinds),
             "source_files": source_files,
             "merge_method": "merge_view_coordinates",
+            # Phase A2：被空间合并边界剔除的图纸（大样/模块页/目录等）
+            "spatial_merge_skipped_sheets": skipped_sheets,
+            "spatial_merge_filter": "elevation|plan|section" if layer_map_path is not None else "none",
         },
     ))
     return merged
@@ -298,27 +328,19 @@ def cross_file_batch(
     finalize_tower_model(merge=True)，而非 ID 前缀假合并。
     """
     from ..intake.tower_pipeline import finalize_tower_model
-    from ..io import load_model, save_model
+    from ..io import save_model
 
     from .tower_spec import cross_file_merge_stems
 
     batch = intake_tower_batch(input_dir, out_dir, layer_map_path=layer_map_path, merge=False)
     merge_stems = cross_file_merge_stems(layer_map_path)
     models: List[EngineeringModel] = []
-    for entry in batch["files"]:
-        if entry.get("error"):
+    # P1-4：直接复用 intake_tower_batch 返回的内存模型 models_by_stem，
+    # 禁止再次调用 extract_tower_from_dxf（每张 DXF 只解析一次）。
+    for stem, model in batch.get("models_by_stem", {}).items():
+        if merge_stems and stem not in merge_stems:
             continue
-        stem = entry["file"]
-        model_path = Path(out_dir) / f"{stem}.json"
-        if not model_path.exists():
-            dxf = entry.get("dxf")
-            if dxf:
-                model = extract_tower_from_dxf(dxf, layer_map_path=layer_map_path)
-                save_model(model, model_path)
-        if model_path.exists():
-            if merge_stems and stem not in merge_stems:
-                continue
-            models.append(load_model(str(model_path)))
+        models.append(model)
 
     merge_report: Dict[str, Any] = {
         "mode": "cross_file_view",
@@ -327,11 +349,17 @@ def cross_file_batch(
         "batch_files": len(batch["files"]),
     }
     model_path: Optional[str] = None
-    if len(models) >= 2:
+    if models:
         merged = merge_cross_file_views(models, layer_map_path=layer_map_path)
         merged = finalize_tower_model(
             merged, bom_path=bom_path, merge=True, layer_map_path=layer_map_path,
         )
+        # P3 修复：cross_file_batch 与 deliver_project 路径对齐——当 overlay 启用
+        # enable_4_face_expansion 时，单立面 front 节点经四向镜像展开得到正确 y
+        # （GT 半宽由 use_gt_half_width 权威给出），替代旧的 synthetic_side。
+        from .tower_symmetry import expand_4_face_symmetry_model
+        expanded = expand_4_face_symmetry_model(merged, overlay=layer_map_path)
+        merged = expanded if expanded is not None else merged
         model_path = (Path(out_dir) / "model.json").as_posix()
         save_model(merged, model_path)
         merge_report["view_mode"] = (
@@ -366,12 +394,6 @@ def cross_file_batch(
                 if c.kind == "tower_node"
                 and c.properties.get("y_origin") == "z_peer_interpolate"
             )
-    elif len(models) == 1:
-        merged = finalize_tower_model(
-            models[0], bom_path=bom_path, merge=True, layer_map_path=layer_map_path,
-        )
-        model_path = (Path(out_dir) / "model.json").as_posix()
-        save_model(merged, model_path)
 
     cross_dup = cross_file_bar_id_report(models) if models else {}
     report_path = Path(out_dir) / "batch_report.json"

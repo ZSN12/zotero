@@ -718,6 +718,8 @@ def tower_geometry_gate(
     corner_legs = int(df_props.get("corner_legs") or 0)
     face_count = int(df_props.get("face_count") or 0)
     degree1 = int(df_props.get("topology_degree1") or 0)
+    genuine_dangling = int(df_props.get("topology_genuine_dangling", degree1))
+    crossarm_tips = int(df_props.get("topology_crossarm_tips") or 0)
     require_degree1_zero = bool(spec.get("glb_gate_require_degree1_zero", False))
     max_degree1 = int(spec.get("glb_gate_max_degree1", 0))
 
@@ -735,9 +737,12 @@ def tower_geometry_gate(
             reasons.append(f"四面网架 face_count={face_count}，应为 4")
         if corner_legs != 4:
             reasons.append(f"四角主腿数 {corner_legs}，应为 4")
-        if (require_degree1_zero or max_degree1 >= 0) and degree1 > max_degree1:
-            # 量化验收 1（可配置严格档）：悬空断裂节点（Degree=1）应 <= max_degree1。
-            reasons.append(f"悬空断裂节点（Degree=1）{degree1} 个，应 <= {max_degree1}")
+        if (require_degree1_zero or max_degree1 >= 0) and genuine_dangling > max_degree1:
+            # 量化验收 1（可配置严格档）：真悬空断裂节点（Degree=1，已排除
+            # 横担悬臂端头）应 <= max_degree1。
+            reasons.append(
+                f"悬空断裂节点（Degree=1）{genuine_dangling} 个，应 <= {max_degree1}"
+                f"（另有 {crossarm_tips} 个横担悬臂端头属正常）")
         if min_span > 0 and span_mm < min_span:
             reasons.append(
                 f"节点空间跨度 {span_mm:.1f}mm < 门禁阈值 {min_span:.1f}mm（bbox={bbox_mm}）")
@@ -788,6 +793,8 @@ def tower_geometry_gate(
         "corner_legs": corner_legs,
         "face_count": face_count,
         "topology_degree1": degree1,
+        "topology_crossarm_tips": crossarm_tips,
+        "topology_genuine_dangling": genuine_dangling,
     }
 
 

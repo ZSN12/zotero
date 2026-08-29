@@ -151,11 +151,12 @@ class ImageEncodeTest(unittest.TestCase):
         self.assertLessEqual(max(img.size), 1536)
 
     def test_max_edge_default_is_2048(self):
-        # Phase A3：默认最长边 2048，与 docstring/README 一致（曾出现 1536 vs 2048 漂移）
+        # 默认最长边已提升到 4096（Kimi 视觉推荐上限 4096×2160），
+        # 2048 会让塔身段细斜材糊掉、召回不足。断言跟随默认值。
         from traceability.intake.mllm_backend import _encode_image
         with mock.patch.dict("os.environ", {"MLLM_MAX_IMAGE_EDGE": ""}):
             b64, meta = _encode_image(str(FRONT_HD))
-        self.assertEqual(meta["max_edge"], 2048)
+        self.assertEqual(meta["max_edge"], 4096)
 
     def test_jpeg_converted_to_png(self):
         from traceability.intake.mllm_backend import _encode_image

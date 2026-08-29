@@ -32,6 +32,14 @@ from .mllm_tower_prompt import (
     parse_geom_agent_output,
 )
 from .tower_dxf import _compile_bar_id_re, _extract_bar_label
+from .pipeline_stages import (
+    STAGE_LAYOUT,
+    STAGE_LABELS,
+    STAGE_LABELS_OCR_FALLBACK,
+    STAGE_GEOMETRY,
+    STAGE_LINK,
+    STAGE_HARNESS,
+)
 from .tower_layout import (
     INK_THRESHOLD,
     MIN_BAR_PX,
@@ -49,9 +57,9 @@ from .tower_layout import (
 LABEL_SNAP_PX = 400.0
 # A3 关联率闸门：低于阈值 -> pending（不 failed 凑数）
 MIN_ASSOCIATION_RATE = 0.20
-# 每个 view 裁剪图最长边（与 MLLM_MAX_IMAGE_EDGE 对齐，默认 2048；
-# 大图件号 OCR 易超时时可下调为 1536）
-MAX_VIEW_EDGE_PX = int(os.environ.get("MLLM_MAX_IMAGE_EDGE") or "2048")
+# 每个 view 裁剪图最长边（与 MLLM_MAX_IMAGE_EDGE 对齐）。Kimi 视觉推荐
+# 单图上限 4096×2160；2048 会让塔身段（6600mm 高）细斜材糊掉，实测召回不足。
+MAX_VIEW_EDGE_PX = int(os.environ.get("MLLM_MAX_IMAGE_EDGE") or "4096")
 
 
 def _rasterize_if_pdf(source: str | Path, out_dir: Path) -> str:
@@ -199,7 +207,11 @@ def _detect_geometry(
 
 
 def _label_point(label: Dict[str, Any]) -> Optional[Tuple[float, float]]:
+    # P3-8 单位规范：label 坐标可能是像素（x_px/y_px）或图纸 mm（drawing_x/drawing_y）。
+    # 优先读 drawing_x/drawing_y（coord_space="drawing_mm"），回退 x_px/y_px。
     try:
+        if "drawing_x" in label or "drawing_y" in label:
+            return (float(label.get("drawing_x")), float(label.get("drawing_y")))
         return (float(label["x_px"]), float(label["y_px"]))
     except (KeyError, TypeError, ValueError):
         return None
@@ -245,6 +257,258 @@ def _labels_to_full_image(
         lab["view"] = lab.get("view") or view_id
         out.append(lab)
     return out
+
+
+def _subdivide_view_bbox(
+    view: Dict[str, Any],
+    png_path: str,
+    *,
+    max_sub_height_px: int = 1400,
+    overlap_ratio: float = 0.12,
+) -> List[List[int]]:
+    """把视图 bbox 沿高度(Z)切成多个带重叠的子 bbox，降低单区斜腹杆密度。
+
+    只对 front/elevation/side 等正交视图切分（detail 不切）；高度不超过
+    max_sub_height_px 时不切。子区域带 overlap_ratio 重叠，便于跨子区边界的
+    斜腹杆在 stitch 阶段拼回通长。
+
+    返回子 bbox 列表；不切时返回 [原 bbox]。
+    """
+    bbox = view.get("bbox") or []
+    if len(bbox) < 4:
+        return [list(bbox)] if bbox else [[]]
+    # 只在 overlay 显式标记 subdivide=True 的段切分（白名单控制），
+    # 避免对单区已够好的段（02/07）过度检测
+    if not view.get("subdivide"):
+        return [list(bbox)]
+    vt = view.get("view_type") or ""
+    if vt not in ("front", "elevation", "side"):
+        return [list(bbox)]
+
+    x0, y0, x1, y1 = [int(v) for v in bbox[:4]]
+    height = y1 - y0
+    if height <= max_sub_height_px:
+        return [list(bbox)]
+
+    # 计算子区域数量（向上取整）
+    n = max(2, -(-height // max_sub_height_px))
+    overlap = int(height * overlap_ratio / max(1, n - 1))
+    sub_bboxes: List[List[int]] = []
+    step = (height - overlap) / n
+    for i in range(n):
+        sy0 = int(y0 + round(i * step))
+        sy1 = y1 if i == n - 1 else int(min(y1, sy0 + max_sub_height_px))
+        sub_bboxes.append([x0, sy0, x1, sy1])
+    return sub_bboxes
+
+
+def _crop_scale_factors(crop: Dict[str, Any]) -> Tuple[float, float, float, float]:
+    """VLM crop 坐标 → 整图像素坐标的 (x0, y0, sx, sy)。"""
+    x0, y0 = float(crop["bbox"][0]), float(crop["bbox"][1])
+    scaled_w, scaled_h = crop.get("crop_size") or (None, None)
+    source_w, source_h = crop.get("source_crop_size") or (None, None)
+    if source_w is None or source_h is None or source_w <= 0 or source_h <= 0:
+        source_w = float(crop["bbox"][2]) - x0
+        source_h = float(crop["bbox"][3]) - y0
+    if scaled_w is None or scaled_h is None or scaled_w <= 0 or scaled_h <= 0:
+        scaled_w, scaled_h = float(source_w), float(source_h)
+    sx = float(source_w) / float(scaled_w)
+    sy = float(source_h) / float(scaled_h)
+    return x0, y0, sx, sy
+
+
+def _geom_to_full_image(
+    bars: List[Dict[str, Any]],
+    nodes: List[Dict[str, Any]],
+    crop: Dict[str, Any],
+    view_id: str,
+    view_type: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """A2 MLLM 在 crop 上的几何坐标还原到整图像素。"""
+    x0, y0, sx, sy = _crop_scale_factors(crop)
+    vt = view_type or view_id
+    out_bars: List[Dict[str, Any]] = []
+    for bar in bars:
+        out_bars.append({
+            **bar,
+            "x1": round(x0 + float(bar["x1"]) * sx, 2),
+            "y1": round(y0 + float(bar["y1"]) * sy, 2),
+            "x2": round(x0 + float(bar["x2"]) * sx, 2),
+            "y2": round(y0 + float(bar["y2"]) * sy, 2),
+            "view_type": bar.get("view_type") or vt,
+        })
+    out_nodes: List[Dict[str, Any]] = []
+    for node in nodes:
+        out_nodes.append({
+            **node,
+            "x_px": round(x0 + float(node["x_px"]) * sx, 2),
+            "y_px": round(y0 + float(node["y_px"]) * sy, 2),
+            "view_type": node.get("view_type") or vt,
+        })
+    return out_bars, out_nodes
+
+
+def _deduplicate_overlapping_bars(
+    bars: List[Dict[str, Any]],
+    *,
+    endpoint_tol_px: float = 6.0,
+    angle_tol_deg: float = 8.0,
+    overlap_ratio_threshold: float = 0.5,
+) -> Tuple[List[Dict[str, Any]], List[List[str]]]:
+    """P3-7：MLLM 重叠 crop 杆件去重（几何级，禁止只按 node ID）。
+
+    相邻子区域带 overlap，跨边界杆件会被重复检测。去重条件（全部满足才判重）：
+        * 同一 view_type
+        * 两端点允许正反顺序（(a,b) 与 (b,a) 视为同杆）
+        * 端点距离在 endpoint_tol_px 内
+        * 方向夹角在 angle_tol_deg 内（共线）
+        * 共线重叠达到 overlap_ratio_threshold（去重短碎片）
+
+    返回 (deduplicated_bars, duplicate_groups)。duplicate_groups 每组是
+    被判重的 bar_uid 列表（首个保留）。
+    """
+    import math
+
+    def _endpoints(b: Dict[str, Any]) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+        return ((float(b.get("x1", 0.0)), float(b.get("y1", 0.0))),
+                (float(b.get("x2", 0.0)), float(b.get("y2", 0.0))))
+
+    def _dist(p: Tuple[float, float], q: Tuple[float, float]) -> float:
+        return math.hypot(p[0] - q[0], p[1] - q[1])
+
+    def _dir(b: Dict[str, Any]) -> Tuple[float, float]:
+        (x1, y1), (x2, y2) = _endpoints(b)
+        dx, dy = x2 - x1, y2 - y1
+        norm = math.hypot(dx, dy)
+        if norm < 1e-9:
+            return (0.0, 0.0)
+        return (dx / norm, dy / norm)
+
+    def _angle_diff(d1: Tuple[float, float], d2: Tuple[float, float]) -> float:
+        dot = max(-1.0, min(1.0, d1[0] * d2[0] + d1[1] * d2[1]))
+        return math.degrees(math.acos(dot))
+
+    n = len(bars)
+    keep = [True] * n
+    groups: List[List[str]] = []
+    for i in range(n):
+        if not keep[i]:
+            continue
+        bi = bars[i]
+        (i1, i2) = _endpoints(bi)
+        di = _dir(bi)
+        vti = bi.get("view_type")
+        group = [bi.get("bar_uid") or f"bar_{i}"]
+        for j in range(i + 1, n):
+            if not keep[j]:
+                continue
+            bj = bars[j]
+            if bj.get("view_type") != vti:
+                continue
+            (j1, j2) = _endpoints(bj)
+            # 端点正反顺序都试：同向 (i1~j1, i2~j2) 或反向 (i1~j2, i2~j1)
+            same_dir = (_dist(i1, j1) <= endpoint_tol_px and _dist(i2, j2) <= endpoint_tol_px)
+            rev_dir = (_dist(i1, j2) <= endpoint_tol_px and _dist(i2, j1) <= endpoint_tol_px)
+            if not (same_dir or rev_dir):
+                continue
+            # 方向夹角（反向杆用反向单位向量比较）
+            dj = _dir(bj)
+            if rev_dir:
+                dj = (-dj[0], -dj[1])
+            if _angle_diff(di, dj) > angle_tol_deg:
+                continue
+            keep[j] = False
+            group.append(bj.get("bar_uid") or f"bar_{j}")
+        if len(group) > 1:
+            groups.append(group)
+
+    deduped = [b for b, k in zip(bars, keep) if k]
+    return deduped, groups
+
+
+def _mllm_detect_geometry(
+    png_path: str,
+    views: List[Dict[str, Any]],
+    crops_dir: Path,
+    mllm: MLLMBackend,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    """A2 MLLM 几何检测：按 overlay/A0 视图裁剪后逐块调用 GEOM_AGENT。"""
+    bars_all: List[Dict[str, Any]] = []
+    nodes_all: List[Dict[str, Any]] = []
+    meta: Dict[str, Any] = {
+        "method": "mllm_geom",
+        "provider": mllm.provider,
+        "model": mllm.model,
+        "failed_calls": 0,
+        "warnings": [],
+        "views_processed": 0,
+    }
+    bar_idx = 0
+    # P0 修复：不同 crop/view 的 MLLM 各自返回 N001/N002...，仅按 node_id 去重
+    # 会把后续 view 的同名节点误删。改为按 (view_id, node_id) 去重。
+    seen_nodes: set = set()
+    last_meta: Dict[str, Any] = {}
+
+    for view in views:
+        vt = view.get("view_type") or "drawing"
+        # 子区域切分：对高斜腹杆密度的 front/elevation 视图，沿高度(Z)切成
+        # 多个带重叠的子区域分别检测，降低单区斜腹杆密度，避免 MLLM 漏检
+        # （06 段 112 根斜腹杆单次检测只出 43 根）。子区域坐标经
+        # _geom_to_full_image 还原到整图后合并，重叠区不做去重（由 stitch 拼接）。
+        sub_bboxes = _subdivide_view_bbox(view, png_path)
+        for si, sub_bbox in enumerate(sub_bboxes):
+            sub_view_id = f"{view['view_id']}" if len(sub_bboxes) == 1 else f"{view['view_id']}_s{si}"
+            try:
+                crop = _crop_view(png_path, sub_bbox, crops_dir, f"geom_{sub_view_id}")
+                parsed, call_meta = mllm.call_agent_json(
+                    GEOM_AGENT_PROMPT, crop["path"], GEOM_AGENT_SCHEMA, agent="a2_geom",
+                )
+                last_meta = call_meta
+                if parsed is None:
+                    meta["failed_calls"] += 1
+                    meta["warnings"].append(
+                        f"{sub_view_id}: {call_meta.get('failure_reason', 'MLLM 几何调用失败')}"
+                    )
+                    continue
+                view_bars, view_nodes, problems, warnings = parse_geom_agent_output(parsed)
+                meta["warnings"].extend(warnings)
+                if problems:
+                    meta["failed_calls"] += 1
+                    meta["warnings"].extend(problems)
+                    continue
+                full_bars, full_nodes = _geom_to_full_image(
+                    view_bars, view_nodes, crop, sub_view_id, view_type=vt,
+                )
+                for bar in full_bars:
+                    bar_idx += 1
+                    bars_all.append({**bar, "bar_uid": f"bar_{bar_idx:04d}", "geometry_origin": "mllm_geom"})
+                for node in full_nodes:
+                    nid = str(node.get("node_id") or "")
+                    key = (sub_view_id, nid)
+                    if key in seen_nodes:
+                        continue
+                    seen_nodes.add(key)
+                    nodes_all.append(node)
+                meta["views_processed"] += 1
+            except Exception as exc:
+                meta["failed_calls"] += 1
+                meta["warnings"].append(f"{sub_view_id}: {exc}")
+        if len(sub_bboxes) > 1:
+            meta.setdefault("subdivided_views", 0)
+            meta["subdivided_views"] += 1
+
+    meta["mllm_duration_ms"] = last_meta.get("duration_ms")
+    meta["mllm_elapsed_s"] = last_meta.get("elapsed_s")
+    # P3-7：重叠 crop 杆件几何去重（非 node ID）。输出 raw/deduplicated/duplicate_groups。
+    meta["raw_bars"] = len(bars_all)
+    deduped_bars, dup_groups = _deduplicate_overlapping_bars(bars_all)
+    bars_all = deduped_bars
+    meta["deduplicated_bars"] = len(bars_all)
+    meta["duplicate_groups"] = dup_groups
+    meta["duplicate_group_count"] = len(dup_groups)
+    meta["bars"] = len(bars_all)
+    meta["nodes"] = len(nodes_all)
+    return bars_all, nodes_all, meta
 
 
 def _ocr_labels_from_tesseract(
@@ -309,14 +573,29 @@ def _ocr_labels_from_tesseract(
 def _associate_labels(
     bars: List[Dict[str, Any]],
     labels: List[Dict[str, Any]],
-    snap_px: float = LABEL_SNAP_PX,
+    snap_distance: float = LABEL_SNAP_PX,
+    coord_space: str = "px",
+    snap_px: Optional[float] = None,
 ) -> Dict[str, Any]:
     """A3 确定性关联：bar -> 同视图最近合法件号，一对一贪心。
+
+    P3-8 单位规范：snap_distance 是吸附距离，coord_space ∈ {"px", "mm"} 表明
+    其单位。输出距离字段名随 coord_space 变化：
+        * coord_space="px" → label_distance_px
+        * coord_space="mm" → label_distance_mm
+    snap_px 为兼容旧调用的别名（等于 snap_distance + coord_space="px"）。
 
     与 DXF 逻辑同源：先生成 (距离, bar, label) 候选对，按距离升序贪心；
     每个文字只贴一根杆、每根杆只收一个文字。同一件号可出现在多个文字位置
     （重复件号组留给 A3 报告与 r_no_duplicate_bar_id）。
     """
+    # 兼容旧参数名：snap_px 优先（旧调用），否则用 snap_distance + coord_space。
+    if snap_px is not None:
+        snap = snap_px
+        dist_field = "label_distance_px"
+    else:
+        snap = snap_distance
+        dist_field = "label_distance_mm" if coord_space == "mm" else "label_distance_px"
     bar_id_re = _compile_bar_id_re()
 
     def _view_of(obj: Dict[str, Any]) -> Optional[str]:
@@ -349,7 +628,7 @@ def _associate_labels(
             if bar_view is not None and label_view is not None and bar_view != label_view:
                 continue
             d = math.hypot(lx - mx, ly - my)
-            if d < snap_px:
+            if d < snap:
                 pairs.append((d, bi, li, bar_id))
     pairs.sort(key=lambda x: x[0])
 
@@ -370,14 +649,14 @@ def _associate_labels(
                 "bar_uid": bar["bar_uid"],
                 "bar_id": bar_label[bi],
                 "confidence": 0.75,
-                "label_distance_px": round(bar_dist[bi], 2),
+                dist_field: round(bar_dist[bi], 2),
             })
         else:
             assignments.append({
                 "bar_uid": bar["bar_uid"],
                 "bar_id": f"UNLABELED_{bar['bar_uid']}",
                 "confidence": 0.3,
-                "label_distance_px": None,
+                dist_field: None,
             })
 
     labeled = [a for a in assignments if not str(a["bar_id"]).startswith("UNLABELED")]
@@ -586,7 +865,7 @@ def run_tower_agent_pipeline(
     # 覆盖到 A0 产出的 drawing_view；bom/node 不 parse 杆件（parse_bars=False）。
     from .tower_scan_views import infer_scan_view_meta
     view_meta = infer_scan_view_meta(str(source_path))
-    graph.start("a0_layout", "版面分析（A0）", input=str(source))
+    graph.start(STAGE_LAYOUT, "版面分析（A0）", input=str(source))
     try:
         cv2, gray = _load_image(str(source))
         regions = _detect_regions(cv2, gray)
@@ -624,7 +903,7 @@ def run_tower_agent_pipeline(
     # ---------------- A1 件号 OCR（VLM/MLLM，B4：Tesseract 兜底） ----------------
     mllm_backend = mllm or MLLMBackend()
     if not parse_bars:
-        graph.skip("a1_labels", "件号 OCR（A1）", "parse_bars=False（bom/节点大样），跳过件号 OCR")
+        graph.skip(STAGE_LABELS, "件号 OCR（A1）", "parse_bars=False（bom/节点大样），跳过件号 OCR")
     elif not mllm_backend.available():
         # B4：无 MLLM API 时不再直接跳过——先尝试 Tesseract 确定性 OCR 兜底，
         # 拿到件号就进 A3 关联，拿不到才标 skip（A3 只依赖 A2，全 UNLABELED）。
@@ -635,17 +914,17 @@ def run_tower_agent_pipeline(
                 labels = []
                 warnings = [f"Tesseract 兜底失败：{exc}"]
             if labels:
-                graph.start("a1_labels", "件号 OCR（A1·Tesseract 兜底）", input=str(source))
+                graph.start(STAGE_LABELS, "件号 OCR（A1·Tesseract 兜底）", input=str(source))
                 graph.finish(labels=len(labels), method="tesseract",
                              note="无 MLLM API，Tesseract 确定性 OCR 兜底")
             else:
-                graph.skip("a1_labels", "件号 OCR（A1）",
+                graph.skip(STAGE_LABELS, "件号 OCR（A1）",
                            "无 MLLM API 且 Tesseract 未识别到件号（A3 只依赖 A2，全 UNLABELED）")
         else:
-            graph.skip("a1_labels", "件号 OCR（A1）",
+            graph.skip(STAGE_LABELS, "件号 OCR（A1）",
                        "无 MLLM API，跳过件号 OCR（A3 只依赖 A2，全 UNLABELED）")
     else:
-        graph.start("a1_labels", "件号 OCR（A1）", input=str(source))
+        graph.start(STAGE_LABELS, "件号 OCR（A1）", input=str(source))
         failed_calls = 0
         no_text_views = 0
         warnings: List[str] = []
@@ -711,27 +990,35 @@ def run_tower_agent_pipeline(
         if ocr_labels:
             labels = ocr_labels
             # a1_labels 已结束（pending/failed），兜底结果记为新步骤，不影响闸门判定。
-            graph.start("a1_labels_ocr_fallback", "件号 OCR 兜底（A1·Tesseract）",
+            graph.start(STAGE_LABELS_OCR_FALLBACK, "件号 OCR 兜底（A1·Tesseract）",
                         input=str(source))
             graph.finish(labels=len(labels), method="tesseract",
                          note="MLLM 0 字，Tesseract 确定性 OCR 兜底")
 
 
-    # ---------------- A2 几何检测（霍夫为主，VLM 可选） ----------------
+    # ---------------- A2 几何检测（MLLM 优先，霍夫兜底） ----------------
     if not parse_bars:
-        graph.skip("a2_geom", "几何检测（A2）", "parse_bars=False（bom/节点大样），跳过杆件几何检测")
+        graph.skip(STAGE_GEOMETRY, "几何检测（A2）", "parse_bars=False（bom/节点大样），跳过杆件几何检测")
     else:
-        graph.start("a2_geom", "几何检测（A2）", input=str(source))
+        graph.start(STAGE_GEOMETRY, "几何检测（A2）", input=str(source))
         try:
             geom_input = str(source)
+            pre_meta: Dict[str, Any] = {}
             if use_preprocess:
                 from .tower_preprocess import preprocess_image_file
                 geom_input, pre_meta = preprocess_image_file(
                     str(source), out_dir / "a2_preprocessed.png",
                 )
-            bars, nodes, geom_meta = _detect_geometry(
-                geom_input, filter_noise=filter_noise, use_preprocess=False,
-            )
+            bars, nodes, geom_meta = [], [], {"method": "none"}
+            if mllm_backend.available():
+                bars, nodes, geom_meta = _mllm_detect_geometry(
+                    geom_input, views, crops_dir, mllm_backend,
+                )
+            if not bars:
+                bars, nodes, geom_meta = _detect_geometry(
+                    geom_input, filter_noise=filter_noise, use_preprocess=False,
+                )
+                geom_meta["mllm_fallback"] = mllm_backend.available()
             if use_preprocess and pre_meta:
                 geom_meta["preprocess"] = pre_meta
                 geom_meta["preprocessed"] = True
@@ -749,7 +1036,7 @@ def run_tower_agent_pipeline(
             graph.fail(str(exc))
 
     # ---------------- A3 关联匹配（确定性规则） ----------------
-    graph.start("a3_link", "关联匹配（A3）", input=f"labels={len(labels)}, bars={len(bars)}")
+    graph.start(STAGE_LINK, "关联匹配（A3）", input=f"labels={len(labels)}, bars={len(bars)}")
     try:
         link_meta = _associate_labels(bars, labels, snap_px=label_snap_px)
         assignments = link_meta["assignments"]
@@ -781,7 +1068,7 @@ def run_tower_agent_pipeline(
         graph.fail(str(exc))
 
     # ---------------- A4 编译验证（contract + Harness） ----------------
-    graph.start("a4_harness", "编译验证（A4）", input="A0+A1+A2+A3")
+    graph.start(STAGE_HARNESS, "编译验证（A4）", input="A0+A1+A2+A3")
     model = None
     try:
         from ..io import validate_references

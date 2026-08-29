@@ -112,6 +112,14 @@ def view_region(stem: str, kind: str, overlay: Optional[str | Path | dict] = Non
     for r in view_regions(stem, overlay):
         if r.get("kind") == kind:
             return r
+    # P2 统一视图类型：精确匹配失败后按 canonical_view_type 回退匹配，
+    # 使 view_region(stem, "front") 能命中 kind="elevation" 的 region
+    # （front/elevation 语义同为「正立面」）。
+    target = canonical_view_type(kind)
+    if target != kind:
+        for r in view_regions(stem, overlay):
+            if canonical_view_type(str(r.get("kind") or "")) == target:
+                return r
     return None
 
 
@@ -131,6 +139,33 @@ def view_z_level(stem: str, kind: str, overlay: Optional[str | Path | dict] = No
     r = view_region(stem, kind, overlay)
     if r:
         return r.get("z_level")
+    return None
+
+
+def view_z_offset(stem: str, kind: str, overlay: Optional[str | Path | dict] = None) -> float:
+    """视图的 Z 底部标高偏移（真实 mm）。用于多张分段立面图沿 Z 堆叠成整塔。
+
+    每张模块图（如 35A1-JC1-10..29）是塔的一段正立面，各自局部 view_y=0
+    对应该段底部。堆叠时把局部 view_y 加上 z_offset 得到全局 Z。
+    未声明时返回 0.0（单立面图，无堆叠）。
+    """
+    r = view_region(stem, kind, overlay)
+    if r:
+        v = r.get("z_offset")
+        if v is not None:
+            return float(v)
+    return 0.0
+
+
+def view_z_span_mm(stem: str, kind: str, overlay: Optional[str | Path | dict] = None) -> Optional[float]:
+    """视图的标注段高（真实 mm）。分段立面图几何里常含相邻段的接头重叠，
+    用 z_span_mm 把该段几何在垂直方向线性归一化到标注高度，消除重叠。
+    未声明时返回 None（不缩放，直接用几何跨度）。"""
+    r = view_region(stem, kind, overlay)
+    if r:
+        v = r.get("z_span_mm")
+        if v is not None:
+            return float(v)
     return None
 
 
@@ -157,8 +192,236 @@ def cross_file_view_manifest(overlay: Optional[str | Path | dict] = None) -> dic
     return dict(manifest) if isinstance(manifest, dict) else {}
 
 
+# --------------------------------------------------------------------------- #
+# Phase A1  sheet_role 枚举 —— 管线永远知道「这张图是什么角色」，不靠塔型硬编码
+# --------------------------------------------------------------------------- #
+
+# 固定图纸角色枚举（配置与代码共用；未列出的角色一律不进入空间 3D 合并）。
+SHEET_ROLE_ELEVATION = "elevation"
+SHEET_ROLE_PLAN = "plan"
+SHEET_ROLE_SECTION = "section"
+SHEET_ROLE_MODULE_PANEL = "module_panel"
+SHEET_ROLE_NODE_DETAIL = "node_detail"
+SHEET_ROLE_INDEX = "index"
+SHEET_ROLE_TITLE = "title"
+
+SHEET_ROLES: Tuple[str, ...] = (
+    SHEET_ROLE_ELEVATION,
+    SHEET_ROLE_PLAN,
+    SHEET_ROLE_SECTION,
+    SHEET_ROLE_MODULE_PANEL,
+    SHEET_ROLE_NODE_DETAIL,
+    SHEET_ROLE_INDEX,
+    SHEET_ROLE_TITLE,
+)
+
+# spatial_merge（M3）只接受正交投影视图；front/side 是历史名称，规范化为
+# elevation 参与合并。module_panel / node_detail / index / title 永不进 M3。
+SPATIAL_MERGE_ROLES: frozenset = frozenset({
+    SHEET_ROLE_ELEVATION,
+    SHEET_ROLE_PLAN,
+    SHEET_ROLE_SECTION,
+})
+
+# 视图 region kind / 文件名分流 kind -> 规范 sheet_role。
+_SHEET_ROLE_ALIASES: Dict[str, str] = {
+    "elevation": SHEET_ROLE_ELEVATION,
+    "front": SHEET_ROLE_ELEVATION,
+    "side": SHEET_ROLE_ELEVATION,
+    "立面": SHEET_ROLE_ELEVATION,
+    "正立面": SHEET_ROLE_ELEVATION,
+    "侧立面": SHEET_ROLE_ELEVATION,
+    "plan": SHEET_ROLE_PLAN,
+    "平面": SHEET_ROLE_PLAN,
+    "section": SHEET_ROLE_SECTION,
+    "剖面": SHEET_ROLE_SECTION,
+    "module_panel": SHEET_ROLE_MODULE_PANEL,
+    "module": SHEET_ROLE_MODULE_PANEL,
+    "panel": SHEET_ROLE_MODULE_PANEL,
+    "assembly": SHEET_ROLE_MODULE_PANEL,
+    "模块": SHEET_ROLE_MODULE_PANEL,
+    "node_detail": SHEET_ROLE_NODE_DETAIL,
+    "detail": SHEET_ROLE_NODE_DETAIL,
+    "大样": SHEET_ROLE_NODE_DETAIL,
+    "详图": SHEET_ROLE_NODE_DETAIL,
+    "index": SHEET_ROLE_INDEX,
+    "toc": SHEET_ROLE_INDEX,
+    "catalog": SHEET_ROLE_INDEX,
+    "contents": SHEET_ROLE_INDEX,
+    "目录": SHEET_ROLE_INDEX,
+    "bom": SHEET_ROLE_INDEX,
+    "材料表": SHEET_ROLE_INDEX,
+    "title": SHEET_ROLE_TITLE,
+    "title_block": SHEET_ROLE_TITLE,
+    "cover": SHEET_ROLE_TITLE,
+    "图签": SHEET_ROLE_TITLE,
+}
+
+
+def canonical_sheet_role(kind: str) -> str:
+    """把任意图纸/视图 kind 规范化为 sheet_role 枚举值。
+
+    未知 kind 原样返回（不猜测），但一定不属于 SPATIAL_MERGE_ROLES，
+    因此不会进入 M3 空间合并。
+    """
+    if not isinstance(kind, str):
+        return ""
+    return _SHEET_ROLE_ALIASES.get(kind.strip().lower(), kind.strip().lower())
+
+
+# 视图类型归一化（区别于 sheet_role 聚合）：front/elevation 都指「正立面」，
+# 统一为 front；side/section 保留区分（section 是剖面，side 是侧立面）。
+# 供 merge_view_coordinates 等按 view_type 分桶的地方使用，避免 elevation
+# 来源节点被漏进 nodes_by_view["elevation"] 而查不到 nodes_by_view["front"]。
+_VIEW_TYPE_ALIASES: Dict[str, str] = {
+    "front": "front",
+    "elevation": "front",
+    "立面": "front",
+    "正立面": "front",
+    "side": "side",
+    "侧立面": "side",
+    "section": "section",
+    "剖面": "section",
+    "plan": "plan",
+    "平面": "plan",
+    "detail": "detail",
+    "大样": "detail",
+    "详图": "detail",
+}
+
+# 正交投影视图类型（可参与空间解算/合并）。
+ORTHO_VIEW_TYPES: frozenset = frozenset({"front", "side", "section", "plan"})
+
+
+def canonical_view_type(view_type: str) -> str:
+    """把任意视图类型规范化为 front/side/section/plan/detail 之一。
+
+    与 canonical_sheet_role 的区别：这里保留 front/side/section 的区分
+    （它们在三视图解算里语义不同），只把 elevation→front 等历史别名归一化。
+    未知类型原样返回（不猜测），调用方自行判断是否属于 ORTHO_VIEW_TYPES。
+    """
+    if not isinstance(view_type, str):
+        return ""
+    return _VIEW_TYPE_ALIASES.get(view_type.strip().lower(), view_type.strip().lower())
+
+
+def is_ortho_view_type(view_type: str) -> bool:
+    """该视图类型是否为可参与空间解算的正交投影视图。"""
+    return canonical_view_type(view_type) in ORTHO_VIEW_TYPES
+
+
+def is_spatial_merge_role(role: str) -> bool:
+    """该 sheet_role 是否允许进入 spatial_merge（M3）。"""
+    return canonical_sheet_role(role) in SPATIAL_MERGE_ROLES
+
+
+def _region_kinds_for_stem(
+    stem: str,
+    overlay: Optional[str | Path | dict] = None,
+    *,
+    require_axes: bool,
+) -> List[str]:
+    """某 stem 在 overlay view_regions 中声明的 view kind 列表。
+
+    require_axes=True 时只统计带 axes 的视图（真正可解析正交投影的视图）。
+    """
+    out: List[str] = []
+    for r in view_regions(stem, overlay=overlay):
+        if require_axes and not list(r.get("axes") or []):
+            continue
+        kind = str(r.get("kind", "drawing"))
+        if kind:
+            out.append(kind)
+    return out
+
+
+def sheet_role_for_stem(
+    stem: str,
+    overlay: Optional[str | Path | dict] = None,
+) -> Optional[str]:
+    """按 overlay 声明的视图角色推导 sheet_role（无声明返回 None，由调用方兜底）。
+
+    sheet 角色 = 该图所有带 axes 视图角色的并集。若只有无 axes 视图
+    （detail / 模块页），返回对应的非空间角色（node_detail / module_panel）。
+    """
+    kinds = _region_kinds_for_stem(stem, overlay=overlay, require_axes=True)
+    roles = {canonical_sheet_role(k) for k in kinds}
+    if roles:
+        # 空间角色的优先级：elevation/plan/section 任一出现即按主视图角色；
+        # 混合了模块页时以「有 axes 的视图」为准，因为空间合并只看 axes 视图。
+        spatial = roles & set(SPATIAL_MERGE_ROLES)
+        if spatial:
+            return next(iter(sorted(spatial)))
+        return next(iter(sorted(roles)))
+    # 无 axes 视图：detail / module_panel / index / title
+    kinds_all = _region_kinds_for_stem(stem, overlay=overlay, require_axes=False)
+    for k in kinds_all:
+        role = canonical_sheet_role(k)
+        if role in (
+            SHEET_ROLE_MODULE_PANEL,
+            SHEET_ROLE_NODE_DETAIL,
+            SHEET_ROLE_INDEX,
+            SHEET_ROLE_TITLE,
+        ):
+            return role
+    return None
+
+
+def sheet_is_spatial_mergeable(
+    stem: str,
+    overlay: Optional[str | Path | dict] = None,
+) -> bool:
+    """Phase A2 硬边界：一张图只有 overlay 声明了带 axes 的正交视图
+    （elevation/plan/section）才允许进入 spatial_merge。
+
+    无 overlay 声明、只有 detail / module_panel / index / title 视图、
+    或视图无 axes 的图纸一律返回 False。
+    """
+    kinds = _region_kinds_for_stem(stem, overlay=overlay, require_axes=True)
+    if not kinds:
+        return False
+    return any(is_spatial_merge_role(k) for k in kinds)
+
+
+def sheet_roles_report(overlay: Optional[str | Path | dict] = None) -> Dict[str, Any]:
+    """Phase F1 配置校验：报告每张已声明 stem 的角色与空间合并资格。"""
+    spec = load_tower_spec(overlay)
+    regions_map = spec.get("view_regions") or {}
+    out: Dict[str, Any] = {"sheets": {}, "warnings": []}
+    if not isinstance(regions_map, dict):
+        return out
+    for stem, regions in regions_map.items():
+        roles = [canonical_sheet_role(r.get("kind", "drawing")) for r in (regions or [])]
+        mergeable = sheet_is_spatial_mergeable(str(stem), overlay=overlay)
+        out["sheets"][str(stem)] = {
+            "roles": sorted({r for r in roles if r}),
+            "spatial_mergeable": mergeable,
+        }
+        unknown = sorted({r for r in roles if r and r not in SHEET_ROLES})
+        if unknown:
+            out["warnings"].append({
+                "stem": str(stem),
+                "unknown_roles": unknown,
+                "message": "sheet_role 不在固定枚举内，将不进入 spatial_merge",
+            })
+        # A2：声明了空间角色但视图无 axes -> 配置错误
+        declared = [r for r in (regions or []) if r.get("kind") in ("front", "side", "elevation", "plan", "section")]
+        no_axes = [r for r in declared if not list(r.get("axes") or [])]
+        if no_axes:
+            out["warnings"].append({
+                "stem": str(stem),
+                "declared_spatial_without_axes": [r.get("kind") for r in no_axes],
+                "message": "声明为空间视图但 axes=[]，不会进入 spatial_merge",
+            })
+    return out
+
+
 def parseable_view_kinds_by_stem(overlay: Optional[str | Path | dict] = None) -> Dict[str, set]:
-    """各 stem 在 overlay 中声明的可解析视图 kind 集合（须带 axes）。"""
+    """各 stem 在 overlay 中声明的可解析视图 kind 集合（须带 axes）。
+
+    Phase A2：只返回空间可合并角色（elevation/plan/section 及历史 front/side
+    的规范化值），detail / module_panel 等即使被提升解析也不在此列。
+    """
     spec = load_tower_spec(overlay)
     regions_map = spec.get("view_regions") or {}
     out: Dict[str, set] = {}
@@ -167,8 +430,11 @@ def parseable_view_kinds_by_stem(overlay: Optional[str | Path | dict] = None) ->
     for stem, regions in regions_map.items():
         kinds: set = set()
         for r in regions or []:
-            if r.get("axes"):
-                kinds.add(str(r.get("kind", "drawing")))
+            if not r.get("axes"):
+                continue
+            kind = str(r.get("kind", "drawing"))
+            if is_spatial_merge_role(kind):
+                kinds.add(canonical_sheet_role(kind))
         if kinds:
             out[str(stem)] = kinds
     return out
@@ -233,24 +499,13 @@ def cross_file_infer_side_stems(overlay: Optional[str | Path | dict] = None) -> 
     return [str(s) for s in stems] if isinstance(stems, list) else []
 
 
-def cross_file_merge_all_parseable(overlay: Optional[str | Path | dict] = None) -> bool:
-    """已废弃为空间合并开关：全册解析请用 parse_all_project_sheets。"""
-    return bool(cross_file_view_manifest(overlay).get("merge_all_parseable"))
-
-
 def cross_file_parse_all_project_sheets(overlay: Optional[str | Path | dict] = None) -> bool:
-    """JC1 全册：详图/模块页也解析杆件（写入各 sheet JSON，供追溯与 BOM）。"""
-    manifest = cross_file_view_manifest(overlay)
-    return bool(
-        manifest.get("parse_all_project_sheets")
-        or manifest.get("parse_detail_as_front")
-        or manifest.get("merge_all_parseable")
-    )
+    """全册追溯解析：详图/模块页也解析杆件，写入各 sheet JSON（供 M1 index / BOM / 追溯）。
 
-
-def cross_file_parse_detail_as_front(overlay: Optional[str | Path | dict] = None) -> bool:
-    """详图/模块页 overlay region 无 axes 时，按正立面 front 解析杆件（全册跑批用）。"""
-    return cross_file_parse_all_project_sheets(overlay)
+    仅此一个开关。它与 spatial_merge（M3）正交：开启后 detail/模块页会按
+    正立面比例解析杆件，但绝不因此进入 cross_file_merge_stems（A2 硬边界）。
+    """
+    return bool(cross_file_view_manifest(overlay).get("parse_all_project_sheets"))
 
 
 def default_front_region_scales(overlay: Optional[str | Path | dict] = None) -> Tuple[float, float]:
@@ -269,8 +524,15 @@ def elevate_regions_for_full_merge(
     regions: List[dict],
     overlay: Optional[str | Path | dict] = None,
 ) -> List[dict]:
-    """全册跑批：把 detail 区（axes 为空）提升为 front 立面，产出杆件参与 merge。"""
-    if not cross_file_parse_detail_as_front(overlay) or not regions:
+    """全册跑批：把 detail 区（axes 为空）提升为 front 立面，产出杆件供追溯/BOM。
+
+    注意（Phase A2）：提升只用于「逐 sheet 解析杆件」（M1 全册 index / 追溯），
+    不改变该图在 spatial_merge（M3）中的资格。提升后的 region 会带
+    ``promoted_from`` 与 ``spatial_merge=False`` 标记，任何 M3 消费方都应
+    用 sheet_is_spatial_mergeable() 按「原始 overlay 声明」判断，而不是
+    看提升后的 region。
+    """
+    if not cross_file_parse_all_project_sheets(overlay) or not regions:
         return regions
     sx, sy = default_front_region_scales(overlay)
     out: List[dict] = []
@@ -282,6 +544,10 @@ def elevate_regions_for_full_merge(
             rc.setdefault("scale_x", sx)
             rc.setdefault("scale_y", sy)
             rc.setdefault("z_flip", True)
+            rc["promoted_from"] = canonical_sheet_role(
+                str(region.get("kind", "detail"))
+            )
+            rc["spatial_merge"] = False
         out.append(rc)
     return out
 
@@ -290,9 +556,16 @@ def cross_file_merge_stems(overlay: Optional[str | Path | dict] = None) -> set:
     """cross_file 真 3D 合并应纳入的图纸 stem（不含图册内其它详图/模块页）。
 
     来源：cross_file_views.sheets 中 front/plan/side/elevation 非空 stem
-    + infer_side_on_stems + merge_stems_extra。detail / 模块分册不参与空间合并
-    （全册解析走 parse_all_project_sheets，各 sheet 独立 JSON）。
-    未配置 manifest 时返回空集，由调用方决定是否合并全部模型。
+    + infer_side_on_stems + merge_stems_extra。
+
+    Phase A2 强制边界（对所有项目生效，不按塔型）：
+        * 候选 stem 必须 overlay 声明了带 axes 的正交视图
+          （elevation/plan/section；front/side 为历史 elevation 名称）；
+        * module_panel / node_detail / index / title 即使出现在
+          merge_stems_extra 或 infer_side_on_stems 里，也会被剔除；
+        * 只有无 axes 视图（大样/模块页）的图纸永远不能进 spatial_merge。
+
+    未配置 manifest 时返回空集，由调用方决定是否合并全部模型（旧路径兼容）。
     """
     manifest = cross_file_view_manifest(overlay)
     sheets = manifest.get("sheets") or {}
@@ -304,12 +577,19 @@ def cross_file_merge_stems(overlay: Optional[str | Path | dict] = None) -> set:
             if v and str(v).strip():
                 stems.add(str(v).strip())
     for s in cross_file_infer_side_stems(overlay):
-        stems.add(s)
+        stems.add(str(s))
     extra = manifest.get("merge_stems_extra") or []
     if isinstance(extra, list):
         for s in extra:
             if s and str(s).strip():
                 stems.add(str(s).strip())
+
+    # A2 硬边界：逐 stem 过滤，只有 overlay 声明的空间可合并角色才保留。
+    if manifest:
+        stems = {
+            s for s in stems
+            if sheet_is_spatial_mergeable(s, overlay=overlay)
+        }
     return stems
 
 

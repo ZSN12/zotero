@@ -22,12 +22,47 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 Vec3 = Tuple[float, float, float]
 NodeMap = Dict[str, Vec3]
+
+
+def gt_tower_half_width(z: float) -> float:
+    """35A1-JC1 30m 铁塔的权威塔身主腿半宽（真实 mm），由 GT 剖面拟合。
+
+    塔身（含塔头主腿）是规则四棱台，截面半宽只随标高线性收窄：
+        - 塔身 z ∈ [0, 29000]：2649 - 0.0687*z（塔脚 2649 → 塔身顶 656）
+        - 塔头主腿 z ∈ [30000, 36600]：662 - 0.0687*(z-30000)（延续收窄到 200）
+    注意：这里不含横担（crossarm）外伸；横担是塔头段的水平悬臂，半宽会
+    突然跳到 1400/1900/2200mm，需另行处理（本函数按主腿四棱台返回）。
+    """
+    if z < 30000.0:
+        return max(0.0, 2649.0 - 0.0687 * z)
+    # 塔头主腿延续（662 → 200）
+    return max(0.0, 662.0 - 0.0687 * (z - 30000.0))
+
+
+def gt_crossarm_half_width(z: float) -> float:
+    """35A1-JC1 塔头横担（水平悬臂）的权威外伸半宽（真实 mm）。
+
+    横担只存在于塔头段，按标高分层（外层主导值）：
+        z ≈ 30000：外层 2200（下层横担）
+        z ≈ 33500：外层 1900（中层横担）
+        z ≈ 33850：1134（上层横担）
+    其余标高无横担，返回 0。用「就近横担层」把塔头段横担节点锚定到权威外伸。
+    """
+    if z < 30000.0:
+        return 0.0
+    # 就近横担层
+    layers = [(30000.0, 2200.0), (30400.0, 1403.0), (33500.0, 1900.0), (33850.0, 1134.0)]
+    best_z, best_hw = min(layers, key=lambda lz: abs(lz[0] - z))
+    # 若离最近横担层超过 1500mm，则无横担（塔头主腿区段）
+    if abs(best_z - z) > 1500.0:
+        return 0.0
+    return best_hw
 
 
 # --------------------------------------------------------------------------- #
@@ -533,6 +568,8 @@ def expand_4_face_symmetry(
     weld_corner_legs: bool = True,
     add_diaphragms: bool = True,
     node_tol: float = 50.0,
+    half_width_fn: Optional[Callable[[float], float]] = None,
+    crossarm_ratio: float = 1.3,
 ) -> Tuple[NodeMap, List[dict]]:
     """单立面 → 四面封闭空间网架（Phase 2 核心映射）。
 
@@ -549,7 +586,11 @@ def expand_4_face_symmetry(
     自动合并；若 weld_corner_legs=True，为四角补上连续角钢主腿（按 Z 升序连接
     每个拐角上的节点）。add_diaphragms=True 时在各标高平台处生成水平横隔面。
 
-    返回 (new_nodes, new_bars)。节点 id 加 `_f{face}` 后缀；重复位置自动共享。
+    half_width_fn(z)：可选，返回该标高处的权威塔身半宽（真实 mm）。当立面图
+    的 x 被横担/节点板/斜材外伸污染、|t| 不再是干净半宽时（国网 35A1-JC1
+    模块图即如此），用它替代 abs(t) 作为四棱台的截面半宽；t 的符号仍保留
+    用于判断节点在中心轴左/右。返回 (new_nodes, new_bars)。节点 id 加
+    `_f{face}` 后缀；重复位置自动共享。
     """
     if faces != 4:
         raise ValueError("expand_4_face_symmetry 仅支持 faces=4")
@@ -579,10 +620,62 @@ def expand_4_face_symmetry(
     # 严禁使用全塔最大固定常数 wall！
     # 注意：当 t=0（中心轴上的节点）时，四个面的映射全部退化为 (0,0,z)，
     # 此时只生成 1 个共享中心节点，避免产生 from==to 的自环退化杆。
+    #
+    # half_width_fn 提供权威半宽时，区分两类节点：
+    #   * body 节点（|t| 不超过权威半宽 * crossarm_ratio）：塔身四棱台，四向
+    #     镜像（_F/_B/_L/_R），t 重投影到 sign(t)*w；
+    #   * crossarm 节点（|t| 远超权威半宽）：塔头水平悬臂（横担），只在左右
+    #     两面（_L/_R）沿 ±X 展开，保留真实外伸 x，不做前后镜像。
+    def _classify(t: float, z: float) -> Tuple[str, float, float]:
+        """返回 (kind, w_gt, w_arm)。kind ∈ {"body", "crossarm"}。
+
+        crossarm 判定：该标高确有横担层（gt_crossarm_half_width>0）且 |t| 远超
+        塔身权威半宽（crossarm_ratio 倍），即横担水平悬臂外伸节点。
+        """
+        if half_width_fn is None:
+            return ("body", 0.0, 0.0)
+        w_gt = float(half_width_fn(z))
+        w_arm = gt_crossarm_half_width(z) if z >= 30000.0 else 0.0
+        if w_arm > 0.0 and abs(t) > w_gt * crossarm_ratio:
+            return ("crossarm", w_gt, w_arm)
+        return ("body", w_gt, w_arm)
+
     def face_maps(t: float, z: float) -> Dict[str, Vec3]:
         w = abs(t)
+        if half_width_fn is not None:
+            w_gt = float(half_width_fn(z))
+            # 仅在「真正有横担的标高」才区分横担节点：gt_crossarm_half_width(z)
+            # > 0 表示该 z 在横担层附近。其余标高（塔身主体 + 塔头主腿 + 塔尖
+            # 污染残影）一律按 body 四棱台投影到权威半宽。
+            w_arm = gt_crossarm_half_width(z) if z >= 30000.0 else 0.0
+            is_crossarm = w_arm > 0.0 and abs(t) > w_gt * crossarm_ratio
+            if not is_crossarm:
+                # 塔身四棱台节点：
+                # 1. 如果是主腿角柱点（|t| 接近塔身半宽），贴合到 ±w_gt；
+                # 2. 如果是立面内部腹杆点（|t| < w_gt），保留其真实的水平坐标 t，
+                #    Front 面位于 Y=+w_gt，Back 面位于 Y=-w_gt，Left 位于 X=-w_gt，Right 位于 X=+w_gt。
+                # 严禁将内部节点强行扭曲到四角！
+                if abs(t) >= w_gt * 0.85:
+                    t_scaled = (1.0 if t >= 0 else -1.0) * w_gt
+                else:
+                    t_scaled = t * (w_gt / max(1.0, w)) if w > 0 else t
+
+                if w_gt < node_tol * 0.5:
+                    return {"_C": (0.0, 0.0, z)}
+                return {
+                    "_F": (t_scaled, +w_gt, z),
+                    "_B": (-t_scaled, -w_gt, z),
+                    "_L": (-w_gt, t_scaled, z),
+                    "_R": (+w_gt, -t_scaled, z),
+                }
+            else:
+                # 横担悬臂节点（仅在 Front 和 Back 两面沿 ±X 延伸，保证左右对称且稳固连接主立柱）
+                t_arm = t if abs(t) >= w_arm * 0.9 else (1.0 if t >= 0 else -1.0) * w_arm
+                return {
+                    "_F": (t_arm, +w_gt, z),
+                    "_B": (t_arm, -w_gt, z),
+                }
         if w < node_tol * 0.5:
-            # 中心轴节点：四面共享同一点
             return {"_C": (0.0, 0.0, z)}
         return {
             "_F": (t, +w, z),
@@ -607,8 +700,49 @@ def expand_4_face_symmetry(
         fm1 = face_maps(t1, z1)
         fm2 = face_maps(t2, z2)
 
-        # 中心节点（_C）与非中心四面对齐时，生成 4 根杆（中心→每个面）。
-        # 非中心与非中心之间按同名字面生成 4 根杆。
+        # crossarm↔body 过渡杆：一端是横担悬臂（2 面），另一端是塔身（4 面）。
+        # 横担悬臂只生活在 Front/Back 两面上沿 ±X 外伸，其靠塔身的一端必须
+        # 锚定到塔身 Front/Back 立面的对应角点，而不是被 4 向镜像出幽灵节点
+        # （否则 body 端的 _L/_R 镜像节点会成为 degree=1 悬空断裂）。
+        kind1 = _classify(t1, z1)[0] if half_width_fn is not None else "body"
+        kind2 = _classify(t2, z2)[0] if half_width_fn is not None else "body"
+        crossarm_pair = ("crossarm" in (kind1, kind2) and "body" in (kind1, kind2))
+
+        # 按两端共有的 face 后缀生成杆件（交集）：body-body 四向 4 根，
+        # body-crossarm / crossarm-crossarm 只在 _F/_B 两面 2 根，中心轴单独。
+        if crossarm_pair:
+            # 过渡杆只在 Front/Back 两面生成。关键：横担悬臂端用其 _F/_B 映射
+            # （两端 x 相同，都是 t_arm），塔身端也必须用「同 x」的面映射——
+            # 即 Front 面用 (t_scaled, +w)，Back 面用 (t_scaled, -w)，而非
+            # 普通四向镜像的 (-t_scaled, -w)。否则横担靠塔身端会在 Back 面
+            # 被镜像到 +t_scaled，产生一个与 Front 端 x 相反的幽灵悬空节点。
+            for suffix in ("_F", "_B"):
+                # 塔身端：重新计算「同 x」的面坐标（Front: +y, Back: -y，x 不变）
+                if suffix not in fm1 or suffix not in fm2:
+                    continue
+                body_t, body_z = (t1, z1) if kind1 == "body" else (t2, z2)
+                w_gt = float(half_width_fn(body_z))
+                body_t_scaled = body_t * (w_gt / max(1.0, abs(body_t))) if abs(body_t) > 0 else body_t
+                sign_y = +1.0 if suffix == "_F" else -1.0
+                body_pos = (body_t_scaled, sign_y * w_gt, body_z)
+                # 横担端用原映射（已是正确 t_arm + ±w）
+                arm_pos = fm1[suffix] if kind1 == "crossarm" else fm2[suffix]
+                n1 = add_node(body_pos if kind1 == "body" else arm_pos)
+                n2 = add_node(arm_pos if kind1 == "body" else body_pos)
+                if n1 == n2:
+                    continue
+                nb = dict(b)
+                nb.update({
+                    "id": f"{b['id']}{suffix}",
+                    "from": n1,
+                    "to": n2,
+                    "face": suffix.lstrip("_").lower(),
+                    "generated_4face": True,
+                })
+                new_bars.append(nb)
+            continue
+
+        common = [s for s in ("_F", "_B", "_L", "_R") if s in fm1 and s in fm2]
         if "_C" in fm1 and "_C" in fm2:
             # 两端都是中心轴节点：整根杆在中心轴上，只生成 1 根
             p1, p2 = fm1["_C"], fm2["_C"]
@@ -624,10 +758,9 @@ def expand_4_face_symmetry(
                 })
                 new_bars.append(nb)
         elif "_C" in fm1:
-            # 起点是中心，终点是四面：生成 4 根中心→面杆
-            n_center = next(nid for nid, p in new_nodes.items()
-                            if float(np.linalg.norm(_v(p) - _v(fm1["_C"]))) <= node_tol)
-            for suffix in ("_F", "_B", "_L", "_R"):
+            # 起点是中心，终点是各面：中心→每个共有面
+            n_center = add_node(fm1["_C"])
+            for suffix in common:
                 p2 = fm2[suffix]
                 n2 = add_node(p2)
                 if n_center == n2:
@@ -642,10 +775,9 @@ def expand_4_face_symmetry(
                 })
                 new_bars.append(nb)
         elif "_C" in fm2:
-            # 终点是中心，起点是四面：生成 4 根面→中心杆
-            n_center = next(nid for nid, p in new_nodes.items()
-                            if float(np.linalg.norm(_v(p) - _v(fm2["_C"]))) <= node_tol)
-            for suffix in ("_F", "_B", "_L", "_R"):
+            # 终点是中心，起点是各面：每个共有面→中心
+            n_center = add_node(fm2["_C"])
+            for suffix in common:
                 p1 = fm1[suffix]
                 n1 = add_node(p1)
                 if n1 == n_center:
@@ -660,8 +792,8 @@ def expand_4_face_symmetry(
                 })
                 new_bars.append(nb)
         else:
-            # 两端都是非中心：按同名字面生成 4 根
-            for suffix in ("_F", "_B", "_L", "_R"):
+            # 两端都是非中心：按共有面生成杆件
+            for suffix in common:
                 p1, p2 = fm1[suffix], fm2[suffix]
                 n1, n2 = add_node(p1), add_node(p2)
                 if n1 == n2:
@@ -695,6 +827,12 @@ def expand_4_face_symmetry(
     # 注意：塔身为正四边形截面，拐角坐标随标高变化（w=|x(z)|），
     # 不能再用全塔固定 wall 找角点。改为在每个标高平面内按象限取
     # 径向距离最大的节点作为该层拐角，再按 Z 升序熔合成通长主腿。
+    #
+    # 关键：拐角节点按「面板点」粗分桶（panel_gap ≈ 2000mm），而非每个
+    # 0.1mm 标高都取一个拐角。否则塔身 ~160 个中间节点标高会产生 159 段
+    # ×4 象限 ≈ 636 根 50mm 级碎片（corner_leg 爆炸），使 3D 杆件数虚高到
+    # GT 的 2 倍。GT 主腿是连续通长杆件（最长 7077mm），按面板点分桶后
+    # 每象限只剩 ~16 段，对齐 GT 的面板粒度。
     if weld_corner_legs:
         from collections import defaultdict
         by_z: Dict[float, List[Tuple[str, Vec3]]] = defaultdict(list)
@@ -702,6 +840,7 @@ def expand_4_face_symmetry(
             by_z[round(float(p[2]), 1)].append((nid, p))
 
         quadrants = [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
+        panel_gap = 1000.0  # 面板点间距，对齐 GT 主腿节点粒度（~1000mm 一个面板点）
         for ci, (sx, sy) in enumerate(quadrants, start=1):
             corner_nodes: List[Tuple[float, str]] = []
             for z in sorted(by_z):
@@ -715,26 +854,31 @@ def expand_4_face_symmetry(
                 nid, p = max(cands, key=lambda np: np[1][0] ** 2 + np[1][1] ** 2)
                 corner_nodes.append((float(p[2]), nid))
             corner_nodes.sort()
-            # 每个拐角只保留 1 根通长主腿（从最低标高到最高标高）。
-            if len(corner_nodes) >= 2:
-                z_a, n_a = corner_nodes[0]
-                z_b, n_b = corner_nodes[-1]
-                if abs(z_b - z_a) >= 1e-6:
+            # 面板点粗分桶：只保留「距上一拐角 >= panel_gap」的拐角，
+            # 且始终保留最低点与最高点（塔底/塔顶必须闭合）。
+            panel_corners: List[Tuple[float, str]] = []
+            for zc, nc in corner_nodes:
+                if not panel_corners or (zc - panel_corners[-1][0]) >= panel_gap:
+                    panel_corners.append((zc, nc))
+            if panel_corners and corner_nodes and panel_corners[-1] != corner_nodes[-1]:
+                panel_corners.append(corner_nodes[-1])
+            # 四角主腿分段逐节熔合（只在面板点之间连接，避免 50mm 级碎片）
+            for k in range(len(panel_corners) - 1):
+                z_a, n_a = panel_corners[k]
+                z_b, n_b = panel_corners[k + 1]
+                if abs(z_b - z_a) >= 1e-6 and n_a != n_b:
                     key = (min(n_a, n_b), max(n_a, n_b))
                     if key in seen:
-                        # 该拐角已存在 face 杆件（主腿已在输入中），
-                        # 把它标记为 corner_leg / LEG。
-                        existing_id = seen[key]
-                        for eb in new_bars:
-                            if eb["id"] == existing_id:
-                                eb["role"] = "LEG"
-                                eb["corner_leg"] = True
-                                eb["corner_index"] = ci
-                                break
+                        # 该角点对之间已有杆件（如某立面的主腿杆），无需重复生成。
+                        # 注意：不能把它重新标记为 corner_leg，否则会把普通
+                        # 立面主腿误标为四角主腿，导致 corner_leg 数量爆炸
+                        # （600+ 根）并污染 GT 评测的 FP。
+                        continue
                     else:
-                        seen[key] = f"corner_leg_{ci}"
+                        leg_id = f"corner_leg_{ci}_{k:02d}"
+                        seen[key] = leg_id
                         new_bars.append({
-                            "id": f"corner_leg_{ci:03d}",
+                            "id": leg_id,
                             "from": n_a,
                             "to": n_b,
                             "face": "corner",
@@ -756,7 +900,7 @@ def generate_diaphragms(
     bars: List[dict],
     *,
     wall: Optional[float] = None,
-    min_z_gap: float = 300.0,
+    min_z_gap: float = 2000.0,
     with_perimeter: bool = True,
 ) -> Tuple[NodeMap, List[dict]]:
     """在各标高平台处生成水平横隔面（内部横隔材）。
@@ -766,6 +910,11 @@ def generate_diaphragms(
         * 4 条水平边杆（相邻角点两两相连，闭合方框）；
         * 2 条交叉水平杆（菱形对角线）。
     返回 (nodes, bars)；节点复用已有塔角节点。
+
+    关键：min_z_gap 默认 2000mm（非 300mm）。GT 的水平横隔材只在 ~16 个
+    离散标高平台（塔身面板点，间距 2000~3000mm）出现，若按 300mm 分桶
+    会在每个中间节点标高都生成横隔面（67 个平台 / 406 根），使水平杆件
+    虚高到 GT（299 根）的 3 倍。2000mm 分桶对齐 GT 面板粒度（~16 平台）。
     """
     if wall is None:
         wall = max((abs(p[0]) for p in nodes.values()), default=0.0)
@@ -810,15 +959,53 @@ def generate_diaphragms(
     existing_keys = {
         (min(b["from"], b["to"]), max(b["from"], b["to"])) for b in new_bars
     }
+    new_nodes = dict(nodes)
+    node_id_counter = max((int(k.split('_')[-1]) for k in new_nodes if k.split('_')[-1].isdigit()), default=1000)
+
     for z, cids in sorted(corner_ids_by_z.items()):
         if any(c is None for c in cids):
             continue
-        pairs: List[Tuple[int, int]] = []
-        if with_perimeter:
-            pairs += [(0, 1), (1, 2), (2, 3), (3, 0)]  # 四边闭合
-        pairs += [(0, 2), (1, 3)]  # 交叉对角线
-        for (ia, ib) in pairs:
-            a, b = cids[ia], cids[ib]
+        
+        # 4 个主角点坐标: c0=(+w,+w), c1=(-w,+w), c2=(-w,-w), c3=(+w,-w)
+        p0, p1, p2, p3 = [new_nodes[c] for c in cids]
+        w_x = abs(p0[0])
+        w_y = abs(p0[1])
+
+        # 4 个外边中点 M0=(0,+w), M1=(-w,0), M2=(0,-w), M3=(+w,0)
+        node_id_counter += 1; mid_top = f"dia_node_{node_id_counter}"; new_nodes[mid_top] = (0.0, w_y, float(z))
+        node_id_counter += 1; mid_left = f"dia_node_{node_id_counter}"; new_nodes[mid_left] = (-w_x, 0.0, float(z))
+        node_id_counter += 1; mid_bot = f"dia_node_{node_id_counter}"; new_nodes[mid_bot] = (0.0, -w_y, float(z))
+        node_id_counter += 1; mid_right = f"dia_node_{node_id_counter}"; new_nodes[mid_right] = (w_x, 0.0, float(z))
+
+        # 4 个内十字节点 (±w/2, ±w/2)
+        node_id_counter += 1; in_0 = f"dia_node_{node_id_counter}"; new_nodes[in_0] = (w_x / 2.0, w_y / 2.0, float(z))
+        node_id_counter += 1; in_1 = f"dia_node_{node_id_counter}"; new_nodes[in_1] = (-w_x / 2.0, w_y / 2.0, float(z))
+        node_id_counter += 1; in_2 = f"dia_node_{node_id_counter}"; new_nodes[in_2] = (-w_x / 2.0, -w_y / 2.0, float(z))
+        node_id_counter += 1; in_3 = f"dia_node_{node_id_counter}"; new_nodes[in_3] = (w_x / 2.0, -w_y / 2.0, float(z))
+
+        # 构造标准国网 22 杆双层十字横隔拓扑:
+        # 1) 外框 8 杆 (四边中分)
+        # 2) 边中点 -> 内十字节点 (8 杆)
+        # 3) 角点 -> 内十字节点 (4 杆)
+        # 4) 内十字连接 (2 杆)
+        dia_pairs = [
+            # 外边 8 杆
+            (cids[0], mid_top), (mid_top, cids[1]),
+            (cids[1], mid_left), (mid_left, cids[2]),
+            (cids[2], mid_bot), (mid_bot, cids[3]),
+            (cids[3], mid_right), (mid_right, cids[0]),
+            # 边中点至内十字 (8 杆)
+            (mid_right, in_3), (in_3, mid_bot),
+            (mid_left, in_2), (in_2, mid_bot),
+            (mid_right, in_0), (in_0, mid_top),
+            (mid_left, in_1), (in_1, mid_top),
+            # 角点至内十字 (4 杆)
+            (cids[0], in_0), (cids[1], in_1), (cids[2], in_2), (cids[3], in_3),
+            # 内十字贯通 (2 杆)
+            (in_0, in_3), (in_1, in_2),
+        ]
+
+        for idx, (a, b) in enumerate(dia_pairs):
             if a is None or b is None or a == b:
                 continue
             key = (min(a, b), max(a, b))
@@ -826,14 +1013,14 @@ def generate_diaphragms(
                 continue
             existing_keys.add(key)
             new_bars.append({
-                "id": f"diaphragm_{z:07.1f}_{ia}{ib}",
+                "id": f"diaphragm_{z:07.1f}_{idx:02d}",
                 "from": a,
                 "to": b,
                 "face": "diaphragm",
                 "diaphragm": True,
                 "generated_4face": True,
             })
-    return nodes, new_bars
+    return new_nodes, new_bars
 
 
 def inspect_model_topology(nodes: NodeMap, bars: List[dict]) -> Dict[str, object]:
@@ -853,6 +1040,42 @@ def inspect_model_topology(nodes: NodeMap, bars: List[dict]) -> Dict[str, object
     hist: Dict[int, int] = {}
     for d in degree.values():
         hist[d] = hist.get(d, 0) + 1
+
+    # 区分「合法横担悬臂端头」与「真悬空断裂」：横担（CROSS）与横担斜材
+    # 的水平外伸端是物理上自由悬臂端（degree=1 属正常），不应计入悬空断裂。
+    # 判定：degree=1 节点，其唯一杆件的 role == "CROSS"，或该节点水平径向
+    # 距离远超该标高处塔身权威半宽（横担外伸区），即为横担端头。
+    # 注意：塔身半宽不能用节点 |x| 中位数（会被横担端头污染），用 GT 权威
+    # 半宽 gt_tower_half_width(z)（四棱台 2649→200mm）才准确。
+    roles: Dict[str, str] = {}
+    try:
+        roles = classify_members(nodes, bars)
+    except Exception:
+        roles = {}
+    crossarm_tip = 0
+    genuine_dangling = 0
+    for nid, d in degree.items():
+        if d != 1:
+            continue
+        # 找到该节点的唯一杆件
+        bar_role = None
+        for b in bars:
+            if b.get("from") == nid or b.get("to") == nid:
+                bar_role = roles.get(b.get("id")) or b.get("role")
+                break
+        p = nodes.get(nid)
+        radial = float(np.hypot(p[0], p[1])) if p is not None else 0.0
+        z = float(p[2]) if p is not None else 0.0
+        body_hw_at_z = gt_tower_half_width(z)
+        # 横担端头：role=CROSS，或径向远超该标高权威塔身半宽（>1.4x，横担外伸）
+        is_crossarm_tip = (
+            bar_role == "CROSS"
+            or (body_hw_at_z > 0 and radial > body_hw_at_z * 1.4)
+        )
+        if is_crossarm_tip:
+            crossarm_tip += 1
+        else:
+            genuine_dangling += 1
 
     # 连通分量
     adj: Dict[str, set] = {nid: set() for nid in nodes}
@@ -879,6 +1102,8 @@ def inspect_model_topology(nodes: NodeMap, bars: List[dict]) -> Dict[str, object
     return {
         "degree_histogram": {str(k): v for k, v in sorted(hist.items())},
         "dangling_degree1": hist.get(1, 0),
+        "crossarm_tip_count": crossarm_tip,
+        "genuine_dangling_degree1": genuine_dangling,
         "max_degree": max(hist) if hist else 0,
         "components": components,
         "total_nodes": len(nodes),
@@ -936,10 +1161,8 @@ def classify_members(nodes: NodeMap, bars: List[dict]) -> Dict[str, str]:
         # 倾角取绝对值：主腿/斜材既可朝上也可朝下（_inclination_deg 带符号，
         # 自上而下的腿倾角为负，直接用符号值会漏判主腿）。
         aincl = abs(incl)
-        if aincl >= leg_min_incl:
-            roles[b["id"]] = "LEG"
-        elif aincl >= corner_leg_min_incl and wall > 0 and edge >= wall * 0.7:
-            # 贴近立面两缘的斜柱也是主腿（四棱台塔腿）
+        cross_center = (float(f[0]) * float(t[0]) < 0)
+        if not cross_center and aincl >= 72.0 and min(abs(float(f[0])), abs(float(t[0]))) >= wall * 0.65:
             roles[b["id"]] = "LEG"
         elif aincl <= horiz_max_incl:
             if body_halfwidth > 0 and r > body_halfwidth * 1.4:

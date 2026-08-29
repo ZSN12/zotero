@@ -93,13 +93,17 @@ Harness 不信模型的「一面之词」，它拿模型的候选对象去做**�
 
 ## 4. MLLM 可插拔后端（本仓库已实现）
 
-`intake/mllm_backend.py` 定义统一接口，支持三种后端：
+`intake/mllm_backend.py` 定义统一接口：
 
-| 后端 | 说明 | 何时用 |
-|---|---|---|
-| `RuleBasedBackend` | ezdxf 规则解析（当前 DXF 默认） | 无 API / 矢量图 |
-| `MLLMBackend` | 调用多模态大模型 API（OpenAI 兼容） | 扫描图 / 复杂图纸 |
-| `NullBackend` | 返回 placeholder 模型 | 兜底，绝不猜 |
+| 后端 | 说明 | 产品路径 | 当前代码默认 |
+|---|---|---|---|
+| `MLLMBackend` | Kimi / OpenAI 兼容 VLM | **A1 件号 OCR**；扫描图主路径 | PNG/PDF + `--backend mllm` |
+| `TowerScanBackend` | 霍夫线 + 规则 A2 | 无 API 时扫描降级 | 无 API 的 `run-tower` |
+| `RuleBasedBackend` | ezdxf 矢量解析 | **hybrid 计划中的 A2** | `dxf/dwg` 硬编码默认 ⚠️ |
+| `NullBackend` | placeholder | 兜底 | 非 tower 扫描无 API |
+
+> **实现缺口：** `choose_backend()` 与 `run_tower()` 对 DXF/DWG 跳过 Agent 链；  
+> `deliver_project()` 未调用 Kimi。修复计划见 [`docs/PRODUCT_PATH_AND_AGENT_PLAN.md`](docs/PRODUCT_PATH_AND_AGENT_PLAN.md)。
 
 统一接口：
 
@@ -167,3 +171,20 @@ if missing_axes(model):
 >
 > 模型负责「看懂」，Skill 负责「说人话且不撒谎」，Harness 负责「对账」。
 > 三者缺一不可：没有模型，看不懂扫描图；没有 Skill，模型输出不可信；没有 Harness，错误无法被发现和传播。
+
+---
+
+## 9. 与官网对齐 & 实现缺口（2026-08）
+
+官网（[concentriccirclesmrtt.github.io](https://concentriccirclesmrtt.github.io)）要求 **DXF 与扫描图同属多源输入**，经 Agent Harness 编译。  
+本仓库 **Agent 链（A0→A4）已实现**，但 **图册交付 `deliver_project` 与 JC1 跑批脚本仍走 ezdxf 旁路**。
+
+| 能力 | 状态 |
+|------|------|
+| A0→A4 + `steps.json` | ✅ 扫描图 `run-tower` |
+| Kimi A1 件号 | ✅ `MLLMBackend` + `acceptance.sh --with-mllm` |
+| DXF → Agent（栅格化 / hybrid） | ⏳ 计划 Phase 1–2 |
+| `deliver-project` 接 Agent | ⏳ 计划 Phase 2 |
+| 跨页 M1–M6 + 证据链 | ⏳ 计划 Phase 3 |
+
+详见 [`docs/PRODUCT_PATH_AND_AGENT_PLAN.md`](docs/PRODUCT_PATH_AND_AGENT_PLAN.md)。
