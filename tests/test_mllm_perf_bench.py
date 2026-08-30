@@ -132,6 +132,7 @@ class TowerMllmTwentyBarsAcceptanceTest(unittest.TestCase):
         self.assertEqual(validate_references(model), [])
 
 
+@pytest.mark.slow
 class ImageEncodeTest(unittest.TestCase):
     def test_resize_and_keep_png(self):
         from traceability.intake.mllm_backend import _encode_image
@@ -276,6 +277,7 @@ class StepsJsonMllmFailureTest(unittest.TestCase):
         self.assertEqual(a1["detail"]["mllm_failure_reason"], "mock timeout")
 
 
+@pytest.mark.slow
 class MllmVsScanBenchmarkTest(unittest.TestCase):
     def test_benchmark_writes_three_columns(self):
         import benchmark.mllm_vs_scan as bench

@@ -16,6 +16,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = REPO / "examples"
 
@@ -24,6 +26,8 @@ def tower_components(model, kind):
     return [c for c in model.components.values() if c.kind == kind]
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 class P01OverlayThreadingTest(unittest.TestCase):
     """P0-1：merge_view_coordinates 读 overlay 里的 view_regions。"""
 
@@ -62,6 +66,8 @@ class P01OverlayThreadingTest(unittest.TestCase):
         self.assertGreater(len(model.rules), 0)
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 class P02Guowang02ViewModeTest(unittest.TestCase):
     """P0-2：国网 02 单立面（synthetic side 策略），标记 view_mode=single_facade。
 

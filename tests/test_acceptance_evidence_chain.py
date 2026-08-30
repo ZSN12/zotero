@@ -120,11 +120,12 @@ class DeliveryFailurePropagationTest(unittest.TestCase):
                 self.assertFalse(result["ok"])
 
     def test_status_three_state_mapping(self):
-        # 验证 exit code 映射：verified→0, review_required→2, failed→1
-        mapping = {"verified": 0, "review_required": 2, "failed": 1}
-        self.assertEqual(mapping["verified"], 0)
-        self.assertEqual(mapping["review_required"], 2)
-        self.assertEqual(mapping["failed"], 1)
+        # 阶段 8.6：退出码必须引用真实实现（cli_exit.status_to_exit），
+        # 禁止用局部字面量 dict 自欺（旧测试只断言字面量，与 cli.py 实际分叉）。
+        from traceability.cli_exit import status_to_exit
+        self.assertEqual(status_to_exit("verified"), 0)
+        self.assertEqual(status_to_exit("review_required"), 2)
+        self.assertEqual(status_to_exit("failed"), 1)
 
 
 class CacheFingerprintTest(unittest.TestCase):
@@ -269,13 +270,13 @@ class CliExitCodeTest(unittest.TestCase):
     """P0-2：CLI 正确返回 0/1/2。"""
 
     def test_exit_code_mapping_constant(self):
-        # 验证三态映射是确定的
-        mapping = {"verified": 0, "review_required": 2, "failed": 1}
-        self.assertEqual(mapping["verified"], 0)
-        self.assertEqual(mapping["review_required"], 2)
-        self.assertEqual(mapping["failed"], 1)
-        self.assertNotEqual(mapping["verified"], mapping["failed"])
-        self.assertNotEqual(mapping["review_required"], mapping["failed"])
+        # 阶段 8.6：断言真实实现的退出码映射，而非局部字面量。
+        from traceability.cli_exit import status_to_exit
+        self.assertEqual(status_to_exit("verified"), 0)
+        self.assertEqual(status_to_exit("review_required"), 2)
+        self.assertEqual(status_to_exit("failed"), 1)
+        self.assertNotEqual(status_to_exit("verified"), status_to_exit("failed"))
+        self.assertNotEqual(status_to_exit("review_required"), status_to_exit("failed"))
 
 
 class OverlapBarDedupTest(unittest.TestCase):

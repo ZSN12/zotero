@@ -12,6 +12,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import pytest
+
 from traceability.intake.tower_dxf import (
     _compile_bar_id_re,
     _extract_bar_label,
@@ -57,6 +59,8 @@ class BarLabelRegexTest(unittest.TestCase):
         self.assertEqual(self.label("G01"), "G01")
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 class GuowangAssociationTest(unittest.TestCase):
     def test_parse_report_meets_acceptance(self):
         if not GUOWANG_DXF.exists():

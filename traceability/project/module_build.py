@@ -12,12 +12,22 @@ from .assembly import assemble_modules
 
 
 def physical_bar_counts(model: EngineeringModel, *, labeled_only: bool = True) -> Dict[str, int]:
-    """合并模型中各 bar_id 物理根数（tower_bar 计数）。"""
+    """合并模型中各 bar_id 物理根数（tower_bar 计数）。
+
+    阶段 9：用 is_physical_bar 的语义过滤（fail-closed），只统计物理杆件
+    （recognized + reconstructed），排除 derived（corner_leg/diaphragm/center）
+    与 canonical/unknown，避免 BOM 数量因派生展示几何而虚高。
+    """
+    from ..eval.metrics import is_physical_bar
     counts: Counter = Counter()
     for comp in model.components.values():
         if comp.kind != "tower_bar":
             continue
-        bid = str(comp.properties.get("bar_id") or "")
+        props = comp.properties or {}
+        # 阶段 9：物理杆件语义过滤（derived/canonical/unknown 不计入）
+        if not is_physical_bar(props):
+            continue
+        bid = str(props.get("bar_id") or "")
         if not bid or bid == "None":
             continue
         if labeled_only and bid.startswith("UNLABELED"):

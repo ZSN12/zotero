@@ -48,7 +48,10 @@ def _summarize(results: List[ProjectValidationResult]) -> Dict[str, Any]:
         "failed": failed,
         "pending": pending,
         "results": [r.to_dict() for r in results],
-        "all_passed": len(failed) == 0,
+        # 阶段 8.4：all_passed 必须 failed=0 且 pending=0。存在 pending（待人工
+        # 复核）时不得算「全部通过」，否则会出现 status=review_required 但
+        # harness_all_passed=True 的自相矛盾。
+        "all_passed": len(failed) == 0 and len(pending) == 0,
     }
 
 

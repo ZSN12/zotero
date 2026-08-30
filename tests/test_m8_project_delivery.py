@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = REPO / "examples"
 GW = EXAMPLES / "external" / "guowang_35A1"
@@ -23,6 +25,8 @@ class MasterBomTest(unittest.TestCase):
         self.assertIsNotNone(p)
         self.assertTrue(p.exists())
 
+    @pytest.mark.integration
+    @pytest.mark.slow
     def test_physical_bom_matches_master(self):
         from traceability.intake.tower_batch import cross_file_batch
         from traceability.io import load_model
@@ -50,6 +54,8 @@ class MasterBomTest(unittest.TestCase):
 
 
 class ModuleAssemblyTest(unittest.TestCase):
+    @pytest.mark.integration
+    @pytest.mark.slow
     def test_z_split_assembly(self):
         from traceability.intake.tower_batch import cross_file_batch
         from traceability.io import load_model
@@ -67,6 +73,8 @@ class ModuleAssemblyTest(unittest.TestCase):
 
 
 class DeliverProjectM8Test(unittest.TestCase):
+    @pytest.mark.integration
+    @pytest.mark.slow
     def test_deliver_master_bom_and_assembly(self):
         from traceability.project.delivery import deliver_project
 

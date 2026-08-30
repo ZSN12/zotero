@@ -123,9 +123,15 @@ def main() -> int:
             print(f"  - {r}")
 
     if GT_PATH.exists():
+        bom_file = REPO / "examples/external/guowang_35A1/guowang_merged_bom.csv"
+        ev_cmd = [
+            sys.executable, str(REPO / "scripts/evaluate_ground_truth.py"),
+            str(GT_PATH), str(OUT / "model.json"), "--view", "front",
+        ]
+        if bom_file.exists():
+            ev_cmd.extend(["--bom", str(bom_file)])
         ev = subprocess.run(
-            [sys.executable, str(REPO / "scripts/evaluate_ground_truth.py"),
-             str(GT_PATH), str(OUT / "model.json"), "--view", "front"],
+            ev_cmd,
             capture_output=True, text=True,
         )
         print()
@@ -156,9 +162,9 @@ def main() -> int:
     )
     print(f"报告: {OUT / 'full_run_report.json'}")
 
-    # P0-2 失败传播：verified → 0，review_required → 2，failed → 1。
+    # P0-2 失败传播：verified → 0，review_required → 1，failed → 2。
     status = pd.get("status", "failed")
-    exit_code = {"verified": 0, "review_required": 2, "failed": 1}.get(status, 1)
+    exit_code = {"verified": 0, "review_required": 1, "failed": 2}.get(status, 2)
     return exit_code
 
 

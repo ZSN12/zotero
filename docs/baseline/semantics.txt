@@ -1,0 +1,8 @@
+=== 语义计数 ===
+  reconstructed: 3651
+  recognized: 1217
+  derived: 498
+total_bars: 5366
+nonderived_bars: 4868
+projection_refs覆盖: 0/4868 = 0.0%
+derived_from可解析: 0

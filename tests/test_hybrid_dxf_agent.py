@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = REPO / "examples"
 DXF_02 = EXAMPLES / "external" / "guowang_35A1" / "35A1-JC1-02.dxf"
@@ -41,6 +43,8 @@ class HybridDxfAgentTest(unittest.TestCase):
         self.assertTrue(views)
         self.assertNotEqual(views[0]["bbox"], [0, 0, 2000, 3000])
 
+    @pytest.mark.integration
+    @pytest.mark.slow
     def test_vector_a3_pass_without_mllm(self):
         if not DXF_02.exists():
             self.skipTest("国网 02 立面不存在")
@@ -82,6 +86,8 @@ class HybridDxfAgentTest(unittest.TestCase):
             a3 = next(s for s in steps["steps"] if s["id"] == "a3_link")
             self.assertIn(a3["status"], ("passed", "finished", "ok"))
 
+    @pytest.mark.integration
+    @pytest.mark.slow
     def test_hybrid_pipeline_mock_mllm(self):
         if not DXF_02.exists():
             self.skipTest("国网 02 立面不存在")
@@ -288,7 +294,7 @@ class HybridM3MergeRegressionTest(unittest.TestCase):
         bars = [
             {
                 "bar_uid": "b1", "x1": ox, "y1": oy,
-                "x2": ox, "y2": oy - 50.0,  # 沿图纸 y 向下（z_flip 后向上）
+                "x2": ox, "y2": oy + 50.0,  # 沿图纸 y 向上（对应 Z 向上延伸）
                 "view_type": "front", "geometry_origin": "mllm_geom",
             },
         ]
@@ -313,6 +319,49 @@ class HybridM3MergeRegressionTest(unittest.TestCase):
         for z in zs:
             self.assertGreaterEqual(z, 23000.0)
             self.assertLessEqual(z, 29800.0)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class LabelDistanceUnitTest(unittest.TestCase):
+    """阶段6.4：label_distance_mm 必须是毫米，不得被像素值污染。"""
+
+    def test_associate_labels_mm_uses_mm_field(self):
+        from traceability.intake.tower_agent_pipeline import _associate_labels
+        # mm 坐标空间：bar 中点 (100,100)，label 在 (100, 130)，距离 30mm
+        bars = [{"bar_uid": "b1", "x1": 0.0, "y1": 100.0, "x2": 200.0, "y2": 100.0,
+                 "view_type": "front"}]
+        labels = [{"text": "105", "drawing_x": 100.0, "drawing_y": 130.0, "view_type": "front"}]
+        r = _associate_labels(bars, labels, snap_distance=100.0, coord_space="mm")
+        self.assertEqual(len(r["assignments"]), 1)
+        a = r["assignments"][0]
+        self.assertNotIn("UNLABELED", str(a["bar_id"]), "label 应匹配到 bar")
+        # mm 坐标空间应返回 label_distance_mm，且值 = 30.0（毫米）
+        self.assertIn("label_distance_mm", a)
+        self.assertAlmostEqual(a["label_distance_mm"], 30.0, places=2)
+        # 不得出现 label_distance_px（像素）冒充毫米
+        self.assertNotIn("label_distance_px", a)
+
+    def test_apply_assignments_does_not_copy_px_to_mm(self):
+        from traceability.intake.hybrid_dxf_agent import _apply_assignments_to_dxf_model
+        from traceability.model import Component, EngineeringModel, SourceRef, SourceType
+        m = EngineeringModel(name="t")
+        m.add_component(Component(
+            id="bar_1", name="b", kind="tower_bar",
+            source=SourceRef(SourceType.DRAWING, "x"),
+            properties={"bar_id": "UNLABELED_1", "from_node": "n1", "to_node": "n2"},
+        ))
+        bars = [{"bar_uid": "b1", "component_id": "bar_1"}]
+        # 只有 label_distance_px（像素），无 label_distance_mm
+        assignments = [{"bar_uid": "b1", "bar_id": "105", "confidence": 0.8,
+                        "label_distance_px": 42.0}]
+        _apply_assignments_to_dxf_model(m, bars, assignments)
+        c = m.components["bar_1"]
+        self.assertEqual(c.properties["bar_id"], "105")
+        # 像素值不得写入 label_distance_mm
+        self.assertNotIn("label_distance_mm", c.properties)
 
 
 if __name__ == "__main__":

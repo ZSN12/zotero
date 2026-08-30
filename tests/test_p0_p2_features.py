@@ -186,6 +186,7 @@ class TowerMllmContractMockTest(unittest.TestCase):
         self.assertLessEqual(model.components["bar_1"].source.confidence, 0.6)
 
 
+@pytest.mark.slow
 class PdfRasterTest(unittest.TestCase):
     def test_pdf_to_png(self):
         from traceability.intake.pdf_raster import rasterize_pdf_to_png
@@ -343,6 +344,7 @@ class ScanMergeTest(unittest.TestCase):
             self.assertIsNotNone(c.properties.get("z_px"))
 
 
+@pytest.mark.slow
 class ScanGateTest(unittest.TestCase):
     def test_pending_review_blocks_strict_export(self):
         from traceability.intake.tower_layout import analyze_tower_scan, confirm_tower_scan

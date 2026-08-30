@@ -280,8 +280,10 @@ def _apply_assignments_to_dxf_model(
             continue  # 保留矢量贴号，MLLM 只补空白
         comp.properties["bar_id"] = new_id
         comp.properties["label_origin"] = "mllm_a3_hybrid"
-        if assign.get("label_distance_px") is not None:
-            comp.properties["label_distance_mm"] = assign["label_distance_px"]
+        # 阶段 6.4 单位规范：只接受毫米距离（coord_space="mm"），严禁把
+        # 像素距离 label_distance_px 冒充 label_distance_mm。
+        if assign.get("label_distance_mm") is not None:
+            comp.properties["label_distance_mm"] = round(assign["label_distance_mm"], 2)
         comp.properties["association_confidence"] = assign.get("confidence", 0.75)
         updated += 1
         mllm_labeled += 1

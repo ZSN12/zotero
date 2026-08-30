@@ -844,12 +844,20 @@ def export_tower_glb(
     strict: bool = True,
     allow_scan: bool = False,
     allow_derived_y: bool = False,
+    mode: str = "physical",
 ) -> str:
     """从模型求解并把杆件实体化导出 GLB（Phase 3）。
 
     依赖 trimesh；每根 tower_bar 沿 from→to 拉伸成棱柱（圆柱近似），
     按图层/类别着色。strict=True 时任何缺失轴都会阻断导出。
+
+    阶段 9 导出模式（mode）：
+        * "physical"（默认）—— 只导出物理杆件（recognized + reconstructed），
+          排除 derived（corner_leg/diaphragm/center 派生展示几何）。正式交付用。
+        * "qa_all" —— 导出全部杆件（含 derived），供 QA 目视检查派生几何。
     """
+    if mode not in ("physical", "qa_all"):
+        raise SolveError(f"未知导出模式 mode={mode!r}（应为 physical / qa_all）")
     try:
         import trimesh
     except ImportError as e:  # pragma: no cover
@@ -877,15 +885,22 @@ def export_tower_glb(
     meshes: List = []
     mesh_meta: List[Dict[str, str]] = []
     node_ids = list(nodes)
-    # 物理杆件数：排除内部辅助几何（corner_leg / diaphragm / center 轴），
-    # 阶段 5.1 验收要求整高合成角腿等 internal helper 不计入 GLB 物理杆件数。
-    total_bars = sum(1 for c in model.components.values() if c.kind == "tower_bar")
     skipped: List[str] = []
 
     # P1-8 语义分类：按几何倾角 + 位置分 LEG/DIAG/HORIZ/CROSS，用于着色 + 法向定向。
     from .tower_geometry import classify_members, _align_matrix
 
     all_bar_list = [(cid, c) for cid, c in model.components.items() if c.kind == "tower_bar"]
+    # 阶段 9：physical 模式排除 derived 派生展示几何（与 eval.metrics.is_physical_bar
+    # 统一语义），qa_all 模式保留全部杆件供目视检查。
+    if mode == "physical":
+        all_bar_list = [
+            (cid, c) for cid, c in all_bar_list
+            if not _is_internal_helper(c)
+        ]
+    # 物理杆件数（阶段 5.1）：与导出模式一致——physical 模式不计 internal helper，
+    # qa_all 模式统计全部杆件。
+    total_bars = len(all_bar_list)
     bar_positions = {
         cid: {
             "id": cid,

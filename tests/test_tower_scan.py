@@ -12,6 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
 
@@ -24,6 +26,7 @@ def _cv2_available():
 
 
 @unittest.skipUnless(_cv2_available(), "opencv-python 未安装")
+@pytest.mark.slow
 class TowerScanTest(unittest.TestCase):
     def setUp(self):
         self.front = EXAMPLES / "clear" / "tower_front_hd.png"

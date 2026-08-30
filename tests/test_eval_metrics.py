@@ -76,6 +76,78 @@ class ToleranceSweepTest(unittest.TestCase):
         self.assertEqual([s["tol"] for s in r["sweep"]], [10.0, 50.0, 200.0])
 
 
+class HungarianDummyTest(unittest.TestCase):
+    """阶段1.4：Hungarian dummy 未匹配——最大化合法匹配、非法配对永不成 TP、
+    输入顺序变化不改变结果。"""
+
+    def test_maximize_legal_matches_over_dummy(self):
+        from traceability.eval.metrics import hungarian_match, segment_cost
+        # 3 GT，2 model 完美匹配，1 model 完全错位（>max_cost）
+        gt = [(0.0, 0.0, 10.0, 0.0), (0.0, 5.0, 10.0, 5.0), (0.0, 10.0, 10.0, 10.0)]
+        model = [(0.0, 0.0, 10.0, 0.0), (0.0, 5.0, 10.0, 5.0), (1000.0, 0.0, 1010.0, 0.0)]
+        matched, un_gt, un_m = hungarian_match(gt, model, segment_cost, max_cost=50.0)
+        # 必须匹配 2 对合法（GT0→M0, GT1→M1），GT2 和 M2 未匹配
+        self.assertEqual(set(matched), {(0, 0), (1, 1)})
+        self.assertEqual(un_gt, [2])
+        self.assertEqual(un_m, [2])
+
+    def test_illegal_pair_never_tp(self):
+        from traceability.eval.metrics import hungarian_match, segment_cost
+        # 一个 GT 一个 model，但相距 > max_cost → 不应匹配
+        gt = [(0.0, 0.0, 10.0, 0.0)]
+        model = [(1000.0, 0.0, 1010.0, 0.0)]
+        matched, un_gt, un_m = hungarian_match(gt, model, segment_cost, max_cost=50.0)
+        self.assertEqual(matched, [])
+        self.assertEqual(un_gt, [0])
+        self.assertEqual(un_m, [0])
+
+    def test_order_invariance(self):
+        from traceability.eval.metrics import hungarian_match, segment_cost
+        gt = [(0.0, 0.0, 10.0, 0.0), (0.0, 5.0, 10.0, 5.0)]
+        model = [(0.0, 5.0, 10.0, 5.0), (0.0, 0.0, 10.0, 0.0)]  # 顺序颠倒
+        m1, u1, u2 = hungarian_match(gt, model, segment_cost, max_cost=50.0)
+        m2, _, _ = hungarian_match(gt, list(reversed(model)), segment_cost, max_cost=50.0)
+        # 匹配的「几何对」集合应一致（索引随输入顺序，但配对语义不变）
+        self.assertEqual(len(m1), len(m2))
+        self.assertEqual(len(m1), 2)
+
+
+class SegmentGatesTest(unittest.TestCase):
+    """阶段1.3：代价与硬门禁拆分，tolerance=每端点最大误差。"""
+
+    def test_gates_reject_angle_over_threshold(self):
+        from traceability.eval.metrics import segment_gates
+        g = segment_gates((0, 0, 10, 0), (0, 0, 0, 10))  # 90° 夹角
+        self.assertFalse(g["pass"])
+        self.assertGreater(g["angle_error_deg"], 45.0)
+
+    def test_gates_reject_degenerate(self):
+        from traceability.eval.metrics import segment_gates
+        g = segment_gates((0, 0, 0, 0), (0, 0, 10, 0))
+        self.assertFalse(g["pass"])
+        self.assertTrue(g["degenerate"])
+
+    def test_gates_pass_parallel_same_direction(self):
+        from traceability.eval.metrics import segment_gates
+        g = segment_gates((0, 0, 10, 0), (0, 0, 10, 0))
+        self.assertTrue(g["pass"])
+        self.assertEqual(g["endpoint_error_mm"], 0.0)
+
+    def test_gates_expose_five_metrics(self):
+        from traceability.eval.metrics import segment_gates
+        g = segment_gates((0, 0, 10, 0), (0, 0, 10, 5))
+        for k in ("endpoint_error_mm", "midpoint_error_mm", "angle_error_deg",
+                  "length_ratio", "overlap_ratio"):
+            self.assertIn(k, g, f"segment_gates 缺 {k}")
+
+    def test_tolerance_equals_endpoint_error(self):
+        # segment_cost 过门禁后 = endpoint_error_mm（tolerance 语义=每端点最大误差）
+        from traceability.eval.metrics import segment_cost, segment_gates
+        a = (0, 0, 100, 0); b = (5, 0, 105, 0)  # 两端点各偏移 5mm → 端点距离 10
+        self.assertEqual(segment_cost(a, b), segment_gates(a, b)["endpoint_error_mm"])
+        self.assertEqual(segment_cost(a, b), 10.0)
+
+
 class SemanticFreezeTest(unittest.TestCase):
     """P0 语义冻结：recognized / mirrored / derived 三态。"""
 
@@ -83,18 +155,18 @@ class SemanticFreezeTest(unittest.TestCase):
         from traceability.eval.metrics import (
             is_derived_bar, is_recognized_bar, is_physical_bar,
         )
-        # recognized：front 面直接识别
-        self.assertTrue(is_recognized_bar({"evidence_status": "recognized", "face": "f"}))
-        self.assertFalse(is_derived_bar({"evidence_status": "recognized", "face": "f"}))
+        # recognized：front 面直接识别（geometry_class 为新权威字段）
+        self.assertTrue(is_recognized_bar({"geometry_class": "recognized", "face": "f"}))
+        self.assertFalse(is_derived_bar({"geometry_class": "recognized", "face": "f"}))
         # mirrored：镜像面 B/L/R —— 非 derived（进 physical），但非 recognized
-        self.assertFalse(is_derived_bar({"evidence_status": "mirrored", "face": "b"}))
-        self.assertFalse(is_recognized_bar({"evidence_status": "mirrored", "face": "b"}))
-        self.assertTrue(is_physical_bar({"evidence_status": "mirrored", "face": "b"}))
+        self.assertFalse(is_derived_bar({"geometry_class": "reconstructed", "face": "b"}))
+        self.assertFalse(is_recognized_bar({"geometry_class": "reconstructed", "face": "b"}))
+        self.assertTrue(is_physical_bar({"geometry_class": "reconstructed", "face": "b"}))
         # derived：corner_leg / diaphragm / center —— 不进任何 P/R
         self.assertTrue(is_derived_bar({"evidence_status": "derived", "diaphragm": True}))
         self.assertTrue(is_derived_bar({"corner_leg": True}))
         self.assertTrue(is_derived_bar({"face": "diaphragm"}))
-        self.assertFalse(is_physical_bar({"evidence_status": "derived", "diaphragm": True}))
+        self.assertFalse(is_physical_bar({"geometry_class": "derived", "diaphragm": True}))
 
     def test_corner_leg_and_diaphragm_excluded(self):
         """清单核心：整高合成角腿与自动 diaphragm 不计物理 P/R。"""
@@ -115,9 +187,9 @@ class SemanticFreezeTest(unittest.TestCase):
         add_node("n1", 0, 0, 1000); add_node("n2", 1000, 0, 1000)
         add_node("n5", 0, -500, 1000); add_node("n6", 1000, -500, 1000)
         add_node("n3", 0, 500, 1000); add_node("n4", 1000, 500, 1000)
-        add_bar("b_f", "n1", "n2", evidence_status="recognized", face="f")
-        add_bar("b_b", "n5", "n6", evidence_status="mirrored", face="b")
-        add_bar("b_d", "n1", "n3", evidence_status="derived", face="diaphragm", diaphragm=True)
+        add_bar("b_f", "n1", "n2", geometry_class="recognized", face="f")
+        add_bar("b_b", "n5", "n6", geometry_class="reconstructed", face="b")
+        add_bar("b_d", "n1", "n3", geometry_class="derived", face="diaphragm", diaphragm=True)
 
         rec = bars_from_model_3d(model, mode="recognition")
         phy = bars_from_model_3d(model, mode="physical")
@@ -129,19 +201,19 @@ class SemanticFreezeTest(unittest.TestCase):
         from traceability.eval.metrics import (
             is_recognized_bar, is_reconstructed_bar, is_physical_bar,
         )
-        # mirrored 是 reconstructed 的一种实现
-        self.assertTrue(is_reconstructed_bar({"evidence_status": "mirrored", "face": "b"}))
-        self.assertTrue(is_reconstructed_bar({"evidence_status": "reconstructed"}))
-        self.assertFalse(is_reconstructed_bar({"evidence_status": "recognized", "face": "f"}),
+        # mirrored 是 reconstructed 的一种实现（geometry_class 为权威字段）
+        self.assertTrue(is_reconstructed_bar({"geometry_class": "reconstructed", "face": "b"}))
+        self.assertTrue(is_reconstructed_bar({"geometry_class": "reconstructed"}))
+        self.assertFalse(is_reconstructed_bar({"geometry_class": "recognized", "face": "f"}),
                          "recognized 不是 reconstructed")
-        self.assertFalse(is_reconstructed_bar({"evidence_status": "derived", "diaphragm": True}),
+        self.assertFalse(is_reconstructed_bar({"geometry_class": "derived", "diaphragm": True}),
                          "derived 不是 reconstructed")
         self.assertFalse(is_reconstructed_bar({"gt_aligned": True}), "canonical 不是 reconstructed")
         # reconstructed 是 physical 杆件，但不是 recognized
-        self.assertTrue(is_physical_bar({"evidence_status": "reconstructed"}))
-        self.assertFalse(is_recognized_bar({"evidence_status": "reconstructed"}))
+        self.assertTrue(is_physical_bar({"geometry_class": "reconstructed"}))
+        self.assertFalse(is_recognized_bar({"geometry_class": "reconstructed"}))
         # 兼容旧数据：generated_4face 且非 recognized 的非 derived 杆件算 reconstructed
-        self.assertTrue(is_reconstructed_bar({"generated_4face": True, "evidence_status": "mirrored"}))
+        self.assertTrue(is_reconstructed_bar({"generated_4face": True, "geometry_class": "reconstructed"}))
 
     def test_m3_physical_semantic_split(self):
         """M3 语义分解：physical = recognized + reconstructed，各自计数。"""
@@ -152,14 +224,14 @@ class SemanticFreezeTest(unittest.TestCase):
             "n1": {"kind": "tower_node", "properties": {"x": 0.0, "y": 0.0, "z": 0.0}},
             "n2": {"kind": "tower_node", "properties": {"x": 1000.0, "y": 0.0, "z": 0.0}},
             "b_rec": {"kind": "tower_bar", "properties": {"from_node": "n1", "to_node": "n2",
-                      "evidence_status": "recognized", "face": "f"}},
+                      "geometry_class": "recognized", "face": "f"}},
             "b_recon": {"kind": "tower_bar", "properties": {"from_node": "n1", "to_node": "n2",
-                      "evidence_status": "reconstructed", "face": "b"}},
+                      "geometry_class": "reconstructed", "face": "b"}},
             "b_der": {"kind": "tower_bar", "properties": {"from_node": "n1", "to_node": "n2",
-                      "evidence_status": "derived", "diaphragm": True}},
+                      "geometry_class": "derived", "diaphragm": True}},
         }}
         r = eval_m3_physical_3d(gt, model)
-        sem = r["model_semantic"]
+        sem = r["model_count_by_semantic"]
         self.assertEqual(sem["recognized"], 1)
         self.assertEqual(sem["reconstructed"], 1, "reconstructed 应单独计数，derived 不计入")
 
@@ -338,7 +410,8 @@ class FourMetricsIndependentTest(unittest.TestCase):
             comps[f"b{i}"] = {"kind": "tower_bar",
                               "properties": {"from_node": f"n{i}a", "to_node": f"n{i}b",
                                              "bar_id": bid, "evidence_status": "recognized",
-                                             "face": "f"}}
+                                             "geometry_class": "recognized",
+                                             "view_type": "front", "face": "f"}}
         return {"components": comps}
 
     def test_a1_exact_match_independent(self):
@@ -379,3 +452,183 @@ class FourMetricsIndependentTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AngleDiffBoundaryTest(unittest.TestCase):
+    """阶段1.2：无向线段角度边界（点积法，避免 atan2 跨 ±π 翻转）。"""
+
+    def test_angle_diff_2d_boundaries(self):
+        from traceability.eval.metrics import _angle_diff_2d
+        import math
+        # 同一方向（0° vs 180° 无向等价）
+        self.assertAlmostEqual(_angle_diff_2d((0,0,10,0), (0,0,10,0)), 0.0, places=6)
+        self.assertAlmostEqual(_angle_diff_2d((0,0,10,0), (10,0,0,0)), 0.0, places=6)
+        # 179° vs -179° 应约 2°
+        a = (0,0, math.cos(math.radians(179)), math.sin(math.radians(179)))
+        b = (0,0, math.cos(math.radians(-179)), math.sin(math.radians(-179)))
+        self.assertAlmostEqual(_angle_diff_2d(a, b), math.radians(2), places=3)
+        # 水平与垂直 = 90°
+        self.assertAlmostEqual(_angle_diff_2d((0,0,10,0), (0,0,0,10)), math.pi/2, places=6)
+        # 退化线段返回 π/2
+        self.assertAlmostEqual(_angle_diff_2d((0,0,0,0), (0,0,10,0)), math.pi/2, places=6)
+
+    def test_segment_cost_never_negative(self):
+        from traceability.eval.metrics import segment_cost
+        cases = [
+            ((0,0,10,0), (0,0,10,0)),
+            ((0,0,10,0), (10,0,0,0)),
+            ((0,0,10,0), (0,0,0,10)),
+            ((0,0,0,0), (0,0,10,0)),
+            ((0,0,10,0), (100,100,110,100)),
+        ]
+        for a, b in cases:
+            c = segment_cost(a, b)
+            self.assertGreaterEqual(c, 0.0, f"segment_cost({a},{b})={c} 不应为负")
+
+    def test_degenerate_segment_rejected(self):
+        from traceability.eval.metrics import segment_cost
+        # 退化线段应返回 inf（拒绝匹配）
+        self.assertEqual(segment_cost((0,0,0,0), (0,0,10,0)), float("inf"))
+
+
+class FailClosedSemanticsTest(unittest.TestCase):
+    """阶段1.5：fail-closed——未标记 evidence_status 的杆件不得默认视为 recognized。"""
+
+    def test_unknown_evidence_status_not_recognized(self):
+        from traceability.eval.metrics import is_recognized_bar, is_reconstructed_bar, is_physical_bar
+        # 无 evidence_status 无 geometry_class：不得默认 recognized
+        p = {"geometry_origin": "dxf_geom"}
+        self.assertFalse(is_recognized_bar(p), "未标记语义不得默认视为 recognized")
+        self.assertFalse(is_reconstructed_bar(p))
+        self.assertFalse(is_physical_bar(p), "unknown 语义不进入任何 P/R")
+
+    def test_explicit_class_takes_precedence(self):
+        from traceability.eval.metrics import is_recognized_bar, is_reconstructed_bar, is_physical_bar
+        self.assertTrue(is_recognized_bar({"geometry_class": "recognized"}))
+        self.assertTrue(is_reconstructed_bar({"geometry_class": "reconstructed"}))
+        self.assertTrue(is_physical_bar({"geometry_class": "recognized"}))
+        self.assertTrue(is_physical_bar({"geometry_class": "reconstructed"}))
+
+    def test_legacy_evidence_status_rejected_without_flag(self):
+        # §1.5：默认 fail-closed，旧 evidence_status 不认，需 --allow-legacy-semantics
+        from traceability.eval.metrics import is_recognized_bar
+        p = {"evidence_status": "recognized"}  # 旧语义，无 geometry_class
+        self.assertFalse(is_recognized_bar(p), "默认不认旧 evidence_status")
+        self.assertFalse(is_recognized_bar(p, allow_legacy=False))
+
+    def test_legacy_evidence_status_accepted_with_flag(self):
+        from traceability.eval.metrics import is_recognized_bar, is_reconstructed_bar
+        p = {"evidence_status": "recognized"}
+        self.assertTrue(is_recognized_bar(p, allow_legacy=True))
+        p2 = {"evidence_status": "mirrored"}
+        self.assertTrue(is_reconstructed_bar(p2, allow_legacy=True))
+        self.assertFalse(is_recognized_bar(p2, allow_legacy=True))
+
+
+class ViewFilterStrictTest(unittest.TestCase):
+    """阶段1.6：view=front 时 view_type=None 不得静默进入 front 指标。"""
+
+    def test_view_none_excluded_from_front(self):
+        from traceability.eval.metrics import bars_from_model_2d
+        model = {"components": {
+            "n1": {"kind": "tower_node", "properties": {"x": 0, "y": 0, "z": 0}},
+            "n2": {"kind": "tower_node", "properties": {"x": 1000, "y": 0, "z": 0}},
+            "b_front": {"kind": "tower_bar", "properties": {"from_node": "n1", "to_node": "n2",
+                       "view_type": "front", "geometry_class": "recognized"}},
+            "b_none": {"kind": "tower_bar", "properties": {"from_node": "n1", "to_node": "n2",
+                       "view_type": None, "geometry_class": "recognized"}},
+        }}
+        out = bars_from_model_2d(model, view="front", mode="recognition")
+        self.assertEqual(len(out), 1, "view_type=None 不得静默进入 front")
+
+
+class GtLeakageEnhancedTest(unittest.TestCase):
+    """阶段1.8：GT 泄漏检测加强——除 gt_aligned 外检测 canonical/gim/source。"""
+
+    def test_canonical_class_detected(self):
+        from traceability.eval.metrics import model_has_gt_alignment
+        m = {"components": {"b": {"kind": "tower_bar",
+                                  "properties": {"geometry_class": "canonical"}}}}
+        self.assertTrue(model_has_gt_alignment(m))
+
+    def test_gim_origin_detected(self):
+        from traceability.eval.metrics import model_has_gt_alignment
+        m = {"components": {"b": {"kind": "tower_bar",
+                                  "properties": {"geometry_origin": "gim"}}}}
+        self.assertTrue(model_has_gt_alignment(m))
+
+    def test_source_reference_to_ground_truth_detected(self):
+        from traceability.eval.metrics import model_has_gt_alignment
+        m = {"components": {"b": {"kind": "tower_bar",
+                                  "properties": {"geometry_class": "recognized"},
+                                  "source": {"reference": "examples/ground_truth/35A1-JC1.json"}}}}
+        self.assertTrue(model_has_gt_alignment(m))
+
+    def test_clean_model_not_detected(self):
+        from traceability.eval.metrics import model_has_gt_alignment
+        m = {"components": {"b": {"kind": "tower_bar",
+                                  "properties": {"geometry_class": "recognized"},
+                                  "source": {"reference": "35A1-JC1-02.dxf"}}}}
+        self.assertFalse(model_has_gt_alignment(m))
+
+
+class EvaluateCliTest(unittest.TestCase):
+    """阶段1.1：评测 CLI 完整执行（exit 0、输出 A1/A2/A3、无 NameError）。"""
+
+    def test_evaluate_cli_runs_cleanly(self):
+        import subprocess
+        repo = Path(__file__).resolve().parent.parent
+        gt = repo / "examples" / "gt" / "35A1-JC1_ground_truth.json"
+        model = repo / "out" / "35A1-JC1-full-deliver" / "model.json"
+        if not gt.exists() or not model.exists():
+            self.skipTest("GT 或 model.json 不存在")
+        proc = subprocess.run(
+            [sys.executable, str(repo / "scripts" / "evaluate_ground_truth.py"),
+             str(gt), str(model), "--view", "front"],
+            capture_output=True, text=True, timeout=120,
+        )
+        self.assertEqual(proc.returncode, 0, f"评测 CLI 应正常退出，stderr={proc.stderr[:500]}")
+        self.assertNotIn("NameError", proc.stderr + proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr + proc.stdout)
+        # 应输出 A1/A2/A3 三段
+        self.assertIn("A2", proc.stdout)
+        self.assertIn("A1", proc.stdout)
+
+
+class BarIdMappingOneToManyTest(unittest.TestCase):
+    """阶段2.2：BOM 数字件号 → GT PM_XXXX 一对多映射（非 Dict[str,str]）。"""
+
+    def test_one_bom_id_maps_to_multiple_gt_ids(self):
+        from traceability.project.bar_id_mapping import build_bar_id_mapping
+        # GT：同 section 同长度 4 根对称杆
+        gt = {
+            "nodes": {},
+            "bars": [
+                {"id": "PM_0010", "from": "n0", "to": "n1", "section": "L40X3"},
+                {"id": "PM_0020", "from": "n2", "to": "n3", "section": "L40X3"},
+                {"id": "PM_0030", "from": "n4", "to": "n5", "section": "L40X3"},
+                {"id": "PM_0040", "from": "n6", "to": "n7", "section": "L40X3"},
+            ],
+        }
+        # 让每根杆长度 = 1000mm
+        for i, (a, b) in enumerate([("n0","n1"),("n2","n3"),("n4","n5"),("n6","n7")]):
+            gt["nodes"][a] = [0, 0, 0]
+            gt["nodes"][b] = [1000, 0, 0]
+        bom = [{"bar_id": "105", "section": "Q345L40X3", "length_mm": "1000", "qty": "4"}]
+        r = build_bar_id_mapping(gt, bom)
+        self.assertIn("105", r["mapping"], "BOM 件号 105 应被映射")
+        ids = set(r["mapping"]["105"]["gt_ids"])
+        self.assertEqual(ids, {"PM_0010", "PM_0020", "PM_0030", "PM_0040"},
+                         "一个 BOM 件号应对应多根 GT 对称杆（一对多）")
+
+    def test_a1_uses_bom_labels_not_physical_ids(self):
+        from traceability.eval.metrics import eval_a1_labels
+        gt = {"bars": [{"id": "PM_0001"}, {"id": "PM_0002"}]}
+        model = {"components": {
+            "b1": {"kind": "tower_bar", "properties": {"bar_id": "105",
+                    "geometry_class": "recognized"}},
+        }}
+        # 用 BOM 件号作 GT 基准：模型识别 105 应命中
+        r = eval_a1_labels(gt, model, gt_label_ids={"105", "106"})
+        self.assertEqual(r["tp"], 1, "A1 应使用图纸/BOM 件号，而非物理 ID")
+        self.assertEqual(r["recall"], 0.5)

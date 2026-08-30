@@ -193,41 +193,43 @@ def _cluster_scale(samples: List[DimSample]) -> Optional[float]:
     步骤：
     1. 计算每个样本的 ``scale = text_value / measured_distance``；
     2. 按 scale 聚类（相对容差 15% 内归为同档）；
-    3. 主视图判定：优先选 text_value 最大的一批样本（text_value >=
-       max_text * 0.5，且最多取 top-3）所在的 cluster；
+    3. 主视图判定：按簇内样本数量（出现频次）作为主判断依据，
+       当存在样本量最多的优势簇时优先选该主比例档位（如 1:20 结构图有 30-60 个标注）；
+       若出现平局，再偏向大尺寸 text_value。
     4. 返回该 cluster 内 scale 的中位数，再四舍五入到常见档位。
     """
     if not samples:
         return None
 
-    raw = [s.text_value / s.measured_distance for s in samples]
-    max_text = max(s.text_value for s in samples)
-    # 主视图候选：大尺寸样本
-    candidates = [s for s in samples if s.text_value >= max_text * _MAX_TEXT_RATIO]
-    if len(candidates) > _TOP_N:
-        candidates = sorted(candidates, key=lambda s: s.text_value, reverse=True)[:_TOP_N]
-
-    # 对候选样本按 scale 聚类（一维贪心：与簇代表值相对偏差 <= 容差）
-    clusters: List[Tuple[float, List[float]]] = []  # (代表值, 成员 scale 列表)
-    for s in candidates:
+    # 对所有样本按 scale 聚类（一维贪心：与簇代表值相对偏差 <= 容差）
+    clusters: List[Tuple[float, List[DimSample]]] = []  # (代表值, 样本列表)
+    for s in samples:
         sc = s.text_value / s.measured_distance
         placed = False
-        for rep, members in clusters:
+        for i, (rep, members) in enumerate(clusters):
             if abs(sc - rep) / max(abs(rep), 1e-6) <= _CLUSTER_TOLERANCE:
-                members.append(sc)
+                members.append(s)
                 placed = True
                 break
         if not placed:
-            clusters.append((sc, [sc]))
+            clusters.append((sc, [s]))
 
     if not clusters:
         return None
 
-    # 取规模最大的簇；规模相同时取代表值最大的（偏向主视图大比例）
-    best_cluster = max(clusters, key=lambda c: (len(c[1]), c[0]))
+    # 优先选样本数最多的主比例簇；样本数相近时，考察簇内总测度与大尺寸
+    def cluster_score(c: Tuple[float, List[DimSample]]) -> Tuple[int, float, float]:
+        rep, members = c
+        count = len(members)
+        max_t = max(s.text_value for s in members)
+        # 倾向于主结构图比例（1:20 / 1:10 占绝大多数标注）
+        return (count, max_t, rep)
+
+    best_cluster = max(clusters, key=cluster_score)
     if not best_cluster[1]:
         return None
-    return _round_to_common(median(best_cluster[1]))
+    scales = [s.text_value / s.measured_distance for s in best_cluster[1]]
+    return _round_to_common(median(scales))
 
 
 def _split_direction(samples: List[DimSample]) -> Tuple[List[DimSample], List[DimSample]]:
@@ -276,6 +278,15 @@ def calibrate_region_scales(
         horizontal, vertical = _split_direction(in_region)
         scale_x = _cluster_scale(horizontal)
         scale_y = _cluster_scale(vertical)
+
+        # 铁塔工程图通常为等比例正交投影。当且仅当两个方向均有样本且某方向样本数量
+        # 明显占绝大多数（>= 2 倍且 >= 10 条）且另一方向受单线图/个别孤立标注干扰时，
+        # 才允许跨方向推断等比 scale。单侧完全无样本时严格保持原 overlay 值。
+        if horizontal and vertical:
+            if scale_y is not None and len(vertical) >= 10 and len(vertical) >= len(horizontal) * 2:
+                scale_x = scale_y
+            elif scale_x is not None and len(horizontal) >= 10 and len(horizontal) >= len(vertical) * 2:
+                scale_y = scale_x
 
         changed = False
         if scale_x is not None:

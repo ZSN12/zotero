@@ -110,3 +110,142 @@ class SymmetryEvidenceChainTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FitHalfWidthNotGtAlignedTest(unittest.TestCase):
+    """阶段3.2回归：生产路径 fit 半宽不得误标 gt_aligned（评测会误拒）。"""
+
+    def test_fit_half_width_does_not_mark_gt_aligned(self):
+        import json
+        from pathlib import Path
+        from traceability.intake.tower_symmetry import expand_4_face_symmetry_model
+        from traceability.io import load_model
+        # 构造最小模型（含 front 主腿立面），生产 spec 不注入 GT
+        # 直接检查 expand 后无 gt_aligned 标记
+        import tempfile, shutil
+        tmp = tempfile.mkdtemp()
+        try:
+            from traceability.model import EngineeringModel, Component
+            from traceability.model import SourceRef, SourceType
+            m = EngineeringModel(name="t")
+            m.add_component(Component(
+                id="drawing_file", name="t", kind="drawing_file",
+                source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+                properties={"drawing_view": "t", "view_mode": "single"},
+            ))
+            # 主腿立面节点（3 个主腿端点，足够拟合半宽）
+            m.add_component(Component(id="n1", name="n1", kind="tower_node",
+                source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+                properties={"x": 1000.0, "y": 0.0, "z": 0.0, "view_type": "front",
+                            "drawing_view": "t", "source_file": "t"}))
+            m.add_component(Component(id="n2", name="n2", kind="tower_node",
+                source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+                properties={"x": 800.0, "y": 0.0, "z": 1000.0, "view_type": "front",
+                            "drawing_view": "t", "source_file": "t"}))
+            m.add_component(Component(id="n3", name="n3", kind="tower_node",
+                source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+                properties={"x": 600.0, "y": 0.0, "z": 2000.0, "view_type": "front",
+                            "drawing_view": "t", "source_file": "t"}))
+            m.add_component(Component(id="b1", name="b1", kind="tower_bar",
+                source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+                properties={"bar_id": "105", "from_node": "n1", "to_node": "n2",
+                            "section": "L40X3", "view_type": "front",
+                            "drawing_view": "t", "source_file": "t"}))
+            m.add_component(Component(id="b2", name="b2", kind="tower_bar",
+                source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+                properties={"bar_id": "105", "from_node": "n2", "to_node": "n3",
+                            "section": "L40X3", "view_type": "front",
+                            "drawing_view": "t", "source_file": "t"}))
+            spec = {"enable_4_face_expansion": True, "use_gt_half_width": False}
+            expand_4_face_symmetry_model(m, spec)
+            for cid, c in m.components.items():
+                if c.kind in ("tower_bar", "tower_node"):
+                    self.assertFalse(c.properties.get("gt_aligned"),
+                                     f"{cid} 生产 fit 路径不得打 gt_aligned")
+            df = m.components["drawing_file"]
+            self.assertEqual(df.properties.get("half_width_source"), "fit")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class DerivedFromResolvableTest(unittest.TestCase):
+    """阶段4.3：mirrored 杆件 derived_from 指向 front 面物理杆件（可解析）。"""
+
+    def test_mirrored_derived_from_points_to_front(self):
+        from traceability.intake.tower_symmetry import expand_4_face_symmetry_model
+        from traceability.model import Component, EngineeringModel, SourceRef, SourceType
+        m = EngineeringModel(name="t")
+        m.add_component(Component(
+            id="drawing_file", name="df", kind="drawing_file",
+            source=SourceRef(SourceType.DRAWING, "x.dxf"),
+            properties={"view_kinds": ["front"]},
+        ))
+        # 4 节点矩形 + 3 段主腿（足够拟合半宽）
+        for nid, (x, z) in {"A": (-100.0, 0.0), "B": (100.0, 0.0),
+                            "C": (-80.0, 100.0), "D": (80.0, 100.0),
+                            "E": (-60.0, 200.0), "F": (60.0, 200.0)}.items():
+            m.add_component(Component(
+                id=nid, name=nid, kind="tower_node",
+                source=SourceRef(SourceType.DRAWING, "x.dxf"),
+                properties={"view_type": "front", "x": x, "z": z,
+                            "drawing_view": "t", "source_file": "t"},
+            ))
+        for bid, f, t in [("legL1", "A", "C"), ("legR1", "B", "D"),
+                          ("legL2", "C", "E"), ("legR2", "D", "F")]:
+            m.add_component(Component(
+                id=f"bar_{bid}", name=bid, kind="tower_bar",
+                source=SourceRef(SourceType.DRAWING, "x.dxf"),
+                properties={"bar_id": bid, "view_type": "front",
+                            "from_node": f, "to_node": t,
+                            "drawing_view": "t", "source_file": "t",
+                            "geometry_origin": "dxf_geom"},
+            ))
+        expand_4_face_symmetry_model(m, add_diaphragms=False, weld_corner_legs=False)
+        comps = m.components
+        all_ids = set(comps.keys())
+        mirrored = [c for c in comps.values()
+                    if c.kind == "tower_bar" and c.properties.get("geometry_class") == "reconstructed"]
+        self.assertGreater(len(mirrored), 0, "应有 mirrored 杆件")
+        for b in mirrored:
+            df = b.properties.get("derived_from")
+            self.assertIsNotNone(df, f"{b.id} 缺 derived_from")
+            self.assertIn(df, all_ids, f"{b.id} derived_from '{df}' 应可解析（指向 front 物理杆件）")
+
+
+class AppliesToRetargetTest(unittest.TestCase):
+    """阶段4.6：四面展开后 rules/dimensions 的 applies_to 不得悬空（M0 门槛：悬空引用为 0）。"""
+
+    def test_expand_retargets_rules_and_dimensions(self):
+        from traceability.intake.tower_symmetry import expand_4_face_symmetry_model
+        from traceability.io import validate_references
+        from traceability.model import Dimension, DimensionOrigin, Rule
+        m = _make_model()
+        # 注入规则与尺寸，applies_to 指向展开前的旧 bar/node ID
+        bar_ids = [c.id for c in m.components.values() if c.kind == "tower_bar"]
+        node_ids = [c.id for c in m.components.values() if c.kind == "tower_node"]
+        m.add_rule(Rule(
+            id="r_topology_closed", name="拓扑闭合", description="",
+            applies_to=bar_ids,
+        ))
+        m.add_rule(Rule(
+            id="r_node_fully_solved", name="节点三轴齐备", description="",
+            applies_to=node_ids,
+        ))
+        m.add_dimension(Dimension(
+            id="dim_bom_length_leg_l", name="BOM 长度", value=100.0, unit="mm",
+            origin=DimensionOrigin.MEASURED, applies_to="bar_leg_l",
+        ))
+        expand_4_face_symmetry_model(m, add_diaphragms=False, weld_corner_legs=False)
+        problems = validate_references(m)
+        self.assertEqual(
+            problems, [],
+            f"四面展开后 rules/dimensions 的 applies_to 不得悬空，实际 {len(problems)} 个：{problems[:5]}",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

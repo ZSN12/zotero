@@ -124,6 +124,11 @@ class BoltGlbTest(unittest.TestCase):
                 self.skipTest(str(exc))
             import trimesh
             scene = trimesh.load(str(glb), force="scene")
-            bars = sum(1 for c in model.components.values() if c.kind == "tower_bar")
+            from traceability.eval.metrics import is_physical_bar
+            # 阶段 9：physical 导出模式只导出物理杆件（排除 derived 派生展示几何）
+            bars = sum(
+                1 for c in model.components.values()
+                if c.kind == "tower_bar" and is_physical_bar(c.properties or {})
+            )
             self.assertGreaterEqual(len(scene.geometry), bars)
             self.assertGreater(bars, 0)

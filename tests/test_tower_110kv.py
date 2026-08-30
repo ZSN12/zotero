@@ -32,6 +32,8 @@ def tower_components(model, kind):
     return [c for c in model.components.values() if c.kind == kind]
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 class Tower110kVIntakeTest(unittest.TestCase):
     def setUp(self):
         self.dxf = EXAMPLES / "tower_110kv.dxf"

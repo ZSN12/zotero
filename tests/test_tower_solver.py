@@ -147,3 +147,71 @@ class SegmentBoundaryStitchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExportModeTest(unittest.TestCase):
+    """阶段9：physical / qa_all 导出模式分离（derived 派生几何不进 physical）。"""
+
+    def test_export_physical_excludes_derived_qa_all_includes(self):
+        from traceability.solve.tower_solver import _is_internal_helper, export_tower_glb, SolveError
+        from traceability.model import Component, EngineeringModel, SourceRef, SourceType
+        m = EngineeringModel(name="t")
+        # 一根物理杆 + 一根 derived 角腿
+        m.add_component(Component(
+            id="n1", name="n1", kind="tower_node",
+            source=SourceRef(SourceType.DRAWING, "x"),
+            properties={"x": 0.0, "y": 0.0, "z": 0.0},
+        ))
+        m.add_component(Component(
+            id="n2", name="n2", kind="tower_node",
+            source=SourceRef(SourceType.DRAWING, "x"),
+            properties={"x": 1000.0, "y": 0.0, "z": 0.0},
+        ))
+        m.add_component(Component(
+            id="n3", name="n3", kind="tower_node",
+            source=SourceRef(SourceType.DRAWING, "x"),
+            properties={"x": 0.0, "y": 1000.0, "z": 0.0},
+        ))
+        m.add_component(Component(
+            id="bar_phys", name="phys", kind="tower_bar",
+            source=SourceRef(SourceType.DRAWING, "x"),
+            properties={"from_node": "n1", "to_node": "n2", "section": "L40X3",
+                        "geometry_class": "recognized", "bar_id": "105"},
+        ))
+        m.add_component(Component(
+            id="bar_derived", name="derived", kind="tower_bar",
+            source=SourceRef(SourceType.DRAWING, "x"),
+            properties={"from_node": "n1", "to_node": "n3", "section": "L40X3",
+                        "corner_leg": True, "face": "corner", "bar_id": "999"},
+        ))
+        # _is_internal_helper 应识别 derived
+        self.assertTrue(_is_internal_helper(m.components["bar_derived"]))
+        self.assertFalse(_is_internal_helper(m.components["bar_phys"]))
+        # export_tower_glb physical 模式应只导出物理杆；qa_all 导出全部
+        import tempfile, shutil, os
+        tmp = tempfile.mkdtemp()
+        try:
+            p = os.path.join(tmp, "physical.glb")
+            export_tower_glb(m, p, strict=False, mode="physical")
+            import trimesh
+            scene = trimesh.load(p, force="scene")
+            # physical 模式：只 1 根物理杆（derived 被排除）
+            self.assertEqual(len(scene.geometry), 1)
+            q = os.path.join(tmp, "qa_all.glb")
+            export_tower_glb(m, q, strict=False, mode="qa_all")
+            scene2 = trimesh.load(q, force="scene")
+            # qa_all 模式：2 根杆（含 derived）
+            self.assertEqual(len(scene2.geometry), 2)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_export_unknown_mode_rejected(self):
+        from traceability.solve.tower_solver import export_tower_glb, SolveError
+        from traceability.model import EngineeringModel
+        m = EngineeringModel(name="t")
+        with self.assertRaises(SolveError):
+            export_tower_glb(m, "/tmp/x.glb", mode="bogus")
+
+
+if __name__ == "__main__":
+    unittest.main()

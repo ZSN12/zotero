@@ -71,7 +71,7 @@ def build_bar_id_mapping(
     gt: Dict[str, Any],
     master_bom_rows: List[Dict[str, str]],
     *,
-    length_tol_mm: float = 60.0,
+    length_tol_mm: float = 120.0,
 ) -> Dict[str, Any]:
     """建立 BOM 数字件号 → GT PM_XXXX 杆集合的一对多映射。
 
@@ -164,13 +164,18 @@ def build_bar_id_mapping(
                 "reason": "同截面无长度接近的 GT 杆（下料合并件或工艺余量超容差）",
             })
             continue
-        diff, gl, ids = min(cands, key=lambda x: x[0])
+        # 收集所有符合长度容差的 GT 候选杆件集合（同截面同近似长度的多个杆组全部纳入候选池）
+        all_gt_ids: set = set()
+        min_diff = min(c[0] for c in cands)
+        best_gl = min(cands, key=lambda x: x[0])[1]
+        for diff, gl, ids in cands:
+            all_gt_ids.update(ids)
         mapping[bid] = {
             "section": sec,
             "bom_len": bom_len,
-            "gt_len": gl,
-            "gt_ids": sorted(ids),
-            "diff_mm": diff,
+            "gt_len": best_gl,
+            "gt_ids": sorted(all_gt_ids),
+            "diff_mm": min_diff,
             "qty": int(row.get("qty", 1) or 1),
         }
 

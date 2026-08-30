@@ -62,48 +62,59 @@ def is_derived_bar(properties: Dict[str, Any]) -> bool:
     return False
 
 
-def is_recognized_bar(properties: Dict[str, Any]) -> bool:
+def is_recognized_bar(properties: Dict[str, Any], *, allow_legacy: bool = False) -> bool:
     """判断一根杆件是否为「直接识别」产物（进 recognition P/R）。
 
-    仅 evidence_status == "recognized"（或未标记但 geometry_origin 是 dxf/识别
-    来源、且非 derived/mirrored/canonical）的杆件才计入识别召回。
+    阶段1.5 fail-closed 语义：必须显式标记 geometry_class=recognized 才计入识别
+    召回；未标记语义（unknown）绝不默认视为 recognized。
+
+    allow_legacy=True（对应 CLI --allow-legacy-semantics）时才兼容旧模型的
+    evidence_status=recognized 回退。默认 False：正式评测只认 geometry_class。
+
+    判定优先级：
+        1. derived / canonical → False（排除）
+        2. geometry_class 显式声明 → 以其为准
+        3. allow_legacy=True 时：evidence_status=recognized → True；
+           mirrored/reconstructed → False
+        4. 均未声明（unknown）→ False（fail-closed）
     """
     if is_derived_bar(properties):
         return False
-    if properties.get("evidence_status") in ("mirrored", "reconstructed"):
-        return False
-    # GT 对齐 / canonical 权威拓扑：不是识别产物，不进 recognition P/R
     if is_canonical_bar(properties):
         return False
-    # 未标记 evidence_status 的杆件：按 geometry_origin 判断
-    origin = properties.get("geometry_origin")
-    if origin in DERIVED_ORIGINS:
-        return False
-    return True
+    cls = properties.get("geometry_class")
+    if cls is not None:
+        return cls == "recognized"
+    # 旧兼容（仅 allow_legacy=True 时生效）：evidence_status 显式声明时以其为准
+    if allow_legacy:
+        es = properties.get("evidence_status")
+        if es == "recognized":
+            return True
+        if es in ("mirrored", "reconstructed", "derived"):
+            return False
+    # 未标记任何语义（unknown）→ fail-closed，不默认 recognized
+    return False
 
 
-def is_reconstructed_bar(properties: Dict[str, Any]) -> bool:
+def is_reconstructed_bar(properties: Dict[str, Any], *, allow_legacy: bool = False) -> bool:
     """判断杆件是否为「确定性重建」产物（进 reconstructed/physical P/R，非识别）。
 
-    阶段0 语义冻结：reconstructed = 由识别结果经确定性求解/镜像展开重建的物理
-    杆件。包括：
-        * evidence_status == "mirrored"（B/L/R 镜像面）
-        * evidence_status == "reconstructed"（闭合边、拼接续接、对称补全）
-    排除 derived（corner_leg/diaphragm/center）与 canonical（GT 权威）。
+    阶段1.5 fail-closed：必须显式 geometry_class=reconstructed 才计入；
+    unknown 不默认。allow_legacy=True 时才兼容旧 evidence_status=mirrored/reconstructed。
 
-    注意：reconstructed 是 physical 杆件（真实物理结构），进 physical P/R；
-    但不进 recognition P/R（不是「识别」出来的）。
+    排除 derived（corner_leg/diaphragm/center）与 canonical（GT 权威）。
     """
     if is_derived_bar(properties):
         return False
     if is_canonical_bar(properties):
         return False
-    if properties.get("evidence_status") in ("mirrored", "reconstructed"):
-        return True
-    # 兼容旧数据：未标记 evidence_status 但 geometry_origin 是 derived_4face 的
-    # 非 derived 杆件（镜像展开产物）也算 reconstructed。
-    if properties.get("generated_4face") and not is_recognized_bar(properties):
-        return True
+    cls = properties.get("geometry_class")
+    if cls is not None:
+        return cls == "reconstructed"
+    # 旧兼容（仅 allow_legacy=True 时生效）
+    if allow_legacy:
+        if properties.get("evidence_status") in ("mirrored", "reconstructed"):
+            return True
     return False
 
 
@@ -118,30 +129,63 @@ def is_canonical_bar(properties: Dict[str, Any]) -> bool:
     return False
 
 
-def is_physical_bar(properties: Dict[str, Any]) -> bool:
+def _face_to_view(face: str) -> Optional[str]:
+    """四面展开杆件的 face 字段 → view 映射。
+
+    f → front；b/l/r → side（镜像侧视面）；corner/diaphragm/center → None（派生面）。
+    未展开模型使用 view_type 字段，不走此映射。
+    """
+    f = (face or "").strip().lower()
+    if f == "f":
+        return "front"
+    if f in ("b", "l", "r"):
+        return "side"
+    return None
+
+
+def is_physical_bar(properties: Dict[str, Any], *, allow_legacy: bool = False) -> bool:
     """物理杆件（进 physical P/R）：非 derived、非 canonical。
 
     physical = recognized + reconstructed（含 mirrored 镜像面）。
+    阶段1.5 fail-closed：排除 derived、canonical、以及未声明语义（unknown）。
     """
     if is_derived_bar(properties):
         return False
     if is_canonical_bar(properties):
         return False
-    return True
+    # 必须显式声明为 recognized 或 reconstructed 才进 physical
+    return is_recognized_bar(properties, allow_legacy=allow_legacy) or is_reconstructed_bar(properties, allow_legacy=allow_legacy)
 
 
 def model_has_gt_alignment(model: Dict[str, Any]) -> bool:
     """检测模型是否被 GT 对齐污染（阶段 0.2：评测拒绝 GT 泄漏）。
 
     任一 tower_bar / tower_node 的 properties.gt_aligned 为真即视为污染。
+    阶段1.8 加强：除 gt_aligned 外，还检测：
+        * geometry_class == "canonical"
+        * geometry_origin == "gim"
+        * source reference 指向 ground_truth / canonical
+
     正式评测必须在本函数返回 True 时退出失败。
     """
     comps = model.get("components") or {}
     if isinstance(comps, dict):
         for comp in comps.values():
+            if not isinstance(comp, dict):
+                continue
             props = comp.get("properties") if isinstance(comp, dict) else None
-            if isinstance(props, dict) and props.get("gt_aligned"):
-                return True
+            if isinstance(props, dict):
+                if props.get("gt_aligned"):
+                    return True
+                if props.get("geometry_class") == "canonical":
+                    return True
+                if props.get("geometry_origin") == "gim":
+                    return True
+            src = comp.get("source") if isinstance(comp, dict) else None
+            if isinstance(src, dict):
+                ref = str(src.get("reference", "") or "")
+                if "ground_truth" in ref or "canonical" in ref:
+                    return True
     df = model.get("drawing_file")
     if isinstance(df, dict) and (df.get("properties") or {}).get("gt_aligned"):
         return True
@@ -165,11 +209,35 @@ def _endpoint_dist_2d(a: Seg2D, b: Seg2D) -> float:
     return min(same, rev)
 
 
+def _midpoint_dist_2d(a: Seg2D, b: Seg2D) -> float:
+    """两线段中点距离。"""
+    ma = ((a[0] + a[2]) / 2.0, (a[1] + a[3]) / 2.0)
+    mb = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)
+    return math.hypot(ma[0] - mb[0], ma[1] - mb[1])
+
+
 def _angle_diff_2d(a: Seg2D, b: Seg2D) -> float:
-    da = math.atan2(a[3] - a[1], a[2] - a[0])
-    db = math.atan2(b[3] - b[1], b[2] - b[0])
-    d = abs(da - db)
-    return min(d, math.pi - d)
+    """两无向线段方向夹角（弧度，值域 [0, π/2]）。
+
+    用方向向量点积计算，避免 atan2 在跨越 ±π 时的符号翻转 bug：
+        * 0° 与 180°（同一无向方向）→ 0
+        * 179° 与 -179° → 约 2°
+        * 水平正向与水平反向 → 0
+        * 水平与垂直 → π/2
+    退化线段（长度 ~0）方向无定义，返回 π/2（视为不相似，交由上层拒绝）。
+    """
+    dxa, dya = a[2] - a[0], a[3] - a[1]
+    dxb, dyb = b[2] - b[0], b[3] - b[1]
+    la = math.hypot(dxa, dya)
+    lb = math.hypot(dxb, dyb)
+    if la <= 1e-9 or lb <= 1e-9:
+        return math.pi / 2.0
+    uax, uay = dxa / la, dya / la
+    ubx, uby = dxb / lb, dyb / lb
+    # 无向线段：点积取绝对值，使 0°/180° 等价
+    dot = abs(uax * ubx + uay * uby)
+    dot = max(-1.0, min(1.0, dot))
+    return math.acos(dot)
 
 
 def _length_ratio(a: Seg2D, b: Seg2D) -> float:
@@ -206,26 +274,53 @@ def _overlap_ratio(a: Seg2D, b: Seg2D) -> float:
 
 
 def segment_cost(a: Seg2D, b: Seg2D) -> float:
-    """综合代价（越小越相似），单位 mm。
+    """两线段综合代价（越小越相似），单位 mm。
 
-    组合：双端点距离（主项）+ 角度惩罚 + 长度比惩罚 + 重叠奖励。
-    代价无穷大表示不可能匹配（角度差 > 45° 或长度比 > 3）。
+    阶段 1.3 重构：先过硬门禁（角度/长度比/端点误差），不过返回 inf；
+    过门禁后 cost = 双端点距离（主项），不再用「重叠奖励乘系数」扭曲 cost，
+    避免 tolerance 语义被奖励项污染（tolerance 现在明确等于「每个对应端点的
+    最大允许误差」）。
+    """
+    gates = segment_gates(a, b)
+    if not gates["pass"]:
+        return float("inf")
+    # 过门禁后代价即端点误差（单位 mm），单调且非负
+    return gates["endpoint_error_mm"]
+
+
+def segment_gates(a: Seg2D, b: Seg2D) -> Dict[str, Any]:
+    """阶段 1.3：显式拆分代价与硬门禁。
+
+    返回五个几何量 + 是否通过硬门禁：
+        endpoint_error_mm   双端点距离（正反顺序取最小）
+        midpoint_error_mm   中点距离
+        angle_error_deg     无向方向夹角（角度）
+        length_ratio        长度比（归一化 >= 1）
+        overlap_ratio       共线重叠比例 [0,1]
+        pass                是否通过硬门禁（角度 <=45° 且长度比 <=3 且非退化）
     """
     end_dist = _endpoint_dist_2d(a, b)
     ang = _angle_diff_2d(a, b)
     lr = _length_ratio(a, b)
-    if ang > math.radians(45.0) or lr > 3.0:
-        return float("inf")
-    # 重叠奖励：重叠越多，双端点距离的权重越弱（碎片 vs 长杆）
     ov = _overlap_ratio(a, b)
-    cost = end_dist
-    # 角度惩罚：角度差每 10° 加 10% 端点距离
-    cost += end_dist * (ang / math.radians(10.0)) * 0.1
-    # 长度比惩罚
-    cost += end_dist * (lr - 1.0) * 0.1
-    # 重叠奖励：降低碎片化造成的端点距离虚高
-    cost *= (1.0 - 0.3 * ov)
-    return cost
+    # 退化线段（长度 ~0）拒绝匹配
+    la = _seg_len_2d(a)
+    lb = _seg_len_2d(b)
+    degenerate = (la <= 1e-9 or lb <= 1e-9)
+    passed = (
+        not degenerate
+        and ang <= math.radians(45.0)
+        and lr <= 3.0
+    )
+    return {
+        "endpoint_error_mm": end_dist,
+        "midpoint_error_mm": _midpoint_dist_2d(a, b),
+        "angle_error_deg": math.degrees(ang),
+        "length_ratio": lr,
+        "overlap_ratio": ov,
+        "degenerate": degenerate,
+        "pass": passed,
+    }
 
 
 def _seg_len_3d(a: Seg3D) -> float:
@@ -271,10 +366,15 @@ def hungarian_match(
     cost_fn,
     max_cost: float,
 ) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
-    """一对一最优匹配（scipy.linear_sum_assignment）。
+    """一对一最优匹配（scipy.linear_sum_assignment），支持 dummy 未匹配。
+
+    阶段 1.4：用 dummy 增广矩阵替代「max_cost*10 填充非法配对」。dummy 配对
+    代价固定为 dummy_cost（= max_cost，合法匹配上界），使 Hungarian 可显式选择
+    「不匹配」，而不会为降低总成本去牺牲合法匹配（大矩阵里 max_cost*10 填充
+    会让 solver 倾向把大量非法配对当 dummy 用，反而牺牲少数合法匹配）。
 
     返回 (matched_pairs, unmatched_gt_idx, unmatched_model_idx)。
-    max_cost 以上的匹配被丢弃（视为不匹配）。
+    匹配 cost >= max_cost 的配对视为不匹配（等价于配对到 dummy）。
     """
     n_gt, n_m = len(gt), len(model)
     if n_gt == 0 or n_m == 0:
@@ -282,28 +382,46 @@ def hungarian_match(
 
     import numpy as np
 
-    # 用一个大数（远大于 max_cost）替代 inf，避免 linear_sum_assignment 报
-    # "infeasible"；匹配后再把 cost >= max_cost 的对过滤掉（视为不匹配）。
-    big = max(max_cost * 10.0, 1.0)
-    cost = np.full((n_gt, n_m), big)
+    # dummy cost：一个合法匹配的最高代价。任何真实配对 cost >= max_cost 等价于
+    # 放弃匹配；dummy 配对统一用 max_cost，确保「匹配一个略低于 max_cost 的合法
+    # 对」总是优于「放弃」（因为真实配对 cost < max_cost < dummy）。
+    dummy_cost = max_cost
+
+    # 增广矩阵：(n_gt + n_m) x (n_m + n_gt)
+    #   左上 (n_gt x n_m)：真实配对代价（< max_cost 才填，否则 dummy_cost）
+    #   右上 (n_gt x n_gt)：GT 配对到 dummy model（未匹配 GT）
+    #   左下 (n_m x n_m)：dummy GT 配对到 model（未匹配 model）
+    #   右下 (n_m x n_gt)：dummy-dummy（恒 0，无意义但需填满）
+    N = n_gt + n_m
+    cost = np.full((N, N), 0.0)
+    # 主匹配区 + dummy 区统一先填 dummy_cost（代表「不匹配」的代价）
+    cost[:, :] = dummy_cost
+
+    # 左上：真实配对（仅当 cost < max_cost 才值得匹配，否则保持 dummy_cost）
     for i, g in enumerate(gt):
         for j, m in enumerate(model):
             c = cost_fn(g, m)
             if c < max_cost:
                 cost[i, j] = c
 
+    # 左下（dummy GT -> model）：未匹配 model，代价 dummy_cost（已填）
+    # 右上（GT -> dummy model）：未匹配 GT，代价 dummy_cost（已填）
+    # 右下（dummy-dummy）：恒 0，使多余的 dummy 行/列能互相配对而不产生额外代价
+    cost[n_gt:, n_m:] = 0.0
+
     from scipy.optimize import linear_sum_assignment
     row_ind, col_ind = linear_sum_assignment(cost)
 
     matched = []
-    used_m = set()
     for i, j in zip(row_ind, col_ind):
-        if cost[i, j] < max_cost:
+        # 只保留「真实 GT <-> 真实 model」且代价 < max_cost 的配对
+        if i < n_gt and j < n_m and cost[i, j] < max_cost:
             matched.append((int(i), int(j)))
-            used_m.add(int(j))
 
-    unmatched_gt = [i for i in range(n_gt) if i not in {p[0] for p in matched}]
-    unmatched_m = [j for j in range(n_m) if j not in used_m]
+    matched_gt = {i for i, _ in matched}
+    matched_m = {j for _, j in matched}
+    unmatched_gt = [i for i in range(n_gt) if i not in matched_gt]
+    unmatched_m = [j for j in range(n_m) if j not in matched_m]
     return matched, unmatched_gt, unmatched_m
 
 
@@ -362,29 +480,46 @@ def bars_from_model_2d(
     *,
     view: Optional[str] = None,
     mode: str = "physical",
+    allow_legacy: bool = False,
 ) -> List[Tuple[Seg2D, Dict[str, Any]]]:
     """从 model.json 提取 2D 杆件。
 
     mode="recognition"：仅 recognized（直接识别，排除 mirrored/derived）——A2 几何检测。
     mode="physical"：非 derived（含 mirrored 镜像面）——M3 物理重建。
+    allow_legacy=True（--allow-legacy-semantics）：兼容旧 evidence_status 语义。
     返回 [( (x1,y1,x2,y2), properties ), ...]。
     """
     if mode not in ("recognition", "physical"):
         raise ValueError(f"未知 mode={mode}，应为 recognition|physical")
-    filter_fn = is_recognized_bar if mode == "recognition" else is_physical_bar
+    if mode == "recognition":
+        def filter_fn(p):
+            return is_recognized_bar(p, allow_legacy=allow_legacy)
+    else:
+        def filter_fn(p):
+            return is_physical_bar(p, allow_legacy=allow_legacy)
     comps = model.get("components", {})
     nodes = {cid: c for cid, c in comps.items() if c.get("kind") == "tower_node"}
     out: List[Tuple[Seg2D, Dict[str, Any]]] = []
-    dedup: set = set()
     for cid, c in comps.items():
         if c.get("kind") != "tower_bar":
             continue
         p = c.get("properties", {})
         if not filter_fn(p):
             continue
-        vt = p.get("view_type")
-        if view is not None and vt is not None and vt != view:
-            continue
+        # 阶段1.6 严格 view 过滤：指定 view 时，必须显式匹配。
+        # view_type 缺失时回退到 face 字段映射（f→front, b/l/r→side 等）。
+        # 两者都缺失 → unknown_view（不得静默进入指定 view 指标）。
+        if view is not None:
+            vt = p.get("view_type")
+            face = p.get("face")
+            # face → view 映射：四面展开后杆件只有 face，无 view_type
+            resolved = None
+            if vt is not None:
+                resolved = vt
+            elif face is not None:
+                resolved = _face_to_view(str(face))
+            if resolved is None or resolved != view:
+                continue
         f, t = p.get("from_node"), p.get("to_node")
         nf = nodes.get(f) if f else None
         nt = nodes.get(t) if t else None
@@ -405,10 +540,9 @@ def bars_from_model_2d(
         seg = (float(x1), float(y1), float(x2), float(y2))
         if (seg[0], seg[1]) > (seg[2], seg[3]):
             seg = (seg[2], seg[3], seg[0], seg[1])
-        key = (round(seg[0]), round(seg[1]), round(seg[2]), round(seg[3]))
-        if key in dedup:
-            continue
-        dedup.add(key)
+        # 阶段 1.7：不按 round() 坐标静默去重（会吞掉投影重合的不同物理杆）。
+        # 每个 component 都是独立物理杆件（physical identity = cid），投影重合
+        # 的多根物理杆应保留 multiplicity，不做坐标去重。
         out.append((seg, p))
     return out
 
@@ -417,14 +551,21 @@ def bars_from_model_3d(
     model: Dict[str, Any],
     *,
     mode: str = "physical",
+    allow_legacy: bool = False,
 ) -> List[Tuple[Seg3D, Dict[str, Any]]]:
     """从 model.json 提取 3D 杆件。
 
     mode="recognition"：仅 recognized；mode="physical"：非 derived（含 mirrored）。
+    allow_legacy=True（--allow-legacy-semantics）：兼容旧 evidence_status 语义。
     """
     if mode not in ("recognition", "physical"):
         raise ValueError(f"未知 mode={mode}，应为 recognition|physical")
-    filter_fn = is_recognized_bar if mode == "recognition" else is_physical_bar
+    if mode == "recognition":
+        def filter_fn(p):
+            return is_recognized_bar(p, allow_legacy=allow_legacy)
+    else:
+        def filter_fn(p):
+            return is_physical_bar(p, allow_legacy=allow_legacy)
     comps = model.get("components", {})
     nodes: Dict[str, Tuple[float, float, float]] = {}
     for cid, c in comps.items():
@@ -446,9 +587,13 @@ def bars_from_model_3d(
 
 
 def gt_bars_2d(gt: Dict[str, Any], view: str) -> List[Tuple[Seg2D, str, str]]:
-    """GT 3D 杆件投影到 2D（去重），返回 [(seg, bar_id, section)]。"""
+    """GT 3D 杆件投影到 2D，返回 [(seg, bar_id, section)]。
+
+    阶段 1.7：不按 round() 坐标去重。每根 GT 杆件有唯一物理 ID（bar["id"]），
+    投影重合的多根物理杆（如正立面前后重叠的对称杆）应保留 multiplicity，
+    不做坐标静默去重。
+    """
     nodes = gt["nodes"]
-    seen: set = set()
     out = []
     for b in gt["bars"]:
         f = nodes.get(b["from"]); t = nodes.get(b["to"])
@@ -462,10 +607,6 @@ def gt_bars_2d(gt: Dict[str, Any], view: str) -> List[Tuple[Seg2D, str, str]]:
             raise ValueError(f"未知视图 {view}")
         if (x1, z1) > (x2, z2):
             x1, z1, x2, z2 = x2, z2, x1, z1
-        key = (round(x1), round(z1), round(x2), round(z2))
-        if key in seen:
-            continue
-        seen.add(key)
         out.append(((x1, z1, x2, z2), b["id"], b.get("section", "")))
     return out
 
@@ -491,11 +632,12 @@ def eval_a2_geometry_2d(
     model: Dict[str, Any],
     view: str = "front",
     tols: Sequence[float] = DEFAULT_TOLS,
+    allow_legacy: bool = False,
 ) -> Dict[str, Any]:
     """A2 几何检测（2D 投影）：GT 投影 vs 模型物理 2D 杆件。"""
     g = gt_bars_2d(gt, view)
     # A2 几何检测 = recognition 评测：只算直接识别的杆件（排除 mirrored/derived）
-    m = bars_from_model_2d(model, view=view, mode="recognition")
+    m = bars_from_model_2d(model, view=view, mode="recognition", allow_legacy=allow_legacy)
     gt_segs = [s for s, _, _ in g]
     model_segs = [s for s, _ in m]
     result = eval_segment_pr(gt_segs, model_segs, segment_cost, tols)
@@ -544,21 +686,26 @@ def eval_m3_physical_3d(
         }
         for t in ("leg", "diagonal", "horizontal", "degenerate")
     }
-    # 语义分解（阶段0）：physical = recognized + reconstructed，分别统计召回缺口，
-    # 用于区分「识别召回瓶颈」与「重建召回瓶颈」，不互相冒充。
+    # 语义分解（阶段1.9）：physical = recognized + reconstructed。
+    # 只输出「可真实计算」的计数/精度分解，不伪造 missed/recall（无法判定
+    # 某个 FN 应归属 recognized 还是 reconstructed，因为 GT 无此语义标签）。
+    matched_model_idx = {mj for _, mj in result["matched_at_default"]}
     sem = {"recognized": 0, "reconstructed": 0}
-    sem_missed = {"recognized": 0, "reconstructed": 0}
-    for cid, c in model.get("components", {}).items():
-        if c.get("kind") != "tower_bar":
-            continue
-        p = c.get("properties", {})
+    sem_matched = {"recognized": 0, "reconstructed": 0}
+    for mi, (seg, p) in enumerate(m):
         if is_recognized_bar(p):
             sem["recognized"] += 1
+            if mi in matched_model_idx:
+                sem_matched["recognized"] += 1
         elif is_reconstructed_bar(p):
             sem["reconstructed"] += 1
-    result["model_semantic"] = sem
-    result["recall_by_semantic"] = {
-        s: {"count": sem[s], "missed": sem_missed[s]} for s in sem
+            if mi in matched_model_idx:
+                sem_matched["reconstructed"] += 1
+    result["model_count_by_semantic"] = sem
+    result["matched_model_count_by_semantic"] = sem_matched
+    result["precision_by_semantic"] = {
+        s: round(sem_matched[s] / sem[s], 4) if sem[s] else 0.0
+        for s in ("recognized", "reconstructed")
     }
     return result
 
@@ -581,7 +728,13 @@ def _classify_3d(seg: Seg3D) -> str:
 # --------------------------------------------------------------------------- #
 
 def _label_ids(gt: Dict[str, Any]) -> set:
-    """GT 件号集合（bar id 去重）。"""
+    """GT 件号集合（bar id 去重）。
+
+    注意（阶段2.1）：GT bar.id 是物理杆件 ID（PM_XXXX），不是图纸可见件号。
+    A1 评测的「图纸可见件号」应由 caller 通过 gt_label_ids 参数显式传入
+    （来自标注图纸 GT 或 master BOM 件号集合），而不是直接用 PM_XXXX。
+    此函数仅作为「无 BOM 时的回退」，语义上已不推荐用于 A1。
+    """
     return {b.get("id") for b in gt.get("bars", []) if b.get("id")}
 
 
@@ -606,15 +759,24 @@ def eval_a1_labels(
     model: Dict[str, Any],
     *,
     id_mapping: Optional[Dict[str, str]] = None,
+    gt_label_ids: Optional[set] = None,
 ) -> Dict[str, Any]:
-    """A1 件号识别：GT 件号集合 vs 模型识别件号集合（Exact Match）。
+    """A1 件号识别：图纸可见件号集合 vs 模型识别件号集合（Exact Match）。
 
-    id_mapping：图纸数字件号（105/108/...）→ GT 件号（PM_XXXX）的映射表。
-    若提供，模型件号先映射到 GT 命名空间再比较；否则直接字符串比较。
+    阶段2.1 GT 语义修正：
+        * gt_label_ids：图纸可见件号集合（来自标注图纸 GT 或 master BOM 件号）。
+          这是 A1 的正确 GT 基准，不是 GT 物理 ID（PM_XXXX）。
+        * 未传 gt_label_ids 时回退到 gt bar.id（物理 ID），语义上仅用于调试。
+
+    id_mapping：图纸数字件号 → 物理 ID 的一对多映射（build_bar_id_mapping 产物），
+    用于「物理 ID 映射」口径，不用于 A1 的 Exact Match 主口径。
 
     注意：A1 只评测「件号是否被识别出来」，不评测几何位置（那是 A2/A3 的职责）。
     """
-    gt_ids = _label_ids(gt)
+    if gt_label_ids is not None:
+        gt_ids = set(gt_label_ids)
+    else:
+        gt_ids = _label_ids(gt)
     model_ids = _model_label_ids(model)
     if id_mapping:
         mapped = {id_mapping.get(m, m) for m in model_ids}
@@ -641,6 +803,7 @@ def eval_a3_association(
     tols: Sequence[float] = DEFAULT_TOLS,
     *,
     id_mapping: Optional[Dict[str, str]] = None,
+    allow_legacy: bool = False,
 ) -> Dict[str, Any]:
     """A3 件号关联：几何匹配对中，件号是否也正确关联到对应杆件。
 
@@ -650,7 +813,7 @@ def eval_a3_association(
     注意：本指标依赖几何匹配（A2），但不与 A2 的几何 P/R 混算——它是独立的口径。
     """
     g = gt_bars_2d(gt, view)
-    m = bars_from_model_2d(model, view=view, mode="recognition")
+    m = bars_from_model_2d(model, view=view, mode="recognition", allow_legacy=allow_legacy)
     gt_segs = [s for s, _, _ in g]
     model_segs = [s for s, _ in m]
     result = eval_segment_pr(gt_segs, model_segs, segment_cost, tols)
@@ -662,7 +825,15 @@ def eval_a3_association(
         if not mid or str(mid).startswith("UNLABELED"):
             continue
         if id_mapping:
-            mid = id_mapping.get(str(mid), str(mid))
+            target_ids = id_mapping.get(str(mid))
+            if isinstance(target_ids, (set, list, tuple)):
+                if str(gid) in [str(x) for x in target_ids]:
+                    correct += 1
+                    continue
+            elif target_ids is not None:
+                if str(gid) == str(target_ids):
+                    correct += 1
+                    continue
         if str(gid) == str(mid):
             correct += 1
     n = len(matched)

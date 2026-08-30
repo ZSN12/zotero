@@ -19,6 +19,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from .cli_exit import status_to_exit, EXIT_FAILED, EXIT_REVIEW_REQUIRED
 from .graph import invalidate, stale_report
 from .io import load_model, render_report, save_model, validate_references, validate_against_schema
 from .model import ValidationStatus, Staleness
@@ -466,10 +467,10 @@ def cmd_deliver_project(args):
     asm = result.get("assembly") or {}
     if asm.get("enabled"):
         print(f"  assembly -> mode={asm.get('mode')} modules={asm.get('module_ids')}")
-    # P0-2 失败传播：verified → 0，review_required → 2，failed → 1。
+    # 阶段 8.6：退出码统一走 cli_exit.status_to_exit（verified→0 / failed→1 /
+    # review_required→2），禁止在此硬编码，避免与测试/计划 §8.6 分叉。
     status = result.get("status", "failed")
-    _exit = {"verified": 0, "review_required": 2, "failed": 1}.get(status, 1)
-    sys.exit(_exit)
+    sys.exit(status_to_exit(status))
 
 
 def cmd_intake_tower_batch(args):
@@ -551,6 +552,11 @@ def cmd_deliver_tower(args):
         allow_scan=args.allow_scan,
         allow_derived_y=args.allow_derived_y,
         format=args.format,
+        # 阶段 10：deprecated 包装器全量转发（补齐与 run-tower 一致）
+        scale=getattr(args, "scale", None),
+        mm_per_px=getattr(args, "mm_per_px", None),
+        input_dir=getattr(args, "input_dir", None),
+        use_ocr_fallback=not getattr(args, "no_ocr_fallback", False),
         agent_mode=getattr(args, "agent_mode", "ezdxf"),
     )
     if not result.get("ok"):
@@ -558,7 +564,8 @@ def cmd_deliver_tower(args):
         for st in result["graph"].steps:
             if st.status == "failed":
                 print(f"  - {st.id}: {st.error}")
-        sys.exit(1)
+        # 阶段 8.6：失败统一返回 EXIT_FAILED=1（failed→1）。
+        sys.exit(EXIT_FAILED)
 
     # 补交付件（run_tower 已写 model/steps/summary/report/glb）
     out_dir = Path(args.out_dir)
@@ -775,6 +782,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_deliver.add_argument("--allow-derived-y", action="store_true",
                            help="允许已复核的 z-peer 插值 y 进入 GLB 导出")
     p_deliver.add_argument("--format", choices=["obj", "glb"], default="glb")
+    # 阶段 10：deprecated 包装器全量转发——补齐与 run-tower 一致的参数，
+    # 避免旧命令因缺参而静默丢失 scale/mm_per_px/input_dir/ocr_fallback。
+    p_deliver.add_argument("--scale", help="扫描图比例尺")
+    p_deliver.add_argument("--mm-per-px", type=float, help="扫描图 mm/px")
+    p_deliver.add_argument("--no-ocr-fallback", action="store_true",
+                           help="扫描图 A1 件号 OCR 不用 Tesseract 兜底")
+    p_deliver.add_argument("--input-dir", help="批量模式：目录内全部 DWG/DXF（A3）")
     p_deliver.add_argument("--agent-mode", choices=["ezdxf", "hybrid"], default="ezdxf",
                            help="单文件 DXF 几何后端：ezdxf（默认）/ hybrid（MLLM Agent 链）")
     p_deliver.set_defaults(func=cmd_deliver_tower)

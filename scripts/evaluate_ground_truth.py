@@ -37,6 +37,10 @@ def main():
     ap.add_argument("gt", help="GT json 路径")
     ap.add_argument("model", help="管线输出 model.json")
     ap.add_argument("--view", choices=["front", "side"], default="front")
+    ap.add_argument("--bom", default=None,
+                    help="master BOM csv（含 bar_id 列），A1 的图纸件号 GT 基准")
+    ap.add_argument("--allow-legacy-semantics", action="store_true",
+                    help="兼容旧模型 evidence_status 语义（正式评测应禁用，默认 fail-closed）")
     ap.add_argument("--tol", type=float, default=None,
                     help="兼容旧参数；评测改用 tolerance sweep，忽略单点 tol")
     args = ap.parse_args()
@@ -49,9 +53,28 @@ def main():
         print("  该模型只能用于调试/误差分析，不得作为正式指标。")
         sys.exit(3)
 
-    result = eval_a2_geometry_2d(gt, model, view=args.view, tols=DEFAULT_TOLS)
+    # 阶段2.1：A1 的 GT 件号基准 = 图纸/BOM 可见件号（非物理 ID PM_XXXX）
+    gt_label_ids = None
+    id_mapping = None
+    if args.bom and Path(args.bom).exists():
+        import csv as _csv
+        from traceability.project.bar_id_mapping import build_bar_id_mapping
+        _bom_rows = list(_csv.DictReader(
+            Path(args.bom).read_text(encoding="utf-8-sig").splitlines()))
+        gt_label_ids = {str(r.get("bar_id", "")).strip() for r in _bom_rows
+                        if str(r.get("bar_id", "")).strip()}
+        _map_res = build_bar_id_mapping(gt, _bom_rows)
+        # 支持多对多集合映射
+        id_mapping = {}
+        for bid, d in _map_res.get("mapping", {}).items():
+            gids = d.get("gt_ids", [])
+            if gids:
+                id_mapping[bid] = gids
 
-    print(f"=== Ground Truth 2D 评测（{args.view} 投影，Hungarian 一对一匹配）===")
+    result = eval_a2_geometry_2d(gt, model, view=args.view, tols=DEFAULT_TOLS,
+                                 allow_legacy=args.allow_legacy_semantics)
+
+    print(f"=== A2 几何检测（{args.view} 投影，Hungarian 一对一匹配）===")
     print(f"GT 投影杆件（去重后）: {result['n_gt']}")
     print(f"模型物理杆件（排除 derived）: {result['n_model']}")
     print()
@@ -61,6 +84,13 @@ def main():
         print(f"{s['tol']:>8.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
               f"{s['precision']:>10.1%} {s['recall']:>10.1%}")
 
+    # A3 关联评测（几何匹配对中的件号是否正确关联）
+    a3 = eval_a3_association(gt, model, view=args.view, id_mapping=id_mapping,
+                             allow_legacy=args.allow_legacy_semantics)
+    print(f"\n=== A3 件号关联（几何匹配对中）===")
+    print(f"匹配对: {a3['matched_pairs']}，正确关联: {a3['correct_association']}，"
+          f"关联率: {a3['association_rate']:.1%}")
+
     # 件号 Exact Match（匹配对中，A1 标签 + A3 关联产物）
     lem = result.get("label_exact_match", {})
     if lem.get("matched"):
@@ -68,11 +98,15 @@ def main():
     else:
         print("\n件号 Exact Match: 无匹配对")
 
-    # A1 件号识别（独立口径：GT 件号集合 vs 模型识别件号集合）
-    a1 = eval_a1_labels(gt, model)
+    # A1 件号识别（独立口径：图纸/BOM 件号集合 vs 模型识别件号集合）
+    a1 = eval_a1_labels(gt, model, gt_label_ids=gt_label_ids)
     print(f"\n=== A1 件号识别（独立于几何匹配）===")
-    print(f"GT 件号: {a1['n_gt']}，模型识别件号: {a1['n_model']}，"
-          f"Exact Match: {a1['tp']}（P={a1['precision']:.1%} R={a1['recall']:.1%}）")
+    if gt_label_ids is not None:
+        print(f"图纸件号（BOM）: {a1['n_gt']}，模型识别件号: {a1['n_model']}，"
+              f"Exact Match: {a1['tp']}（P={a1['precision']:.1%} R={a1['recall']:.1%}）")
+    else:
+        print(f"GT 件号: {a1['n_gt']}，模型识别件号: {a1['n_model']}，"
+              f"Exact Match: {a1['tp']}（P={a1['precision']:.1%} R={a1['recall']:.1%}）")
 
 
 if __name__ == "__main__":

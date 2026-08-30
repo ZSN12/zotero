@@ -74,11 +74,13 @@ DEFAULT_BAR_ID_PATTERNS = [
 
 # P1：件号候选排除正则（匹配到则整条文字不作为件号来源）。
 # 分别排除：材质 Q235/Q345/Q420、角钢截面 L40X3/L100X7、
-# 螺栓标注 M16X40 / 1M16X40 / 2M16X50 等（避免把尺寸/材质/螺栓当件号贴杆）。
+# 螺栓标注 M16X40 / 1M16X40 / 2M16X50 等（避免把尺寸/材质/螺栓当件号贴杆）；
+# 排除前导负号/加号的切角/下料加工标注（如 -40, -55, +30）。
 _BAR_ID_EXCLUDE_RES = [
     re.compile(r"Q\s?(?:235|345|420)", re.IGNORECASE),          # 材质
     re.compile(r"L\s?\d{1,3}\s*[Xx×*]\s*\d+", re.IGNORECASE),  # 截面
     re.compile(r"(?:\d+)?M\s?\d{1,3}\s*[Xx×*]\s*\d+", re.IGNORECASE),  # 螺栓
+    re.compile(r"^[-+]\d+$"),                                   # 加工切角/下料长度偏移 (-40, -55 等)
 ]
 
 # P2：截面型号提取正则（Phase 2 填充杆件 section）。
@@ -1091,6 +1093,11 @@ def extract_tower_from_dxf(
         layer = getattr(e.dxf, "layer", "0")
         if not _layer_hit(layer, lm["text_layers"]):
             continue
+        h = float(getattr(e.dxf, "height", 0.0) or 0.0)
+        # 排除 2.5mm 及以下尺寸/下料长度文字（纯件号标注字高通常为 2.8~3.5mm）
+        # 如果 layer 是 '0' 且字高明显为小尺寸标注 (h < 2.8)，跳过以避免将长度/切角值误贴为件号
+        if layer == "0" and 0 < h < 2.75:
+            continue
         if e.dxftype() == "TEXT":
             texts.append({
                 "text": e.dxf.text,
@@ -1252,6 +1259,26 @@ def extract_tower_from_dxf(
             "drawing_view": stem,
             "source_file": stem,
             "geometry_origin": "dxf_geom",
+            # 阶段 4.1/4.2：每根 recognized 杆件必须携带自包含证据引用，
+            # 不依赖被后续四面展开删除的二维组件 ID。字段稳定、可解析：
+            #   sheet_id / view_id / view_type / source_component_id /
+            #   source_reference / geometry_origin / confidence
+            # source_component_id 用 DXF 实体 handle（稳定、展开后不变化），
+            # 而非模型组件 ID（展开会重命名 4f_...，导致悬空）。
+            "projection_refs": [{
+                "sheet_id": stem,
+                "view_id": f"{stem}__{vk}",
+                "view_type": vk,
+                "source_component_id": str(handle),
+                "source_reference": dxf_path,
+                "region_id": seg.get("region"),
+                "geometry_origin": "dxf_geom",
+                "confidence": conf,
+                "provider": "ezdxf",
+                "model": None,
+                "prompt_sha": None,
+                "call_id": None,
+            }],
         }
         if handle in handle_label_dist:
             properties["label_distance"] = round(handle_label_dist[handle], 2)

@@ -729,12 +729,12 @@ def merge_view_coordinates(
             node_stem = p.get("drawing_view") or stem
             z_off = view_z_offset(str(node_stem), "front", overlay=overlay)
             span_mm = view_z_span_mm(str(node_stem), "front", overlay=overlay)
-            lo, hi = seg_span.get(node_stem, (float(uz), float(uz)))
-            if span_mm is not None and hi > lo:
-                # 线性归一化到标注段高：几何 [lo,hi] -> [0, span_mm]
-                local = (float(uz) - lo) / (hi - lo) * span_mm
-            else:
-                local = float(uz) - lo
+            # 阶段3.1：分段立面图 Z 映射。
+            # 若 view_y 本身已在 region 局部坐标中（origin 在段底部，即 min_y 对应 Z=0），
+            # 直接 uz_global = z_off + float(uz)。
+            # 只有当 view_y 跨度严重漂移时，才做归一化。
+            # 直接使用真实的图纸几何毫米偏移，避免极值碎片拉扯整段高程。
+            local = float(uz)
             uz_global = z_off + local
             # 尝试从 plan 视图按 x 就近取 y（四向镜像前只是参考，展开会重算）
             y = 0.0

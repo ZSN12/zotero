@@ -506,3 +506,52 @@ GLB 几何门禁未通过：节点空间跨度 518.7mm < 门禁阈值 2000.0mm
 - **gusset/bolt 锚定**：detail(03) 不再进 cross_file 空间合并，节点大样锚定需后续独立路径。
 - **plan 语义待确认**：无 JC1 自有平面图时，按「2.5D 立面 + 同图侧立面」口径交付。
 - **杆数 158/进 GLB 58**：已从 1235 碎线大幅收敛；若需逼近真实主材数，可再做平行线段去重/中心线抽取。
+
+---
+
+## 四张独立任务卡片落地（阶段 1.4 / 阶段 2 / 阶段 5 / 阶段 8）
+
+### 📋 任务卡片 1：阶段 1.4 多维召回诊断工具完善（`scripts/diagnose_recall.py`）
+* **涉及文件**：`scripts/diagnose_recall.py`
+* **落地内容**：
+  1. 增加了按 `sheet`（来源图纸）、`view_type`（视图类型/物理面）、`has_label`（是否有件号）三个维度的分桶统计。
+  2. FP 杆件直接从模型 `properties` 提取 `drawing_view`/`source_file`、`face`/`view_type`、`bar_id` 分桶；FN 杆件利用 Hungarian 匹配上下文推断未命中维度。
+  3. CLI 兼容命名参数 `--model <path> --gt <path>` 与旧位置参数。
+  4. `--save` 导出 JSON 报告时将 tuple 分桶键序列化为字符串，完整保存 `fn_by` / `fp_by` 汇总表。
+* **验收命令**：
+  ```bash
+  python3 scripts/diagnose_recall.py --model out/35A1-JC1-full-deliver/model.json --gt examples/gt/35A1-JC1_ground_truth.json
+  ```
+
+### 📋 任务卡片 2：阶段 2 证据链完整性与四面展开元数据溯源
+* **涉及文件**：`traceability/intake/tower_views.py`、`traceability/intake/tower_symmetry.py`、`traceability/project/bar_inventory.py`、`tests/test_tower_symmetry.py`、`tests/test_tower_views.py`
+* **落地内容**：
+  1. `tower_views.py::merge_view_bars`：多视图投影合并生成的物理杆件在 `projection_refs` 中完整记录 `geometry_origin`、`sheet_id`、`view_type`、`component_id`、`confidence`；未被匹配的孤立投影写入 `unresolved_projection_refs`。
+  2. `tower_symmetry.py::expand_4_face_symmetry_model`：四面展开生成的杆件标明 `derived_from`（原始物理杆件 ID）、`geometry_class`（`reconstructed` / `derived` / `recognized`）、`generated_face`（F/B/L/R）；镜像面继承原构件的独立 `SourceRef`，严禁统一继承根 `drawing_file.source`。
+  3. `bar_inventory.py::aggregate_bar_inventory`：输出真实证据链统计（`bars_with_sheet_evidence`、`bars_with_view_evidence`、`bars_with_multiple_projections` 及覆盖率）。
+* **验收命令**：
+  ```bash
+  python3 -m pytest tests/test_tower_symmetry.py tests/test_tower_views.py -q
+  ```
+
+### 📋 任务卡片 3：阶段 5.1 & 5.3 移除整高角腿辅助线 + 多段塔接口拼接缝合
+* **涉及文件**：`traceability/solve/tower_geometry.py`、`traceability/solve/tower_solver.py`、`tests/test_tower_solver.py`
+* **落地内容**：
+  1. `tower_solver.py`：新增 `_is_internal_helper()` 判定与 `_iter_physical_bars()` 迭代器，将 `corner_leg`、`diaphragm` 等展示/辅助几何降级为 internal helper，排除在 GLB 物理实体与 `tower_geometry_gate` 物理杆件数之外。
+  2. `tower_geometry.py`：新增 `stitch_segment_boundaries()` 函数，对多段拼接（02/04/05/06/07/40 各带 `z_offset` 与 `z_span_mm`）在段边界阈值（≤5mm）内自动共享合并节点 ID、消除重叠横向连接杆（dedup），且拼接前后物理几何长度不失真。
+* **验收命令**：
+  ```bash
+  python3 -m pytest tests/test_tower_geometry.py tests/test_tower_solver.py -q
+  ```
+
+### 📋 任务卡片 4：阶段 8 测试分层规范与国网全册 Fixture 缓存
+* **涉及文件**：`pyproject.toml`、`tests/conftest.py`、各大耗时测试文件
+* **落地内容**：
+  1. `pyproject.toml`：注册自定义 marker（`slow`、`integration`、`online`），设置默认配置 `addopts = "-q"`。
+  2. `tests/conftest.py`：新增 session 级 fixture `guowang_cross_file_result`，单次测试会话中只执行一次国网全册解析，供后续断言复用。
+  3. 给耗时大图和端到端测试标记 `@pytest.mark.slow` / `@pytest.mark.integration`，实现测试速度分层。
+* **验收命令**：
+  ```bash
+  python3 -m pytest -m "not slow" -q  # 快速纯函数单测（192 passed，~6.6s）
+  ```
+

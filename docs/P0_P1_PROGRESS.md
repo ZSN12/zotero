@@ -160,8 +160,25 @@ Recall 低是**结构性的**：图纸只画了塔的**右半**（关于 x=34735
 - `test_tower_geometry.py`：`_align_matrix` 杆轴映射 + 杆端落节点 <1mm 回归。
 - 全量 **172 passed**。
 
-## 六、环境说明
+## 六、四张独立任务卡片完成记录（阶段 1.4 / 阶段 2 / 阶段 5 / 阶段 8）
+
+1. **阶段 1.4（`scripts/diagnose_recall.py`）**：
+   - 增加 `sheet`（来源图纸）、`view_type`（视图类型/面）、`has_label`（是否有件号）三维 FN/FP 分桶统计。
+   - 统一 CLI 命名参数 `--model <path> --gt <path>`，`--save` JSON 报告完整保留分桶表。
+2. **阶段 2（证据链与对称元数据溯源）**：
+   - `tower_views.py` 补充 `projection_refs` 的 `geometry_origin` 与 `unresolved_projection_refs`。
+   - `tower_symmetry.py` 明确 `geometry_class`（`reconstructed` / `derived` / `recognized`），镜像面继承原构件 SourceRef。
+   - `bar_inventory.py` 增加真实图册级证据链统计。
+3. **阶段 5.1 & 5.3（角腿降级 + 多段拼接缝合）**：
+   - `tower_solver.py` 将 `corner_leg` / `diaphragm` 降级为 internal helper，排除在 GLB 物理实体与门禁杆件数之外。
+   - `tower_geometry.py` 落地 `stitch_segment_boundaries()`，实现段边界 ≤5mm 节点共享去重与重叠横杆消除，长度保真。
+4. **阶段 8（pytest 分层与 session fixture 缓存）**：
+   - `pyproject.toml` 注册 `slow` / `integration` / `online` marker。
+   - `tests/conftest.py` 增加 `guowang_cross_file_result` session 级缓存 fixture。
+   - `pytest -m "not slow" -q` 纯函数单测 192 passed，~6.6s 高速跑通。
+
+## 七、环境说明
 
 - 权威数据在 `~/Downloads/输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)/`
 - 咸鱼 DXF 是展示图；官方 `35A/35A1/35A1-JC1/*.dwg` + `计算文件` + `GIM` 才是权威
-- 测试基线：172 passed（含本次改动，无回归）
+- 测试基线：192+ passed（含本次改动，无回归）

@@ -234,3 +234,76 @@ class ClassifyAndStitchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FitTowerHalfWidthTest(unittest.TestCase):
+    """阶段3.2：生产路径从立面主腿拟合 half_width(z)，不用 GT、不用 abs(t)。"""
+
+    def _tapered_face(self):
+        # 四棱台立面：底半宽 2000，顶半宽 1000，4 段主腿
+        nodes = {}
+        bars = []
+        zs = [0, 1000, 2000, 3000, 4000]
+        half = [2000, 1750, 1500, 1250, 1000]
+        for i, (z, hw) in enumerate(zip(zs, half)):
+            nodes[f"L{i}"] = (hw, 0.0, z)
+            nodes[f"R{i}"] = (-hw, 0.0, z)
+        # 主腿：左腿 + 右腿（近竖直）
+        for i in range(len(zs) - 1):
+            bars.append({"id": f"legL{i}", "from": f"L{i}", "to": f"L{i+1}"})
+            bars.append({"id": f"legR{i}", "from": f"R{i}", "to": f"R{i+1}"})
+        # 内部斜材（|x| < 半宽，不应影响拟合）
+        nodes["D0"] = (0.0, 0.0, 500)
+        nodes["D1"] = (500.0, 0.0, 1500)
+        bars.append({"id": "diag0", "from": "D0", "to": "D1"})
+        return nodes, bars
+
+    def test_fit_half_width_monotonic_taper(self):
+        nodes, bars = self._tapered_face()
+        fn = g.fit_tower_half_width_from_face(nodes, bars)
+        self.assertIsNotNone(fn, "应从主腿拟合出半宽函数")
+        # 底宽 2000，顶宽 1000，随 z 单调递减
+        self.assertAlmostEqual(fn(0.0), 2000.0, delta=80.0)
+        self.assertAlmostEqual(fn(2000.0), 1500.0, delta=80.0)
+        self.assertAlmostEqual(fn(4000.0), 1000.0, delta=80.0)
+        # 越界夹紧
+        self.assertAlmostEqual(fn(-500.0), fn(0.0), places=3)
+        self.assertAlmostEqual(fn(5000.0), fn(4000.0), places=3)
+
+    def test_fit_returns_none_when_no_legs(self):
+        nodes = {"A": (100.0, 0.0, 0.0), "B": (0.0, 0.0, 100.0)}
+        bars = [{"id": "d", "from": "A", "to": "B"}]  # 斜杆，非主腿
+        self.assertIsNone(g.fit_tower_half_width_from_face(nodes, bars))
+
+
+class FaceDepthNotAbsTTest(unittest.TestCase):
+    """阶段3.1：塔身深度 = half_width(z)，不是节点自身 abs(t)。"""
+
+    def test_internal_node_keeps_face_coordinate(self):
+        # 内部腹杆节点 t=300，塔身半宽 1000：深度应为 1000（半宽），
+        # 面内坐标 t 保留 300，而不是把 t 压成 1000 或用 abs(300)=300 当深度。
+        nodes = {
+            "legL": (1000.0, 0.0, 0.0),
+            "legR": (-1000.0, 0.0, 0.0),
+            "inner": (300.0, 0.0, 500.0),
+        }
+        bars = [
+            {"id": "leg", "from": "legL", "to": "legR"},
+            {"id": "diag", "from": "legL", "to": "inner"},
+        ]
+        # 用拟合的半宽函数（半宽恒 1000）
+        def hw(z):
+            return 1000.0
+        nn, nb = g.expand_4_face_symmetry(nodes, bars, half_width_fn=hw)
+        # inner 节点 front 面应在 y=+1000，x 保留 300
+        front_inner = None
+        for nid, pos in nn.items():
+            if abs(pos[0] - 300.0) < 1e-6 and pos[1] > 0:
+                front_inner = pos
+        self.assertIsNotNone(front_inner, "内部节点 front 面应保留 x=300")
+        self.assertAlmostEqual(front_inner[1], 1000.0, places=3,
+                               msg="塔身深度应为 half_width(500)=1000，不是 abs(t)=300")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -630,6 +630,7 @@ def deliver_project(
     canonical_glb_path: Optional[Path] = None
     assembly_glb_path: Optional[Path] = None
     skeleton_glb_error: Optional[str] = None
+    assembly_glb_error: Optional[str] = None
     canonical_error: Optional[str] = None
     mesh_stats: Dict[str, int] = {}
 
@@ -683,8 +684,13 @@ def deliver_project(
             assembly_glb_path = out_dir / "assembly.glb"
             try:
                 export_tower_glb(assembly_info["model"], assembly_glb_path, strict=False)
-            except Exception:
+            except Exception as exc:
+                # 阶段 8.2：assembly GLB 导出失败必须显式传播为 failed，
+                # 不得只设 path=None 后静默吞掉（enabled=True 时 assembly_failed
+                # 不覆盖，需独立 assembly_glb_error 参与 has_failed）。
                 assembly_glb_path = None
+                assembly_glb_error = f"assembly GLB 导出失败：{exc}"
+                assembly_info["error"] = assembly_info.get("error") or assembly_glb_error
 
     # ---- L0 权威塔：canonical.glb（只走 CanonicalTower，门禁与 skeleton 分开）----
     if export_glb and canonical_tower_path:
@@ -761,6 +767,10 @@ def deliver_project(
         assembly_failed = True
 
     # 导出/门禁失败
+    # 阶段 8：几何门禁独立于 GLB 导出。skeleton_gate_ok 检查的是模型本身的
+    # 拓扑/几何正确性（悬空节点、退化杆件、连通分量），与是否导出 GLB 无关。
+    # 因此几何门禁失败必须始终导致 failed，不能因 --no-glb 而被跳过。
+    geometry_gate_failed = bool(skeleton_gate is not None and not skeleton_gate.get("ok"))
     export_failed = bool(skeleton_glb_error) or (export_glb and not skeleton_gate_ok)
 
     # 阶段 6.2 & 6.3: 显式失败与降级传播
@@ -772,13 +782,47 @@ def deliver_project(
         or proj_failed
         or assembly_failed
         or export_failed
+        or geometry_gate_failed
         or merged_model is None
         or nodes_solved <= 0
+        # 阶段 8.2：assembly GLB 导出失败（含 enabled=True 场景）也必须判 failed
+        or bool(assembly_glb_error)
     )
+    # 阶段 5.3：未匹配投影（unresolved_projection_refs）不得静默通过——
+    # 有跨视图身份未解出时降级为 review_required，供人工复核。
+    unresolved_projection_count = 0
+    half_width_degraded = False
+    if merged_model is not None:
+        _df = merged_model.components.get("drawing_file")
+        if _df is not None:
+            unresolved_projection_count = len(
+                (_df.properties or {}).get("unresolved_projection_refs") or []
+            )
+            # 阶段 3.2：生产路径半宽拟合失败（half_width_degraded=True 且非 GT 注入）
+            # 时，四面展开退化到 abs(t) 假深度，必须 review_required，禁止假装闭合。
+            half_width_degraded = bool(
+                (_df.properties or {}).get("half_width_degraded")
+                and (_df.properties or {}).get("half_width_source") != "gt"
+            )
+    # 阶段 8.5：仍未解出三轴的节点必须参与状态判定（关键空间模型存在未解节点
+    # → review_required），不能只写报告。这里提前计算，供 has_pending 使用。
+    unsolved_nodes: List[str] = []
+    if merged_model is not None:
+        for cid, comp in merged_model.components.items():
+            if comp.kind != "tower_node":
+                continue
+            p = comp.properties or {}
+            if any(p.get(axis) is None for axis in ("x", "y", "z")):
+                unsolved_nodes.append(cid)
+
     has_pending = bool(
         single_pending
         or proj_pending
         or (merged_model and getattr(merged_model, "degraded", False))
+        or unresolved_projection_count > 0
+        or half_width_degraded
+        # 阶段 8.5：未解三轴节点存在时降级 review_required
+        or len(unsolved_nodes) > 0
     )
 
     if has_failed:
@@ -791,15 +835,8 @@ def deliver_project(
         status = "verified"
         delivery_ok = True
 
-    # P0-3 报告：仍未解出三轴的节点写入 delivery，供人工复核（strict export 的前置卡点）。
-    unsolved_nodes: List[str] = []
-    if merged_model is not None:
-        for cid, comp in merged_model.components.items():
-            if comp.kind != "tower_node":
-                continue
-            p = comp.properties or {}
-            if any(p.get(axis) is None for axis in ("x", "y", "z")):
-                unsolved_nodes.append(cid)
+    # P0-3 报告：unsolved_nodes 已在 has_pending 判定前计算（见上方阶段 8.5），
+    # 这里只汇总报告，不重复计算。
     unsolved_summary = {
         "count": len(unsolved_nodes),
         "sample": unsolved_nodes[:50],
@@ -811,7 +848,14 @@ def deliver_project(
         except Exception:
             topology_summary = {}
 
-    harness_all_passed = harness is not None and not (harness.get("failed"))
+    # 阶段 8.4：harness_all_passed 必须 failed=0 且 pending=0。
+    # 单模型 harness 用 (not failed and not pending)，避免 review_required 却
+    # harness_all_passed=True 的矛盾。
+    harness_all_passed = bool(
+        harness is not None
+        and not (harness.get("failed"))
+        and not (harness.get("pending"))
+    )
 
     # Phase A3：三种产物分开登记，不再混评。
     products: List[Dict[str, Any]] = [
@@ -877,10 +921,15 @@ def deliver_project(
         "detail_qa_atlas": detail_qa_atlas_info,
         "products": products,
         "glb_error": skeleton_glb_error,
+        "assembly_glb_error": assembly_glb_error,
         "canonical_error": canonical_error,
         "glb_geometry_gate": skeleton_gate,
         "unsolved_nodes": unsolved_summary,
         "topology": topology_summary,
+        # 阶段 5.3：未匹配投影计数（>0 时降级 review_required）
+        "unresolved_projection_refs": unresolved_projection_count,
+        # 阶段 3.2：半宽拟合是否退化（true=生产路径走 abs(t) 假深度，已降级 review_required）
+        "half_width_degraded": half_width_degraded,
         "mesh_stats": mesh_stats,
         "sheets": [sid for sid in project.sheets],
         "sheet_roles": {

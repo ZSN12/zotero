@@ -42,13 +42,14 @@ from traceability.eval.metrics import (
     _classify_3d,
 )
 
-# 失败类别
+# 失败类别（阶段 7：删除伪分类 FN_OVERLAP/FN_SHORT——那些是「猜测」的失败原因，
+# 未经几何验证，会误导召回诊断。只保留可验证的两类：
+#   * missing —— GT 杆件附近无任何模型杆件（真缺失）
+#   * geom    —— 存在模型杆件但几何偏差超过匹配容差（端点/角度/长度不符）
+# 其余（重叠去重、短杆过滤等）一律归入 geom，由几何代价本身说话，不臆测管线原因。）
 FN_MISSING = "missing"          # GT 杆件无任何模型杆件靠近
-FN_OVERLAP = "overlap"          # 可能被重叠去重吞掉
-FN_SHORT = "short"              # 短杆被过滤
 FN_GEOM = "geom"                # 几何偏差过大（端点/角度/长度）
 FP_EXTRA = "extra"              # 模型多余杆件（无 GT 对应）
-FP_DUP = "duplicate"            # 疑似重复杆件
 
 
 def _len_2d(seg) -> float:
@@ -123,22 +124,37 @@ def _nearest_model_ctx(seg, model_items, cost_fn):
     best_i, best_c = None, float("inf")
     for i, (mseg, _) in enumerate(model_items):
         c = cost_fn(seg, mseg)
+        # 跳过退化杆件（cost 为 inf/NaN），避免 best_i 保持 None 导致索引崩溃
+        if c is None or math.isinf(c) or math.isnan(c):
+            continue
         if c < best_c:
             best_c = c
             best_i = i
+    if best_i is None:
+        return SHEET_NONE, VIEW_NONE, False
     props = model_items[best_i][1]
     return _bar_sheet(props), _bar_view_type(props), _bar_has_label(props)
 
 
 def _classify_fn_failure(seg, model_segs, cost_fn, tol: float) -> str:
-    """给一根未匹配的 GT 杆件分类失败原因（找最近模型杆件的代价特征）。"""
+    """给一根未匹配的 GT 杆件分类失败原因（仅可验证的两类）。
+
+    阶段 7：删除 FN_OVERLAP 伪分类——「有很近的杆件却没匹配」只是几何代价
+    偏低的一种表现，无法证明是「重叠去重吞掉」；臆测管线原因会误导诊断。
+    统一归为：
+        * missing —— 无模型杆件在 tol*3 内（真缺失）
+        * geom    —— 存在模型杆件但超出 tol 匹配容差（几何偏差）
+    """
     if not model_segs:
         return FN_MISSING
-    best = min(cost_fn(seg, m) for m in model_segs)
+    # 跳过退化杆件（cost 为 inf/NaN），避免 min() 返回 inf 掩盖真实几何代价
+    costs = [cost_fn(seg, m) for m in model_segs]
+    finite = [c for c in costs if c is not None and not math.isinf(c) and not math.isnan(c)]
+    if not finite:
+        return FN_MISSING
+    best = min(finite)
     if best >= tol * 3:
         return FN_MISSING
-    if best < tol * 0.5:
-        return FN_OVERLAP  # 有很近的杆件却没匹配，疑似重叠去重吞掉
     return FN_GEOM
 
 

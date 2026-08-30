@@ -49,6 +49,7 @@ class PreprocessTest(unittest.TestCase):
 
 @pytest.mark.integration
 class CrossFileBatchTest(unittest.TestCase):
+    @pytest.mark.slow
     def test_merge_cross_file_views_preserves_view_type(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf
         from traceability.intake.tower_batch import merge_cross_file_views
@@ -279,6 +280,7 @@ class CrossFileBatchTest(unittest.TestCase):
         # 这里只验证有杆件产出 + 无自环（退化杆），不再硬编码杆件数。
         self.assertGreater(mr.get("bars", 0), 0)
 
+    @pytest.mark.slow
     def test_guowang_side_is_real_region_not_synthetic(self):
         from traceability.intake.tower_dxf import extract_tower_from_dxf
 

@@ -632,13 +632,14 @@ def expand_4_face_symmetry(
             if not is_crossarm:
                 # 塔身四棱台节点：
                 # 1. 如果是主腿角柱点（|t| 接近塔身半宽），贴合到 ±w_gt；
-                # 2. 如果是立面内部腹杆点（|t| < w_gt），保留其真实的水平坐标 t，
-                #    Front 面位于 Y=+w_gt，Back 面位于 Y=-w_gt，Left 位于 X=-w_gt，Right 位于 X=+w_gt。
-                # 严禁将内部节点强行扭曲到四角！
+                # 2. 如果是立面内部腹杆点（|t| < w_gt），保留其真实水平坐标 t
+                #    （阶段3.3：严禁 t * w_gt/abs(t) 缩放——那会把内部节点扭曲
+                #    到角点，破坏立面内部腹杆拓扑）。深度统一用 w_gt。
+                #    Front 面 Y=+w_gt，Back 面 Y=-w_gt，Left 面 X=-w_gt，Right 面 X=+w_gt。
                 if abs(t) >= w_gt * 0.85:
                     t_scaled = (1.0 if t >= 0 else -1.0) * w_gt
                 else:
-                    t_scaled = t * (w_gt / max(1.0, w)) if w > 0 else t
+                    t_scaled = t
 
                 if w_gt < node_tol * 0.5:
                     return {"_C": (0.0, 0.0, z)}
@@ -702,7 +703,11 @@ def expand_4_face_symmetry(
                     continue
                 body_t, body_z = (t1, z1) if kind1 == "body" else (t2, z2)
                 w_gt = float(half_width_fn(body_z))
-                body_t_scaled = body_t * (w_gt / max(1.0, abs(body_t))) if abs(body_t) > 0 else body_t
+                # 阶段3.3：角柱点贴合 ±w_gt，内部点保留 t（与 face_maps 一致）
+                if abs(body_t) >= w_gt * 0.85:
+                    body_t_scaled = (1.0 if body_t >= 0 else -1.0) * w_gt
+                else:
+                    body_t_scaled = body_t
                 sign_y = +1.0 if suffix == "_F" else -1.0
                 body_pos = (body_t_scaled, sign_y * w_gt, body_z)
                 # 横担端用原映射（已是正确 t_arm + ±w）
@@ -1103,6 +1108,129 @@ def inspect_model_topology(
 # --------------------------------------------------------------------------- #
 # Module 4  语义分类 + 分段缝合
 # --------------------------------------------------------------------------- #
+
+def fit_tower_half_width_from_face(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    leg_min_incl: float = 70.0,
+    percentile: float = 85.0,
+) -> Optional[Callable[[float], float]]:
+    """从单立面图拟合塔身半宽 half_width(z)（生产路径，不使用 GT）。
+
+    阶段3.2：生产建模严禁用节点自身 abs(t) 作塔身深度（那是「该节点水平坐标」，
+    不是「该标高塔身半宽」），也严禁注入 GT 权威半宽。本函数从立面主腿证据
+    确定性拟合 half_width(z)：
+
+        1. 识别近竖直主腿杆件（|倾角| >= leg_min_incl 且两端 |x| 接近立面外缘）；
+        2. 收集主腿端点的 (z, |x|) 采样点；
+        3. 每个 Z 面板取 |x| 上分位数（percentile）作为该标高塔身半宽；
+        4. 分段线性插值，返回 half_width(z) 闭包。
+
+    铁塔四棱台为正四边形截面，任意标高 Z 处立面半宽 = 侧面半宽，因此同一
+    half_width(z) 同时用于 X/Y 两个方向。
+
+    无法拟合（主腿不足 / 采样点过少）时返回 None，调用方必须 review_required，
+    不得退回 abs(t) 假装闭合。
+
+    返回的闭包在 z 超出采样范围时夹紧到边界值（首尾外推为常数，避免越界 NaN）。
+    """
+    if not nodes or not bars:
+        return None
+
+    # 1. 收集近竖直杆件端点，估计立面外缘 wall（避开横担水平外伸污染）
+    vertical_pts: List[Tuple[float, float]] = []  # (z, |x|)
+    for b in bars:
+        f = nodes.get(b.get("from"))
+        t = nodes.get(b.get("to"))
+        if f is None or t is None:
+            continue
+        dx = float(t[0]) - float(f[0])
+        dz = float(t[2]) - float(f[2])
+        L = math.hypot(dx, dz)
+        if L <= 1e-9:
+            continue
+        incl = abs(math.degrees(math.atan2(abs(dz), abs(dx))))
+        if incl < leg_min_incl:
+            continue
+        vertical_pts.append((float(f[2]), abs(float(f[0]))))
+        vertical_pts.append((float(t[2]), abs(float(t[0]))))
+
+    if len(vertical_pts) < 4:
+        return None
+
+    # 立面外缘 = 上分位数（稳健于 max，后者被横担端头污染）
+    xs = sorted(p[1] for p in vertical_pts)
+    wall = float(xs[min(len(xs) - 1, int(len(xs) * percentile / 100.0))])
+    if wall <= 0:
+        return None
+
+    # 2. 主腿端点 = 近竖直杆件的端点（横担/水平构件近水平，不会误入）。
+    #    不再用 wall*0.65 比例过滤——铁塔塔顶半宽可能仅为塔底 50%，比例阈值
+    #    会误杀塔顶主腿端点，导致 half_width(z) 顶部失真。
+    leg_samples: List[Tuple[float, float]] = []
+    for b in bars:
+        f = nodes.get(b.get("from"))
+        t = nodes.get(b.get("to"))
+        if f is None or t is None:
+            continue
+        dx = float(t[0]) - float(f[0])
+        dz = float(t[2]) - float(f[2])
+        L = math.hypot(dx, dz)
+        if L <= 1e-9:
+            continue
+        incl = abs(math.degrees(math.atan2(abs(dz), abs(dx))))
+        if incl < leg_min_incl:
+            continue
+        af, at = abs(float(f[0])), abs(float(t[0]))
+        leg_samples.append((float(f[2]), af))
+        leg_samples.append((float(t[2]), at))
+
+    if len(leg_samples) < 3:
+        return None
+
+    # 3. 同一 Z 标高取中位数（左右腿 |x| 应相等，取中位数抗噪），得到
+    #    (z, half_width) 采样点，再分段线性插值。不额外分箱（分箱会引入
+    #    边界误差，尤其塔顶/塔底采样稀疏时）。
+    zs = [p[0] for p in leg_samples]
+    z_min, z_max = min(zs), max(zs)
+    if z_max - z_min < 1e-6:
+        hw = float(np.median([p[1] for p in leg_samples]))
+        return (lambda z, hw=hw: hw) if hw > 0 else None
+
+    # 同一 z（1mm 内）合并取中位数
+    by_z: Dict[int, List[float]] = {}
+    for z, hw in leg_samples:
+        key = int(round(z))
+        by_z.setdefault(key, []).append(hw)
+    z_pts: List[float] = []
+    hw_pts: List[float] = []
+    for key in sorted(by_z):
+        z_pts.append(float(key))
+        hw_pts.append(float(np.median(by_z[key])))
+
+    if len(z_pts) < 2:
+        hw = hw_pts[0] if hw_pts else 0.0
+        return (lambda z, hw=hw: hw) if hw > 0 else None
+
+    # 4. 分段线性插值闭包（越界夹紧到边界值）
+    def half_width(z: float) -> float:
+        if z <= z_pts[0]:
+            return hw_pts[0]
+        if z >= z_pts[-1]:
+            return hw_pts[-1]
+        # 线性查找区间
+        for i in range(len(z_pts) - 1):
+            if z_pts[i] <= z <= z_pts[i + 1]:
+                span = z_pts[i + 1] - z_pts[i]
+                if span <= 1e-9:
+                    return hw_pts[i]
+                frac = (z - z_pts[i]) / span
+                return hw_pts[i] + frac * (hw_pts[i + 1] - hw_pts[i])
+        return hw_pts[-1]
+
+    return half_width
+
 
 def classify_members(nodes: NodeMap, bars: List[dict]) -> Dict[str, str]:
     """按几何倾角 + 位置把杆件语义分类。
