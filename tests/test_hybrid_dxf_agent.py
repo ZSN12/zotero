@@ -420,5 +420,28 @@ class XCrossingUncoupleTest(unittest.TestCase):
         self.assertEqual(len([c for c in m.components.values() if c.kind == "tower_bar"]), 4)
 
 
+class CollinearMergeConfigTest(unittest.TestCase):
+    """阶段2.6：共线合并前碎段预过滤（min_fragment_len_units）配置读取。"""
+
+    def test_min_fragment_len_units_read(self):
+        from traceability.intake.tower_spec import collinear_merge_config
+        if not OVERLAY.exists():
+            self.skipTest("overlay 不存在")
+        cfg = collinear_merge_config("35A1-JC1-06", overlay=OVERLAY)
+        self.assertIsNotNone(cfg)
+        # 06 段显式配置 stipple 预过滤阈值（1 图纸单位）
+        self.assertIn("min_fragment_len_units", cfg)
+        self.assertEqual(float(cfg["min_fragment_len_units"]), 1.0)
+
+    def test_min_fragment_len_units_absent_for_02(self):
+        from traceability.intake.tower_spec import collinear_merge_config
+        if not OVERLAY.exists():
+            self.skipTest("overlay 不存在")
+        cfg = collinear_merge_config("35A1-JC1-02", overlay=OVERLAY)
+        self.assertIsNotNone(cfg)
+        # 02 段真实杆件碎段 1~3 单位，不得启用预过滤（会误杀真杆）
+        self.assertNotIn("min_fragment_len_units", cfg)
+
+
 if __name__ == "__main__":
     unittest.main()

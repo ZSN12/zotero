@@ -893,6 +893,18 @@ def extract_tower_from_dxf(
         raw_segments, double_line_merge_config(stem, overlay=layer_map_path),
     )
 
+    # 阶段2.6：共线合并前的碎段预过滤。国网 06 段 layer1 角钢边缘用大量
+    # 0.05~0.84 图纸单位的点画碎线（stipple）填充，若不预过滤会被
+    # _merge_collinear_fragments(gap_tol≈30) 误合并成假长杆（占 52%）。
+    # 真实杆件碎段（如 02 段）1~3 单位，故阈值须按 stem 可配：只有显式配置
+    # min_fragment_len_units 的 stem 才启用预过滤（其它 stem 保持旧行为）。
+    if coll_cfg and coll_cfg.get("min_fragment_len_units"):
+        min_frag = float(coll_cfg["min_fragment_len_units"])
+        raw_segments = [
+            s for s in raw_segments
+            if _dist(s["start"], s["end"]) >= min_frag
+        ]
+
     # M3+ side POC：overlay 声明 infer_side_on_stems 时，尝试从总装图双簇推断侧立面 region
     if stem in cross_file_infer_side_stems(layer_map_path):
         gap_ratio = assembly_split_min_gap_ratio(layer_map_path)

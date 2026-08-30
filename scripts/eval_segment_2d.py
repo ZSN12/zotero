@@ -59,11 +59,32 @@ def main():
     ap.add_argument("--view", choices=["front", "side"], default="front")
     ap.add_argument("--tol", type=float, default=200.0,
                     help="主匹配容差 mm（默认 200）")
+    ap.add_argument("--z-offset", type=float, default=None,
+                    help="段全局 Z 偏移(mm)；缺省时按 SEGMENT_Z[seg] 下界")
+    ap.add_argument("--overlay",
+                    default=str(Path(__file__).resolve().parent.parent
+                                 / "examples/external/guowang_35A1/layer_overlay.json"),
+                    help="overlay JSON（读 z_offset/z_flip）")
     args = ap.parse_args()
 
     z0, z1 = SEGMENT_Z[args.seg]
     gt = json.loads(Path(args.gt).read_text(encoding="utf-8"))
     model = json.loads(Path(args.model).read_text(encoding="utf-8"))
+
+    # 段 z_offset：优先 --z-offset，其次 overlay view_regions 的 z_offset
+    z_offset = args.z_offset
+    if z_offset is None and Path(args.overlay).exists():
+        ov = json.loads(Path(args.overlay).read_text(encoding="utf-8"))
+        seg_stem = {
+            "40": "35A1-JC1-40", "07": "35A1-JC1-07", "06": "35A1-JC1-06",
+            "05": "35A1-JC1-05", "04": "35A1-JC1-04", "02": "35A1-JC1-02",
+        }[args.seg]
+        for r in ov.get("view_regions", {}).get(seg_stem, []):
+            if r.get("z_offset") is not None:
+                z_offset = float(r["z_offset"])
+                break
+    if z_offset is None:
+        z_offset = z0
 
     if model_has_gt_alignment(model):
         print("✗ GT 泄漏：模型含 gt_aligned/canonical 杆件，正式评测拒绝。")
@@ -72,9 +93,12 @@ def main():
     g_all = gt_bars_2d(gt, args.view)
     m_all = bars_from_model_2d(model, view=args.view, mode="recognition")
 
-    # 按段 Z 范围过滤（中点落在 [z0, z1)）
+    # 模型 2D 杆件的 y 坐标是「段局部 view_y」，需加 z_offset 还原全局 Z；
+    # GT 前投影的 y 已是全局 Z。统一到全局 Z 后再按段过滤。
+    m_global = [((s[0], s[1] + z_offset, s[2], s[3] + z_offset), p) for s, p in m_all]
+
     g_seg = [t for t in g_all if z0 <= _zmid(t[0]) < z1]
-    m_seg = [t for t in m_all if z0 <= _zmid(t[0]) < z1]
+    m_seg = [t for t in m_global if z0 <= _zmid(t[0]) < z1]
 
     gt_segs = [s for s, _, _ in g_seg]
     model_segs = [s for s, _ in m_seg]

@@ -1108,6 +1108,12 @@
       "colinear_tol": 2.0,
       "gap_tol": 30.0,
       "max_angle_deg": 8.0
+    },
+    "35A1-JC1-06": {
+      "colinear_tol": 2.0,
+      "gap_tol": 30.0,
+      "max_angle_deg": 8.0,
+      "min_fragment_len_units": 1.0
     }
   },
   "glb_gate_min_4face_bars": 50,
@@ -1130,5 +1136,12 @@
     "35A1-JC1-05": true,
     "35A1-JC1-06": true
   },
-  "double_line_merge": {}
+  "double_line_merge": {
+    "35A1-JC1-06": {
+      "max_offset_units": 3.0,
+      "max_length_diff_ratio": 0.25,
+      "max_angle_rad": 0.25,
+      "min_length_units": 3.0
+    }
+  }
 }
