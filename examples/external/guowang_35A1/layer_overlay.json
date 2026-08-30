@@ -259,7 +259,7 @@
         "scale_x": 20.0,
         "scale_y": 20.0,
         "z_flip": false,
-        "z_offset": 23000.0,
+        "z_offset": 24143,
         "z_span_mm": 6800.0
       }
     ],
@@ -284,7 +284,7 @@
         "scale_x": 20.0,
         "scale_y": 20.0,
         "z_flip": false,
-        "z_offset": 16000.0,
+        "z_offset": 17143,
         "z_span_mm": 7000.0
       }
     ],
@@ -309,7 +309,7 @@
         "scale_x": 20.0,
         "scale_y": 20.0,
         "z_flip": false,
-        "z_offset": 11000.0,
+        "z_offset": 12143,
         "z_span_mm": 5000.0
       }
     ],
@@ -334,7 +334,7 @@
         "scale_x": 20.0,
         "scale_y": 20.0,
         "z_flip": false,
-        "z_offset": 5500.0,
+        "z_offset": 6643,
         "z_span_mm": 5500.0
       }
     ],

@@ -279,7 +279,7 @@ class HybridM3MergeRegressionTest(unittest.TestCase):
         self.assertEqual(len(nodes), 7)
 
     def test_mllm_injected_nodes_enter_front_merge(self):
-        """04 段：注入 view_x/view_y + view_type=front 后，merge 解出 Z=23000~29800。"""
+        """04 段：注入 view_x/view_y + view_type=front 后，merge 解出 Z=24143~30943。"""
         if not OVERLAY.exists():
             self.skipTest("overlay 不存在")
         from traceability.intake.hybrid_dxf_agent import _drawing_xy_to_view_xy, _inject_mllm_bars_into_model
@@ -315,10 +315,10 @@ class HybridM3MergeRegressionTest(unittest.TestCase):
         merged = merge_view_coordinates(m, overlay=self._overlay())
         zs = [v["z"] for v in merged.values() if v.get("z") is not None]
         self.assertEqual(len(zs), 2)
-        # 04 段 z_offset=23000，z_span_mm=6800，解出的 Z 应落在该区间内
+        # 04 段 z_offset=24143（+1143 节间 z 修正），z_span_mm=6800，解出的 Z 应落在该区间内
         for z in zs:
-            self.assertGreaterEqual(z, 23000.0)
-            self.assertLessEqual(z, 29800.0)
+            self.assertGreaterEqual(z, 24143.0)
+            self.assertLessEqual(z, 30943.0)
 
 
 if __name__ == "__main__":
