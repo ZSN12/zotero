@@ -123,3 +123,23 @@ A1 以 BOM 图纸件号为 GT（禁 PM_XXXX 对数字件号）；A3 多条件评
   （solve 层 `expand_4_face_symmetry` 无此问题，问题在包装层与拟合半宽交互）。
   真实塔 `|leg_x| ≈ half_width` 正是常态，阶段 6 主腿重复/缺失修复必须覆盖此 case。
 
+## 5. 阶段 2 归因修正 + 首项修复（2026-08-30）
+
+**归因修正**：早前把 `bar_JC1_front` 归为"图纸角部图章区域"，经重查 06 的
+`view_regions`（205×285，与兄弟段 05/07/04/40 同构，非异常小区域）后更正——
+该区域**就是正立面段**，`bar_JC1_front` 是**正立面区域内的图名文字 "JC1"**
+（`35A1-JC1` 的片段）被兜底件号正则 `[A-Za-z]{0,3}\d{1,5}` 命中后 TEXT_SNAP 贴到
+400mm 内最近杆件所致。
+
+**首项修复（已提交 707f400）**：`_stem_designation_tokens` + `_extract_bar_label`
+的 `exclude_tokens` 参数，排除图号中「既含字母又含数字」的片段（JC1/SJG1/35A1/
+35C2）。真实数据 06 重解析：`bar_id='JC1'` 0 根、图号片段件号 0 根。
+
+**z 污染（25000-30000）的真正入口**（待阶段 5 根治）：`close_face_intersections`
+（overlay 已启用 `intersection_snap_tol_mm=30`）+ `stitch_boundaries`（默认 True）
+在**跨 sheet** 的合并模型上把不同 sheet 的节点按坐标容差合并（如 07 杆
+`bar_UNLABELED_51A_front` 端点吸附到 06 节点生成共享节点 N00084，z=31753），
+把某 sheet 的错误 z 传播到相邻 sheet。阶段 1 门禁已 fail-closed 兜底（dz>8m→0），
+阶段 5 锚点映射 + 跨 sheet 合并按 source_sheet 隔离是根治。
+
+
