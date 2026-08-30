@@ -376,13 +376,25 @@ def close_face_intersections(
                 if q != other["from"] and q != other["to"]:
                     old_to = other["to"]
                     other["to"] = q
+                    # 阶段1.2：拆分溯源（root_bar_id / split_index）。
+                    # root_bar_id 指向拆分前最原始杆 id（递归拆分时保持不变），
+                    # 下游据此判断「该杆是否已被拆分」，避免重复处理原杆；
+                    # split_index 为该段在 root 拆分序列中的序号（首段保留原
+                    # id 记 0，后续新段递增）。derived_from 沿用已有溯源值。
+                    root = other.get("root_bar_id") or other["id"]
+                    n = other.get("split_count", 0) + 1
+                    other["root_bar_id"] = root
+                    other["split_index"] = other.get("split_index", 0)
+                    other["split_count"] = n
                     if len(new_bars) < max_bars:
                         new_bars.append({
                             "id": f"{other['id']}__split{len(new_bars)}",
                             "from": q,
                             "to": old_to,
                             **{k: v for k, v in other.items()
-                               if k not in ("id", "from", "to")},
+                               if k not in ("id", "from", "to", "split_count")},
+                            "root_bar_id": root,
+                            "split_index": n,
                         })
                     changed = True
                 if bar[end] != q:

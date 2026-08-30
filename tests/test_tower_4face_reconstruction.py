@@ -78,6 +78,52 @@ class Phase1WorklineTest(unittest.TestCase):
         deg_d2 = sum(1 for b in nb if b["from"] == d2_id or b["to"] == d2_id)
         self.assertGreaterEqual(deg_d2, 2)
 
+    def test_close_face_intersections_sets_root_bar_id_and_split_index(self):
+        # 阶段1.2：拆分杆必须带 root_bar_id / split_index 溯源，且不残留
+        # 「未拆分的原杆」——原杆只被截断为首段，不允许整根原杆同时存在。
+        nodes = {
+            "H1": (0.0, 0.0, 50.0), "H2": (100.0, 0.0, 50.0),
+            "D1": (60.0, 0.0, 0.0), "D2": (60.0, 0.0, 50.0),
+        }
+        bars = [
+            {"id": "horiz", "from": "H1", "to": "H2", "derived_from": "horiz_src"},
+            {"id": "diag", "from": "D1", "to": "D2"},
+        ]
+        nn, nb = g.close_face_intersections(nodes, bars, snap_tol=5.0)
+        by_id = {b["id"]: b for b in nb}
+        horiz = by_id["horiz"]
+        splits = [b for b in nb if b["id"].startswith("horiz__split")]
+        # 原杆被截断为首段（split_index=0），并带 root_bar_id 指向自己
+        self.assertEqual(horiz["root_bar_id"], "horiz")
+        self.assertEqual(horiz["split_index"], 0)
+        self.assertEqual(horiz["derived_from"], "horiz_src")   # 溯源保留
+        # 新拆分段 split_index=1，root 指向原杆
+        self.assertEqual(len(splits), 1)
+        self.assertEqual(splits[0]["root_bar_id"], "horiz")
+        self.assertEqual(splits[0]["split_index"], 1)
+        self.assertEqual(splits[0]["derived_from"], "horiz_src")
+        # 不允许整根原杆（H1->H2 全长）同时存在：所有段拼起来才是原杆
+        for b in nb:
+            if b["id"] in ("horiz",) or b["id"].startswith("horiz__split"):
+                self.assertFalse(b["from"] == "H1" and b["to"] == "H2")
+
+    def test_close_face_intersections_recursive_split_preserves_root(self):
+        # 递归拆分（同一根杆被二次打断）时 root_bar_id 仍指向最原始杆
+        nodes = {
+            "H1": (0.0, 0.0, 50.0), "H2": (100.0, 0.0, 50.0),
+            "D1": (60.0, 0.0, 0.0), "D2": (60.0, 0.0, 50.0),
+            "E1": (80.0, 0.0, 0.0), "E2": (80.0, 0.0, 50.0),
+        }
+        bars = [
+            {"id": "horiz", "from": "H1", "to": "H2"},
+            {"id": "diag", "from": "D1", "to": "D2"},
+            {"id": "diag2", "from": "E1", "to": "E2"},
+        ]
+        nn, nb = g.close_face_intersections(nodes, bars, snap_tol=5.0)
+        for b in nb:
+            if b["id"].startswith("horiz"):
+                self.assertEqual(b["root_bar_id"], "horiz")
+
 
 class Phase2FourFaceTest(unittest.TestCase):
     def test_expand_4_face_and_diaphragms(self):
@@ -113,6 +159,71 @@ class Phase2FourFaceTest(unittest.TestCase):
         bars = [{"id": "solo", "from": "A", "to": "B"}]
         topo = g.inspect_model_topology(nodes, bars)
         self.assertEqual(topo["dangling_degree1"], 2)
+
+    def test_expand_preserves_front_xz_invariant(self):
+        # 阶段1.4：四面展开前后 front（F 面）几何不变——F 面杆端点 x/z 必须与
+        # 原 front 杆完全一致（y 由镜像半宽合成可不同），不得被镜像/吸附扭曲。
+        # 注：用无竖腿几何（水平 + 斜材）避开角腿去重（|leg_x|==half_width 时
+        # 镜像角点重合是阶段6已归档问题），干净断言 front x/z 不变。
+        from traceability.intake.tower_symmetry import expand_4_face_symmetry_model
+        from traceability.model import SourceRef, SourceType
+        m = EngineeringModel(name="tower")
+        m.add_component(Component(
+            id="drawing_file", name="df", kind="drawing_file",
+            source=SourceRef(SourceType.DRAWING, "x.dxf"),
+            properties={"view_kinds": ["front"]},
+        ))
+        pts = {
+            "A": (-100.0, 0.0, 0.0), "B": (100.0, 0.0, 0.0),
+            "C": (-100.0, 0.0, 100.0), "D": (100.0, 0.0, 100.0),
+        }
+        for nid, (x, y, z) in pts.items():
+            m.add_component(Component(
+                id=nid, name=nid, kind="tower_node",
+                source=SourceRef(SourceType.DRAWING, "x.dxf"),
+                properties={"view_type": "front", "x": x, "y": y, "z": z,
+                            "solve_status": "solved"},
+            ))
+        bar_defs = [
+            ("horiz_bot", "A", "B"), ("horiz_top", "C", "D"), ("diag", "A", "D"),
+        ]
+        for bid, f, t in bar_defs:
+            m.add_component(Component(
+                id=bid, name=bid, kind="tower_bar",
+                source=SourceRef(SourceType.DRAWING, "x.dxf"),
+                properties={"bar_id": bid, "view_type": "front",
+                            "from_node": f, "to_node": t,
+                            "geometry_origin": "dxf_geom",
+                            "solve_status": "solved"},
+            ))
+        expand_4_face_symmetry_model(
+            m,
+            overlay={"stitch_boundaries": False, "snap_diagonals": False,
+                     "close_face_intersections": False},
+            weld_corner_legs=False, add_diaphragms=False,
+        )
+
+        bars = {cid: c for cid, c in m.components.items() if c.kind == "tower_bar"}
+        nodes = {cid: c for cid, c in m.components.items() if c.kind == "tower_node"}
+        f_bars = {cid: c for cid, c in bars.items()
+                  if c.properties.get("face") == "f"
+                  and c.properties.get("geometry_class") == "recognized"}
+        # 每根 front 杆都应有 F 面 recognized 副本，端点 x/z 与原图一致
+        self.assertEqual(len(f_bars), len(bar_defs))
+        for bid, f, t in bar_defs:
+            fc = f_bars.get(f"4f_{bid}_F")
+            self.assertIsNotNone(fc, f"缺少 F 面杆 4f_{bid}_F")
+            fn = nodes[fc.properties["from_node"]].properties
+            tn = nodes[fc.properties["to_node"]].properties
+            self.assertAlmostEqual(fn["x"], pts[f][0], places=3)
+            self.assertAlmostEqual(fn["z"], pts[f][2], places=3)
+            self.assertAlmostEqual(tn["x"], pts[t][0], places=3)
+            self.assertAlmostEqual(tn["z"], pts[t][2], places=3)
+        # 展开后原始（非 4f_ 前缀）杆件不复存在——统一被 4f_* 替换
+        self.assertFalse(any(not cid.startswith("4f_") for cid in bars))
+        # 四面齐全（F/B/L/R 生成面）
+        faces = {c.properties.get("generated_face") for c in bars.values()}
+        self.assertLessEqual({"F", "B", "L", "R"}, faces)
 
 
 class Phase3ModuleChainTest(unittest.TestCase):

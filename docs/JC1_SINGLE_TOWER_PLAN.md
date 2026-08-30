@@ -102,3 +102,20 @@ A1 以 BOM 图纸件号为 GT（禁 PM_XXXX 对数字件号）；A3 多条件评
 ## 3. 每阶段反馈模板
 修改文件 / 删除的旧逻辑 / 前指标 / 后指标 / 新增测试 / 测试结果 / 是否用缓存 / 是否用 GT /
 未解决问题 / 下一阶段进入条件是否满足。
+
+## 4. 阶段 1 执行记录（2026-08-30）
+
+- 1.1' `enforce_source_segment_gate`（tower_views.py）+ JC1 六段 `DEFAULT_MODULE_Z_RANGES`
+  （tower_views.py），四面展开前调用（tower_batch.py），报告进 merge_report。
+- 1.2 `close_face_intersections` 拆分杆加 `root_bar_id` / `split_index` / `split_count`
+  溯源；原杆只截断不残留整根。
+- 1.3 物理杆写 `source_sheet` / `source_z_range` / `interface_bar`。
+- 1.4 测试：test_segment_gate.py(8) + test_tower_4face_reconstruction.py 新增 3
+  （拆分溯源 / 递归拆分 root 保持 / front x/z 展开不变）。
+- 真实数据门禁前后：dz>8m 484→0；A2 P@500 4.4%→5.5%、FP 654→479；剔除 708 根
+  （06:652 / 07:56），864 个越界端点全部 z≥20000，0 边界漂移误伤。
+- **阶段 6 归档（待修）**：`expand_4_face_symmetry_model` 在传入拟合
+  `half_width_fn` 时，`|leg_x| == half_width` 的左右主腿会被角腿去重合并成单根
+  （solve 层 `expand_4_face_symmetry` 无此问题，问题在包装层与拟合半宽交互）。
+  真实塔 `|leg_x| ≈ half_width` 正是常态，阶段 6 主腿重复/缺失修复必须覆盖此 case。
+
