@@ -429,9 +429,11 @@ class CollinearMergeConfigTest(unittest.TestCase):
             self.skipTest("overlay 不存在")
         cfg = collinear_merge_config("35A1-JC1-06", overlay=OVERLAY)
         self.assertIsNotNone(cfg)
-        # 06 段显式配置 stipple 预过滤阈值（1 图纸单位）
+        # 06 段显式配置 stipple 预过滤阈值（2.5 图纸单位 = 50mm）：
+        # layer1 是 DASHED 点画层，其 <50mm 短画是虚线渲染的碎线（93% <50mm），
+        # 真实杆件在 layer0/4（Continuous），故阈值提到 50mm 只滤掉点画短画。
         self.assertIn("min_fragment_len_units", cfg)
-        self.assertEqual(float(cfg["min_fragment_len_units"]), 1.0)
+        self.assertEqual(float(cfg["min_fragment_len_units"]), 2.5)
 
     def test_min_fragment_len_units_absent_for_02(self):
         from traceability.intake.tower_spec import collinear_merge_config

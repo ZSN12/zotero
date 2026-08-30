@@ -1113,7 +1113,7 @@
       "colinear_tol": 2.0,
       "gap_tol": 30.0,
       "max_angle_deg": 8.0,
-      "min_fragment_len_units": 1.0
+      "min_fragment_len_units": 2.5
     }
   },
   "glb_gate_min_4face_bars": 50,
