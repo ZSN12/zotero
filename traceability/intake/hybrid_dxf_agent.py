@@ -22,7 +22,10 @@ from .mllm_backend import MLLMBackend
 from .mllm_tower_prompt import (
     LABEL_AGENT_PROMPT,
     LABEL_AGENT_SCHEMA,
+    CENTERLINE_CLASSIFY_PROMPT,
+    CENTERLINE_CLASSIFY_SCHEMA,
     parse_label_agent_output,
+    parse_centerline_classify_output,
 )
 from .tower_agent_pipeline import (
     LABEL_SNAP_PX,
@@ -411,6 +414,97 @@ def _extract_dxf_text_labels(
     return labels
 
 
+def _render_centerline_candidates(
+    image_path: str,
+    out_path: Path,
+    candidates: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """阶段2.4：把候选中心线画回裁剪图并标序号，供 MLLM 逐候选视觉分类。
+
+    candidates 每项含 x1/y1/x2/y2（整图像素坐标）。用 PIL 在图上叠画红色
+    序号标签 C001..，返回 {path, candidate_ids}。MLLM 只看图 + 序号，不做坐标。
+    """
+    from PIL import Image, ImageDraw
+
+    img = Image.open(image_path).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    candidate_ids: List[str] = []
+    for i, c in enumerate(candidates):
+        cid = f"C{i + 1:03d}"
+        candidate_ids.append(cid)
+        x1, y1 = float(c["x1"]), float(c["y1"])
+        x2, y2 = float(c["x2"]), float(c["y2"])
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        # 在候选线段中点画红色序号标签
+        draw.text((mx, my), cid, fill=(255, 0, 0))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(out_path, format="PNG")
+    return {"path": str(out_path), "candidate_ids": candidate_ids}
+
+
+def _mllm_classify_centerlines(
+    png_path: str,
+    views: List[Dict[str, Any]],
+    candidates: List[Dict[str, Any]],
+    crops_dir: Path,
+    mllm: MLLMBackend,
+) -> Tuple[set, Dict[str, Any]]:
+    """阶段2.4：MLLM 对 DXF 中心线候选做「保留/剔除」二分类。
+
+    每个视图裁剪一次，把该视图内的候选画上序号喂给 MLLM，返回 keep 序号集合。
+    MLLM 不可用/失败时返回空集 → 调用方回退「全保留」（高召回、不牺牲精度）。
+    """
+    from .tower_agent_pipeline import _crop_view
+
+    meta: Dict[str, Any] = {"failed_calls": 0, "warnings": []}
+    keep_all: set = set()
+    if not candidates:
+        return keep_all, meta
+    for view in views:
+        try:
+            crop = _crop_view(png_path, view["bbox"], crops_dir, f"cl_{view['view_id']}")
+            # 候选坐标已是整图像素，直接相对 crop bbox 偏移
+            ox, oy = crop["bbox"][0], crop["bbox"][1]
+            in_view = []
+            for c in candidates:
+                mx, my = (float(c["x1"]) + float(c["x2"])) / 2, (float(c["y1"]) + float(c["y2"])) / 2
+                if crop["bbox"][0] <= mx <= crop["bbox"][2] and crop["bbox"][1] <= my <= crop["bbox"][3]:
+                    in_view.append({
+                        **c,
+                        "x1": float(c["x1"]) - ox, "y1": float(c["y1"]) - oy,
+                        "x2": float(c["x2"]) - ox, "y2": float(c["y2"]) - oy,
+                    })
+            if not in_view:
+                continue
+            overlay = _render_centerline_candidates(
+                crop["path"], crops_dir / f"cl_{view['view_id']}_labeled.png", in_view,
+            )
+            parsed, call_meta = mllm.call_agent_json(
+                CENTERLINE_CLASSIFY_PROMPT, overlay["path"], CENTERLINE_CLASSIFY_SCHEMA,
+                agent="a2_centerline",
+            )
+            if parsed is None:
+                meta["failed_calls"] += 1
+                meta["warnings"].append(
+                    f"{view['view_id']}: {call_meta.get('failure_reason', 'MLLM 分类失败')}"
+                )
+                # 失败回退：该视图候选全保留
+                keep_all.update(overlay["candidate_ids"])
+                continue
+            keep, problems, warnings = parse_centerline_classify_output(parsed)
+            meta["warnings"].extend(warnings)
+            if problems:
+                meta["failed_calls"] += 1
+                meta["warnings"].extend(problems)
+                keep_all.update(overlay["candidate_ids"])
+                continue
+            keep_all.update(keep)
+        except Exception as exc:
+            meta["failed_calls"] += 1
+            meta["warnings"].append(f"{view.get('view_id', '?')}: {exc}")
+    return keep_all, meta
+
+
 def _vector_labeled_count(model: EngineeringModel, bars: List[Dict[str, Any]]) -> int:
     n = 0
     for bar in bars:
@@ -749,6 +843,46 @@ def run_hybrid_dxf_agent_pipeline(
                        if k not in ("method", "bars", "nodes", "ezdxf_bars")},
                     method=a2_method,
                 )
+            elif geom_method == "centerline" and ezdxf_bars:
+                # 阶段2.4：候选中心线 + 视觉分类。
+                # ezdxf 已做双轮廓配对→中心线 + 共线缝合（高召回、坐标精确），
+                # 这里把 DXF 中心线当候选，MLLM 只做「保留/剔除」二分类滤掉
+                # 尺寸线/图框/表格线等噪声，不再让 MLLM 自由重画坐标。
+                cand_px: List[Dict[str, Any]] = []
+                for b in ezdxf_bars:
+                    px1, py1 = drawing_xy_to_px(float(b["x1"]), float(b["y1"]), mapping)
+                    px2, py2 = drawing_xy_to_px(float(b["x2"]), float(b["y2"]), mapping)
+                    cand_px.append({
+                        "x1": px1, "y1": py1, "x2": px2, "y2": py2,
+                        "bar_uid": b.get("bar_uid"),
+                        "component_id": b.get("component_id"),
+                    })
+                cand_ids = [f"C{i + 1:03d}" for i in range(len(cand_px))]
+                keep_ids: Optional[set] = None
+                cl_meta: Dict[str, Any] = {"candidates": len(cand_px)}
+                if (not skip_mllm and mllm_backend.available() and mapping and views):
+                    keep_set, cl_meta = _mllm_classify_centerlines(
+                        str(png_path), views, cand_px, crops_dir, mllm_backend,
+                    )
+                    # keep_set 是 C001.. 序号 → 映射回 bar_uid
+                    keep_ids = {
+                        c["bar_uid"] for c, cid in zip(cand_px, cand_ids) if cid in keep_set
+                    }
+                    cl_meta["kept"] = len(keep_ids)
+                    cl_meta["dropped"] = len(cand_px) - len(keep_ids)
+                bars = ezdxf_bars
+                a2_method = "centerline"
+                if keep_ids is not None and len(keep_ids) < len(cand_px):
+                    bars = [b for b in ezdxf_bars if b.get("bar_uid") in keep_ids]
+                    keep_component = {b["component_id"] for b in bars if b.get("component_id")}
+                    stripped = _strip_vector_geometry(model, keep=keep_component)
+                    cl_meta["stripped_vector_components"] = stripped
+                else:
+                    cl_meta["kept"] = len(bars)
+                    cl_meta["dropped"] = 0
+                    cl_meta["note"] = "MLLM 不可用/失败或无剔除，候选全保留（高召回）"
+                cl_meta["method"] = a2_method
+                graph.finish(bars=len(bars), nodes=node_count, **cl_meta, method=a2_method)
             elif geom_method == "ezdxf" and ezdxf_bars:
                 # 显式 ezdxf：只在这种模式下才用 ezdxf 几何（默认 auto 不优先 ezdxf，
                 # 因为 04-07 双线角钢图常产 layer-0 垃圾碎杆）。

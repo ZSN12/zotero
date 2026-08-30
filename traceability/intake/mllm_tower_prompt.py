@@ -171,6 +171,46 @@ GEOM_AGENT_SCHEMA: Dict[str, Any] = {
 }
 
 
+# --------------------------------------------------------------------------
+# 阶段2.4 候选中心线 + 视觉分类
+# --------------------------------------------------------------------------
+# 与 GEOM_AGENT_PROMPT 的「MLLM 自由重画坐标」不同：这里 DXF 已经给出高召回、
+# 高精度的中心线候选（带序号），MLLM 只做「保留/剔除」二分类，不重新生成坐标。
+# 这样既避免 MLLM 编坐标误差，又用视觉判断滤掉尺寸线/图框/表格线等漏进候选的噪声。
+CENTERLINE_CLASSIFY_PROMPT = """你是铁塔图纸「候选中心线分类」Agent。图上已经画好了若干根
+候选线段，每根都带一个红色序号（如 C001、C002...）。这些候选来自 CAD 矢量层，可能混有
+尺寸线、图框线、表格线、引出线等非杆件噪声。
+
+你的任务：逐根判断每根候选线段是否是「铁塔结构杆件」。
+- 铁塔结构杆件 = 主腿（竖直主材）、水平横材/横杆、K 形 / X 形交叉的斜腹杆。
+  它们通常成对/成组、端点落在节点或另一杆件上，构成规则桁架。
+- 非杆件噪声 = 尺寸标注线（细、带箭头或尺寸数字）、图框线（贴合图片边缘的矩形）、
+  表格分隔线（平行等距的横竖线群）、引出线（一端悬空指向某处）、螺栓孔圆圈。
+
+输出 JSON：
+{
+  "keep": ["C001", "C003", ...],
+  "drop": ["C002", ...]
+}
+
+严格要求：
+1. 只输出 JSON，不要解释文字。
+2. keep 和 drop 必须是候选序号数组；每个候选序号必须出现在 keep 或 drop 中（且只一次）。
+3. 不确定的候选归入 keep（优先召回，宁可多保留一根也不要漏掉真杆件）。
+4. 只做分类，不要输出任何坐标或新线段。
+"""
+
+CENTERLINE_CLASSIFY_SCHEMA: Dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["keep", "drop"],
+    "properties": {
+        "keep": {"type": "array", "items": {"type": "string"}},
+        "drop": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+
 def _jsonschema_validate(parsed: Any, schema: Dict[str, Any]) -> List[str]:
     """结构级 JSON Schema 校验。"""
     import jsonschema
@@ -280,6 +320,34 @@ def parse_geom_agent_output(parsed: Any) -> Tuple[List[Dict[str, Any]], List[Dic
             continue
         nodes.append({"node_id": node_id.strip(), "x_px": float(x_px), "y_px": float(y_px)})
     return bars, nodes, [], warnings
+
+
+def parse_centerline_classify_output(parsed: Any) -> Tuple[set, List[str], List[str]]:
+    """阶段2.4：解析候选中心线分类输出 → (keep 序号集合, problems, warnings)。
+
+    返回 keep 集合；drop 集合由调用方用「全部候选 - keep」反推，避免依赖
+    MLLM 把每个序号都填进 drop。序号不完整/重复时记 warning 但不致命。
+    """
+    problems = _jsonschema_validate(parsed, CENTERLINE_CLASSIFY_SCHEMA) if isinstance(parsed, dict) else ["输出非 JSON 对象"]
+    if problems:
+        return set(), problems, []
+    keep = set()
+    warnings: List[str] = []
+    seen = set()
+    for i, cid in enumerate(parsed.get("keep", []) or []):
+        if not isinstance(cid, str) or not cid.strip():
+            warnings.append(f"keep[{i}]: 非字符串序号已丢弃")
+            continue
+        cid = cid.strip()
+        if cid in seen:
+            warnings.append(f"keep[{i}]: 序号 {cid} 重复已忽略")
+            continue
+        seen.add(cid)
+        keep.add(cid)
+    for i, cid in enumerate(parsed.get("drop", []) or []):
+        if isinstance(cid, str) and cid.strip() in keep:
+            warnings.append(f"drop[{i}]: 序号 {cid.strip()} 同时出现在 keep/drop，以 keep 为准")
+    return keep, [], warnings
 
 
 def validate_tower_mllm_output(parsed: Any) -> List[str]:

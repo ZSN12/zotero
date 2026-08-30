@@ -122,5 +122,32 @@ class CacheContentFingerprintTest(unittest.TestCase):
             self.assertFalse(_cache_meta_matches(parsed, img, "prompt-B-changed"))
 
 
+class CenterlineClassifyParseTest(unittest.TestCase):
+    """阶段2.4：候选中心线分类输出解析。"""
+
+    def test_parse_keep_drop(self):
+        from traceability.intake.mllm_tower_prompt import parse_centerline_classify_output
+        keep, problems, warnings = parse_centerline_classify_output(
+            {"keep": ["C001", "C003"], "drop": ["C002", "C004"]}
+        )
+        self.assertEqual(problems, [])
+        self.assertEqual(keep, {"C001", "C003"})
+
+    def test_parse_non_dict(self):
+        from traceability.intake.mllm_tower_prompt import parse_centerline_classify_output
+        keep, problems, _ = parse_centerline_classify_output(None)
+        self.assertEqual(keep, set())
+        self.assertTrue(problems)
+
+    def test_keep_drop_conflict_keep_wins(self):
+        from traceability.intake.mllm_tower_prompt import parse_centerline_classify_output
+        keep, problems, warnings = parse_centerline_classify_output(
+            {"keep": ["C001"], "drop": ["C001"]}
+        )
+        self.assertEqual(keep, {"C001"})
+        self.assertEqual(problems, [])
+        self.assertTrue(any("keep/drop" in w for w in warnings))
+
+
 if __name__ == "__main__":
     unittest.main()
