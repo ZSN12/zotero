@@ -949,6 +949,20 @@ def merge_view_coordinates(
                 comp.properties.update({"x": solved["x"], "y": solved["y"], "z": solved["z"],
                                         "solve_status": "solved"})
 
+    # ---- 阶段3 修复：未配对的 side 节点不得泄漏原始图纸 x ----
+    # side 视图的横向轴是塔身 Y（深度），其原始图纸 x（如 34557~34701）只是
+    # 该视图在整张图纸上的水平位置，不是塔身 X。配对失败（front/side 各 z 带
+    # 节点数不一致，匈牙利一对一留余）时，这些节点仍保留 tower_dxf 写入的
+    # 原始 node["x"]/node["y"]，会污染下游半宽/bbox 度量（02 段半宽 ±34701 即此因）。
+    # 这里把仍为 partial 的 side 节点的 x/y 清零（塔身 x 未知，y 才由 side 提供），
+    # z 保持 None；不影响杆件绑定（绑定在 tower_dxf 提取期已用原始坐标完成）。
+    for cid, comp in nodes_by_view.get("side", []):
+        p = comp.properties
+        if p.get("solve_status") == "partial" and (p.get("x") is not None or p.get("y") is not None):
+            p["x"] = None
+            p["y"] = None
+            p["side_unpaired_xy_cleared"] = True
+
     return merged
 
 
