@@ -423,3 +423,122 @@ def inject_mllm_bars_into_model(
         bar["component_id"] = cid
         added += 1
     return added
+
+
+def remove_x_crossing_nodes(model: EngineeringModel, *, angle_tol_deg: float = 8.0) -> int:
+    """阶段2.5：X 交叉默认不是节点——把「两条斜材单纯交叉」处的伪节点解耦。
+
+    背景：MLLM/Hough 常在两根斜材交叉处各自断成两段，注入时 `_ensure_node`
+    在交叉点合成一个度 4 节点，使本该「穿过彼此」的通长斜材被劈成两段、
+    且多出一个不存在的结构节点。本函数识别这类节点：
+
+        * 节点的入射杆件恰为 4 根；
+        * 这 4 根能两两配成「共线对」（两对方向近似相反，即两条斜材各被
+          交叉点分成两段，方向在同一直线上）；
+        * 每对的两个远端点（非交叉点）连成一根通长斜材，穿过交叉点；
+        * 删除交叉点节点与其上的 4 根碎杆，代之以 2 根通长斜材。
+
+    返回解耦的交叉节点数。纯几何后处理，只改节点/杆件拓扑，不重算坐标。
+    """
+    import math as _math
+
+    nodes = {cid: c for cid, c in model.components.items() if c.kind == "tower_node"}
+    bars = {cid: c for cid, c in model.components.items() if c.kind == "tower_bar"}
+
+    incident: Dict[str, List[str]] = {}
+    for cid, b in bars.items():
+        fn = b.properties.get("from_node")
+        tn = b.properties.get("to_node")
+        if fn in nodes:
+            incident.setdefault(fn, []).append(cid)
+        if tn in nodes:
+            incident.setdefault(tn, []).append(cid)
+
+    ang_tol = _math.radians(angle_tol_deg)
+    uncoupled = 0
+
+    for nid, bar_ids in list(incident.items()):
+        if len(bar_ids) != 4:
+            continue
+        npos = (float(nodes[nid].properties.get("x") or 0.0),
+                float(nodes[nid].properties.get("y") or 0.0))
+
+        # 每根入射杆的远端（另一端）坐标 + 从节点指向远端的方向
+        arms = []
+        for cid in bar_ids:
+            b = bars[cid]
+            fn, tn = b.properties.get("from_node"), b.properties.get("to_node")
+            if fn == nid:
+                other = tn
+            elif tn == nid:
+                other = fn
+            else:
+                other = None
+            if other is None or other not in nodes:
+                arms = None
+                break
+            op = nodes[other].properties
+            dx = float(op.get("x") or 0.0) - npos[0]
+            dy = float(op.get("y") or 0.0) - npos[1]
+            arms.append({"bar": cid, "other": other, "dx": dx, "dy": dy})
+        if arms is None or len(arms) != 4:
+            continue
+
+        # 两两配对：方向相反的臂（夹角接近 pi）构成一条通长斜材
+        used = [False] * 4
+        pairs = []
+        for i in range(4):
+            if used[i]:
+                continue
+            ai = arms[i]
+            bi = None
+            for j in range(i + 1, 4):
+                if used[j]:
+                    continue
+                aj = arms[j]
+                # 方向相反：点积为负且接近 -|a||b|（夹角 ~pi）
+                dot = ai["dx"] * aj["dx"] + ai["dy"] * aj["dy"]
+                na = _math.hypot(ai["dx"], ai["dy"])
+                nb = _math.hypot(aj["dx"], aj["dy"])
+                if na <= 1e-6 or nb <= 1e-6:
+                    continue
+                cos_ang = dot / (na * nb)
+                if cos_ang <= -_math.cos(ang_tol):
+                    bi = j
+                    break
+            if bi is None:
+                pairs = None
+                break
+            used[i] = used[bi] = True
+            pairs.append((ai, arms[bi]))
+
+        if pairs is None or len(pairs) != 2:
+            continue
+
+        # 解耦：每对生成一根通长斜材（远端点 ↔ 远端点），删除 4 根碎杆 + 交叉节点
+        pair_idx = 0
+        for ai, aj in pairs:
+            pair_idx += 1
+            op_i = nodes[ai["other"]].properties
+            op_j = nodes[aj["other"]].properties
+            new_bar_id = f"bar_X{uncoupled + 1:04d}_{pair_idx}"
+            model.add_component(Component(
+                id=new_bar_id,
+                name=f"通长斜材(穿过交叉节点 {nid})",
+                kind="tower_bar",
+                source=SourceRef(SourceType.DRAWING, "x_crossing_uncouple", confidence=0.6),
+                properties={
+                    "from_node": ai["other"], "to_node": aj["other"],
+                    "view_type": bars[ai["bar"]].properties.get("view_type"),
+                    "geometry_origin": "x_crossing_uncouple",
+                    "bar_id": bars[ai["bar"]].properties.get("bar_id")
+                              or f"UNLABELED_{new_bar_id}",
+                    "uncoupled_from": [ai["bar"], aj["bar"]],
+                },
+            ))
+        for cid in bar_ids:
+            model.components.pop(cid, None)
+        model.components.pop(nid, None)
+        uncoupled += 1
+
+    return uncoupled

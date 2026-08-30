@@ -157,6 +157,7 @@ from .hybrid_geometry import (  # noqa: F401
     drawing_xy_to_view_xy as _drawing_xy_to_view_xy,
     inject_mllm_bars_into_model as _inject_mllm_bars_into_model,
     stitch_mllm_diagonals as _stitch_mllm_diagonals,
+    remove_x_crossing_nodes as _remove_x_crossing_nodes,
 )
 
 
@@ -832,6 +833,10 @@ def run_hybrid_dxf_agent_pipeline(
                     model, bars, view_type=view_type,
                     stem=stem, layer_map_path=layer_map_path,
                 )
+                # 阶段2.5：X 交叉默认不是节点——解耦两条斜材单纯交叉处的伪节点
+                uncoupled = _remove_x_crossing_nodes(model)
+                if uncoupled:
+                    mllm_geom_meta["x_crossings_uncoupled"] = uncoupled
                 bars, _ = _dxf_model_to_agent_bars(model)
                 mllm_geom_meta["injected_bars"] = injected
                 mllm_geom_meta["stripped_vector_components"] = stripped
@@ -881,14 +886,20 @@ def run_hybrid_dxf_agent_pipeline(
                     cl_meta["kept"] = len(bars)
                     cl_meta["dropped"] = 0
                     cl_meta["note"] = "MLLM 不可用/失败或无剔除，候选全保留（高召回）"
+                # 阶段2.5：X 交叉解耦（中心线候选来自 ezdxf，交叉处同样可能被劈段）
+                uncoupled = _remove_x_crossing_nodes(model)
+                if uncoupled:
+                    cl_meta["x_crossings_uncoupled"] = uncoupled
                 cl_meta["method"] = a2_method
                 graph.finish(bars=len(bars), nodes=node_count, **cl_meta, method=a2_method)
             elif geom_method == "ezdxf" and ezdxf_bars:
                 # 显式 ezdxf：只在这种模式下才用 ezdxf 几何（默认 auto 不优先 ezdxf，
                 # 因为 04-07 双线角钢图常产 layer-0 垃圾碎杆）。
                 bars = ezdxf_bars
+                uncoupled = _remove_x_crossing_nodes(model)
                 graph.finish(bars=bar_count, nodes=node_count, method="ezdxf",
-                             association_ready=len(bars))
+                             association_ready=len(bars),
+                             x_crossings_uncoupled=uncoupled)
             elif mapping and geom_method != "ezdxf":
                 # MLLM 空/失败时优先 hough（干净的栅格回退），而非 ezdxf 垃圾。
                 hough_bars, hough_meta = _hough_bars_to_drawing(
@@ -897,11 +908,18 @@ def run_hybrid_dxf_agent_pipeline(
                 if hough_bars:
                     bars = hough_bars
                     a2_method = "hough_fallback"
+                    # 阶段2.5：hough 也做斜材共线拼接 + X 交叉解耦
+                    bars, stitched = _stitch_mllm_diagonals(bars)
+                    if stitched:
+                        hough_meta["stitched_fragments"] = stitched
                     stripped = _strip_vector_geometry(model)
                     injected = _inject_mllm_bars_into_model(
                         model, bars, view_type=view_type,
                         stem=stem, layer_map_path=layer_map_path,
                     )
+                    uncoupled = _remove_x_crossing_nodes(model)
+                    if uncoupled:
+                        hough_meta["x_crossings_uncoupled"] = uncoupled
                     bars, _ = _dxf_model_to_agent_bars(model)
                     hough_meta["injected_bars"] = injected
                     hough_meta["stripped_vector_components"] = stripped

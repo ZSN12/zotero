@@ -364,5 +364,61 @@ class LabelDistanceUnitTest(unittest.TestCase):
         self.assertNotIn("label_distance_mm", c.properties)
 
 
+class XCrossingUncoupleTest(unittest.TestCase):
+    """阶段2.5：X 交叉默认不是节点——两条斜材单纯交叉处的度4伪节点应被解耦。"""
+
+    def test_degree4_collinear_pairs_uncoupled(self):
+        from traceability.intake.hybrid_geometry import (
+            inject_mllm_bars_into_model, remove_x_crossing_nodes,
+        )
+        from traceability.model import EngineeringModel
+        m = EngineeringModel(name="x")
+        # 两根斜材在 (0,0) 交叉：对角线1 (-10,-10)-(10,10)、对角线2 (-10,10)-(10,-10)
+        # 各被交叉点劈成两段 → 4 根杆 + 交叉处 1 个度4节点
+        bars = [
+            {"bar_uid": "d1a", "x1": -10.0, "y1": -10.0, "x2": 0.0, "y2": 0.0, "view_type": "front"},
+            {"bar_uid": "d1b", "x1": 0.0, "y1": 0.0, "x2": 10.0, "y2": 10.0, "view_type": "front"},
+            {"bar_uid": "d2a", "x1": -10.0, "y1": 10.0, "x2": 0.0, "y2": 0.0, "view_type": "front"},
+            {"bar_uid": "d2b", "x1": 0.0, "y1": 0.0, "x2": 10.0, "y2": -10.0, "view_type": "front"},
+        ]
+        inject_mllm_bars_into_model(m, bars, view_type="front")
+        bars_before = [c for c in m.components.values() if c.kind == "tower_bar"]
+        nodes_before = [c for c in m.components.values() if c.kind == "tower_node"]
+        self.assertEqual(len(bars_before), 4)
+        # 5 个节点：4 个远端 + 1 个交叉点
+        self.assertEqual(len(nodes_before), 5)
+
+        uncoupled = remove_x_crossing_nodes(m)
+        self.assertEqual(uncoupled, 1)
+        bars_after = [c for c in m.components.values() if c.kind == "tower_bar"]
+        nodes_after = [c for c in m.components.values() if c.kind == "tower_node"]
+        # 2 根通长斜材（穿过交叉点）+ 4 个远端节点（交叉点已删）
+        self.assertEqual(len(bars_after), 2)
+        self.assertEqual(len(nodes_after), 4)
+        # 每根通长斜材的跨度应覆盖整条对角线（长度 ~28.28）
+        for b in bars_after:
+            self.assertEqual(len(b.properties.get("uncoupled_from") or []), 2)
+
+    def test_degree4_non_collinear_not_uncoupled(self):
+        from traceability.intake.hybrid_geometry import (
+            inject_mllm_bars_into_model, remove_x_crossing_nodes,
+        )
+        from traceability.model import EngineeringModel
+        m = EngineeringModel(name="x2")
+        # 度4但非两两共线：4 根杆在 (0,0) 汇聚、方向各异（无反向共线对），
+        # 是真实结构节点（如 K 形 / 平台交汇），不应被误解除。
+        # 方向分别为 0°、45°、90°、135°（都不构成相反对）。
+        bars = [
+            {"bar_uid": "a", "x1": 10.0, "y1": 0.0, "x2": 0.0, "y2": 0.0, "view_type": "front"},
+            {"bar_uid": "b", "x1": 10.0, "y1": 10.0, "x2": 0.0, "y2": 0.0, "view_type": "front"},
+            {"bar_uid": "c", "x1": 0.0, "y1": 10.0, "x2": 0.0, "y2": 0.0, "view_type": "front"},
+            {"bar_uid": "d", "x1": -10.0, "y1": 10.0, "x2": 0.0, "y2": 0.0, "view_type": "front"},
+        ]
+        inject_mllm_bars_into_model(m, bars, view_type="front")
+        uncoupled = remove_x_crossing_nodes(m)
+        self.assertEqual(uncoupled, 0)
+        self.assertEqual(len([c for c in m.components.values() if c.kind == "tower_bar"]), 4)
+
+
 if __name__ == "__main__":
     unittest.main()
