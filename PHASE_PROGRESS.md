@@ -1,6 +1,6 @@
 # 铁塔管线推进记录（防丢失）
 
-> 只记录「已落地 + 已验证」的步骤。当前进度：P0 ✅ / P1 ✅ / P2 基本 ✅ / Phase 4 进行中 / **Phase A ✅ Phase B ✅ Phase C–F 待 Cursor**。
+> 只记录「已落地 + 已验证」的步骤。当前进度：P0 ✅ / P1 ✅ / P2 基本 ✅ / Phase 4 进行中 / **《完整修复计划》阶段 A–G ✅（303 passed）**。
 
 ## 路线图当前状态（Phase A–F，交接给 Cursor）
 
@@ -554,4 +554,81 @@ GLB 几何门禁未通过：节点空间跨度 518.7mm < 门禁阈值 2000.0mm
   ```bash
   python3 -m pytest -m "not slow" -q  # 快速纯函数单测（192 passed，~6.6s）
   ```
+
+---
+
+## 《Engineering-Trace 完整修复计划》逐阶段收口（已落地，2026-08）
+
+> 按审计清单逐项修复，原则：①每项先补失败测试再改实现；②不放松既有语义、不虚增指标、
+> 不注入 GT、不放松容差。全部完成，全量测试 **303 passed / 0 failed**。
+
+### 阶段 A — CLI 退出码一致性（§8.6）
+
+| 项 | 落地 |
+|---|---|
+| 统一退出码常量 + `status_to_exit` | `traceability/cli_exit.py`（`verified=0 / failed=1 / review_required=2 / GT污染=3`） |
+| 修正 `cli.py` 反转映射 | 原 `review_required=1 / failed=2` → 改为 `failed=1 / review_required=2` |
+| 删除自欺测试 | `tests/test_acceptance_evidence_chain.py` 由断开的本地字面量 dict 改为断言真实实现；新增 `tests/test_cli_exit.py` |
+
+### 阶段 B — 证据链 fail-closed（§4.1/4.2/4.3/4.5）
+
+| 项 | 落地 |
+|---|---|
+| recognized 杆件写入自包含 projection_refs | `tower_dxf.py`：`source_component_id` 用 DXF handle（展开后稳定），非会被 `4f_...` 重命名的组件 ID |
+| 四面展开深拷贝 projection_refs | `tower_symmetry.py`：`copy.deepcopy`，避免浅拷贝 `list()` 共享 dict |
+| validate_references 校验 projection_refs | `io.py`：`source_component_id` 悬空检测；纯十六进制串（含纯数字 handle 如 `'101'`）判定为外部 DXF handle 不要求可解析 |
+| 测试 | `tests/test_evidence_chain.py`（projection_refs 非空/深拷贝隔离/悬空校验） |
+
+### 阶段 C — half_width 拟合失败降级（§3.2）
+
+`delivery.py`：`half_width_degraded=True` 且非 GT 注入 → `has_pending=True` → `status=review_required`（禁止用 `abs(t)` 假深度假装闭合）。交付报告新增 `half_width_degraded` 字段。
+
+### 阶段 D — 评测引擎 fail-closed（§1.3/1.4/1.5/1.7）
+
+| 项 | 落地 |
+|---|---|
+| 代价与硬门禁拆分 | `metrics.py::segment_gates`：角度>45°/长度比>3/退化段拒绝；过门禁后 `segment_cost` = 端点误差（tolerance=每端点最大误差） |
+| Hungarian dummy 未匹配 | `hungarian_match` 用 dummy 增广矩阵，最大化合法匹配、非法配对永不成 TP、顺序无关 |
+| 语义 fail-closed + allow-legacy | `is_recognized/reconstructed/physical` 默认只认 `geometry_class`，旧 `evidence_status` 仅 `allow_legacy=True`（CLI `--allow-legacy-semantics`）时生效 |
+| 取消坐标去重 | `bars_from_model_2d` / `gt_bars_2d` 不再按 `round()` 坐标去重，按物理 ID 保留投影重合杆件 multiplicity |
+
+### 阶段 E — 交付状态传播（§8.2/8.4/8.5）
+
+| 项 | 落地 |
+|---|---|
+| harness all_passed 需无 pending | `harness.py`：`all_passed = (failed==0 and pending==0)`；`delivery.py::harness_all_passed` 同步 |
+| unsolved_nodes 参与状态 | `delivery.py`：提前计算未解三轴节点，`len(unsolved_nodes)>0` → `review_required` |
+| assembly GLB 导出失败传播 | `delivery.py`：新增 `assembly_glb_error`，导出异常显式写 `status=failed`（含 enabled=True 场景），交付报告新增 `assembly_glb_error` |
+
+### 阶段 F — 跨视图身份多条件匹配（§5.2）
+
+`tower_views.py::merge_view_bars`：非主视图投影按「件号 → 3D 长度 → 截面 section」三级消歧，
+件号+长度碰撞的对称杆用截面类型（角钢/圆钢/规格）区分；仍无法唯一则进 `unresolved_projection_refs`。
+
+### 阶段 G — MLLM 与诊断（§6.1/§7.3/§7.4）
+
+| 项 | 落地 |
+|---|---|
+| overlap_ratio_threshold 真正生效 | `tower_agent_pipeline.py::_deduplicate_overlapping_bars`：端点不重合但共线重叠达阈值的短碎片判重，不足保留（原实现声明参数却未使用） |
+| label_distance_mm 写回 | 此前被 `label_distance_px` 吞掉，现两者分别写回，避免 px 距离误当 mm |
+
+### 验证
+
+- 全量测试：**303 passed / 0 failed**（含 slow/integration）。
+- `evaluate_ground_truth.py` 正常输出，未注入 GT、未放宽容差、未改测试虚增指标。
+- 关键回归：纯数字 DXF handle（`'101'`）被 `_is_dxf_handle` 误判为组件 ID 悬空引用，
+  放宽为「纯十六进制串即 handle」后修复 5 个集成测试失败。
+
+### 提交
+
+- `ef6240d` — 阶段 A-E
+- `f2c7fe8` — 阶段 F-G（含 handle 校验回归修复）
+
+两笔均已推送 `origin/main`。
+
+### 遗留（不在本次 5 项优先级内，另行排期）
+
+- 02 单张退化率 17.7%（`cluster_eps_mm=50` 对短杆偏大，靠 gate+prune 保 GLB 干净）。
+- master BOM 冲突 10（length_mm≈0、截面空、plan 是另一系列 `35C2-SJG1-ML`）。
+- gusset/bolt 锚定需独立路径（detail 03 不进 cross_file 空间合并）。
 
