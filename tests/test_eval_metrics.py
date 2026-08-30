@@ -162,17 +162,24 @@ class SemanticFreezeTest(unittest.TestCase):
         self.assertFalse(is_derived_bar({"geometry_class": "reconstructed", "face": "b"}))
         self.assertFalse(is_recognized_bar({"geometry_class": "reconstructed", "face": "b"}))
         self.assertTrue(is_physical_bar({"geometry_class": "reconstructed", "face": "b"}))
-        # derived：corner_leg / diaphragm / center —— 不进任何 P/R
+        # derived：corner_leg / center 轴 / auto_diaphragm —— 不进任何 P/R
         self.assertTrue(is_derived_bar({"evidence_status": "derived", "diaphragm": True}))
         self.assertTrue(is_derived_bar({"corner_leg": True}))
-        self.assertTrue(is_derived_bar({"face": "diaphragm"}))
+        self.assertTrue(is_derived_bar({"face": "center"}))
         self.assertFalse(is_physical_bar({"geometry_class": "derived", "diaphragm": True}))
+        # 阶段 D2 修订：横隔（diaphragm）是确定性重建的真实物理杆，不再 derived。
+        # evidence_status="reconstructed" + face="diaphragm" 进 physical，不进 recognition。
+        self.assertFalse(is_derived_bar({"diaphragm": True, "evidence_status": "reconstructed"}))
+        self.assertFalse(is_derived_bar({"face": "diaphragm", "evidence_status": "reconstructed"}))
+        self.assertTrue(is_physical_bar({"geometry_class": "reconstructed", "face": "diaphragm"}))
+        self.assertFalse(is_recognized_bar({"geometry_class": "reconstructed", "face": "diaphragm"}))
 
     def test_corner_leg_and_diaphragm_excluded(self):
-        """清单核心：整高合成角腿与自动 diaphragm 不计物理 P/R。"""
+        """清单核心：整高合成角腿与 auto_diaphragm 不计物理 P/R；横隔（diaphragm）计 physical。"""
         from traceability.eval.metrics import is_derived_bar
         self.assertTrue(is_derived_bar({"corner_leg": True, "evidence_status": "mirrored"}))
-        self.assertTrue(is_derived_bar({"diaphragm": True}))
+        # 阶段 D2：diaphragm 不再判 derived（改判 reconstructed 物理杆）
+        self.assertFalse(is_derived_bar({"diaphragm": True}))
         self.assertTrue(is_derived_bar({"auto_diaphragm": True}))
 
     def test_model_extraction_filters_by_mode(self):

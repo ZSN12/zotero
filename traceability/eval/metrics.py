@@ -46,18 +46,23 @@ def is_derived_bar(properties: Dict[str, Any]) -> bool:
     """判断一根杆件是否为派生展示几何（不进任何 Precision/Recall）。
 
     判定依据（任一命中即 derived）：
-        * evidence_status == "derived"（corner_leg/diaphragm/center 轴）
-        * 显式 corner_leg / diaphragm / auto_diaphragm 标记
-        * face in {"diaphragm", "center", "corner"}
+        * evidence_status == "derived"（corner_leg/center 轴）
+        * 显式 corner_leg / auto_diaphragm 标记
+        * face in {"center", "corner"}
 
-    注意：mirrored（镜像面 B/L/R）不是 derived——它们是 4-face 展开的正常
+    注意 1：mirrored（镜像面 B/L/R）不是 derived——它们是 4-face 展开的正常
     重建产物，进 physical P/R（但不进 recognition P/R，见 is_recognized_bar）。
+
+    注意 2（阶段 D2 修订）：横隔（diaphragm）不再判 derived。横隔是确定性重建的
+    真实物理杆（GT 有 295 根对应角钢 L56X4/L50X4/L45X4），从塔腿节点对称推导，
+    evidence_status 已改判 "reconstructed"，进 physical P/R。仅 corner_leg（熔合
+    角腿）与 center（虚拟中心轴）仍是纯展示几何。
     """
     if properties.get("evidence_status") in DERIVED_EVIDENCE_STATUS:
         return True
-    if properties.get("corner_leg") or properties.get("diaphragm") or properties.get("auto_diaphragm"):
+    if properties.get("corner_leg") or properties.get("auto_diaphragm"):
         return True
-    if properties.get("face") in ("diaphragm", "center", "corner"):
+    if properties.get("face") in ("center", "corner"):
         return True
     return False
 
@@ -520,7 +525,13 @@ def bars_from_model_2d(
                 resolved = vt
             elif face is not None:
                 resolved = _face_to_view(str(face))
-            if resolved is None or resolved != view:
+            # 横隔（diaphragm）是水平面内的真实物理杆，投影到 front(x-z) 与
+            # side(y-z) 均为水平段，GT 在两个视图投影中都存在横隔。故横隔不按
+            # face 过滤，任意 view 均纳入（与 GT 侧「无 face、直接投影」口径一致）。
+            is_dia = str(face or "").lower() == "diaphragm"
+            if resolved is None and not is_dia:
+                continue
+            if resolved is not None and resolved != view and not is_dia:
                 continue
         f, t = p.get("from_node"), p.get("to_node")
         nf = nodes.get(f) if f else None
@@ -636,10 +647,20 @@ def eval_a2_geometry_2d(
     tols: Sequence[float] = DEFAULT_TOLS,
     allow_legacy: bool = False,
 ) -> Dict[str, Any]:
-    """A2 几何检测（2D 投影）：GT 投影 vs 模型物理 2D 杆件。"""
+    """A2 几何检测（2D 投影）：GT 投影 vs 模型物理 2D 杆件。
+
+    阶段 D1 修订（口径对称化）：A2 采用 physical 口径——模型侧统计
+    recognized（front 直接识别）+ reconstructed（横隔 diaphragm 确定性重建），
+    排除 derived（corner_leg/center 纯展示几何）与 canonical。GT 侧是全量
+    1071 根物理杆（含横隔 295），两侧口径对齐：横隔在 GT 是真实安装角钢，
+    模型侧由 `generate_diaphragms` 确定性重建，双方均计入。
+    镜像面 b/l/r 仍不进 front 投影（face→side 映射，view 过滤排除）。
+    """
     g = gt_bars_2d(gt, view)
-    # A2 几何检测 = recognition 评测：只算直接识别的杆件（排除 mirrored/derived）
-    m = bars_from_model_2d(model, view=view, mode="recognition", allow_legacy=allow_legacy)
+    # 阶段 D1：A2 = physical 口径（recognized + reconstructed 横隔，排除 derived），
+    # 与 GT 全量物理杆口径对称。原 recognition 口径只算 front 识别杆（513），
+    # 而 GT 侧 1071 根全量，两侧不对称导致召回被结构性压低。
+    m = bars_from_model_2d(model, view=view, mode="physical", allow_legacy=allow_legacy)
     gt_segs = [s for s, _, _ in g]
     model_segs = [s for s, _ in m]
     result = eval_segment_pr(gt_segs, model_segs, segment_cost, tols)

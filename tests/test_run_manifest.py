@@ -39,8 +39,8 @@ def _make_merged_model() -> EngineeringModel:
             },
         ))
     m.add_component(Component(
-        id="bar_derived", name="横隔面派生杆", kind="tower_bar",
-        properties={"source_file": "sheet-a", "face": "diaphragm"},
+        id="bar_derived", name="合成角腿派生杆", kind="tower_bar",
+        properties={"source_file": "sheet-a", "corner_leg": True},
     ))
     for i in range(2):
         m.add_component(Component(
@@ -169,7 +169,7 @@ class BuildRunManifestTest(unittest.TestCase):
             self.assertEqual(sa["merged_bars"], 3)
             self.assertEqual(sa["merged_nodes"], 2)
             self.assertEqual(sa["physical_bars"], 2)   # fail-closed：仅 recognized
-            self.assertEqual(sa["derived_bars"], 1)    # face=diaphragm 派生
+            self.assertEqual(sa["derived_bars"], 1)    # corner_leg 合成角腿派生
             sb = m["stages"]["sheet-b"]
             # 无 steps → 回退 sheet_stats（ezdxf 纯矢量路径的 A2 计数）
             self.assertEqual(sb["a2_vector_bars"], 2)

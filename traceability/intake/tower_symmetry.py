@@ -298,11 +298,21 @@ def expand_4_face_symmetry_model(
         # 来源引用 + 语义冻结（阶段0）：
         #   recognized   —— primary 面（front）杆件，直接从 DXF 识别，进 physical P/R
         #   mirrored     —— 镜像派生面（b/l/r），几何派生但继承原组件 SourceRef
-        #   derived      —— corner_leg / diaphragm / center 轴，纯展示几何，不进 P/R
-        if is_diaphragm or b.get("corner_leg") or face in ("diaphragm", "center", "corner"):
+        #   derived      —— corner_leg / center 轴，纯展示几何，不进 P/R
+        #   reconstructed—— 横隔（diaphragm），确定性重建的真实物理杆（GT 有对应角钢）
+        #                   进 physical P/R，但不进 recognition P/R
+        if b.get("corner_leg") or face in ("center", "corner"):
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "derived_4face"
             evidence_status = "derived"
+        elif is_diaphragm or face == "diaphragm":
+            # 横隔：确定性重建的真实物理杆（从腿节点对称推导，非展示几何）。
+            # 保留 diaphragm 标记作溯源，但 evidence_status/geometry_class 判为
+            # reconstructed（进 physical P/R，不进 recognition P/R）。
+            # source_type 仍 DERIVED（数据来源确为「派生计算」），不影响 P/R 判定。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "diaphragm_reconstructed"
+            evidence_status = "reconstructed"
         elif face and str(face).lower() == "f":
             # front（primary）面：识别原貌，非镜像派生。
             bar_source = orig_comp.source if (orig_comp is not None and orig_comp.source is not None) else (b.get("_source_ref") or src_ref)
@@ -323,12 +333,12 @@ def expand_4_face_symmetry_model(
             evidence_status = "derived"
 
         # geometry_class（阶段 2 语义冻结）：
-        #   derived      —— corner_leg / diaphragm / center 轴（纯展示几何）
-        #   reconstructed—— 对称展开重建产物（mirrored b/l/r 面，含闭合补全）
+        #   derived      —— corner_leg / center 轴（纯展示几何）
+        #   reconstructed—— 对称展开重建产物（mirrored b/l/r 面 + 横隔 diaphragm）
         #   recognized   —— primary（front）面识别原貌（非派生）
         if evidence_status == "derived":
             geometry_class = "derived"
-        elif evidence_status == "mirrored":
+        elif evidence_status in ("mirrored", "reconstructed"):
             geometry_class = "reconstructed"
         else:
             geometry_class = "recognized"
