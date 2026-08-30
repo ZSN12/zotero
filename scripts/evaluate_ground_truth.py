@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from traceability.eval.metrics import (
     DEFAULT_TOLS,
     eval_a2_geometry_2d,
+    eval_a2_dual_caliber,
     eval_a1_labels,
     eval_a3_association,
     model_has_gt_alignment,
@@ -77,8 +78,39 @@ def main():
     print(f"=== A2 几何检测（{args.view} 投影，Hungarian 一对一匹配）===")
     print(f"GT 投影杆件（去重后）: {result['n_gt']}")
     print(f"模型物理杆件（排除 derived）: {result['n_model']}")
+
+    # P0 口径诚实化：physical 口径含「用 GT canonical 标高重建的横隔/节间」，
+    # 属借助 GT 的增强成分。对外汇报必须以纯 DXF 口径为主口径，辅助增量单列，
+    # 否则等于把抄答案的贡献算成图纸→几何的识别能力。
+    dual = eval_a2_dual_caliber(gt, model, view=args.view, tols=DEFAULT_TOLS,
+                                allow_legacy=args.allow_legacy_semantics)
     print()
-    print("tolerance sweep：")
+    print("【主口径】A2-pure（纯 DXF 识别，排除 GT 标高辅助）——对外可汇报的真实能力")
+    print(f"模型杆件: {dual['n_model_pure']}（直接识别）")
+    print(f"{'tol(mm)':>8} {'TP':>5} {'FP':>5} {'FN':>5} {'Precision':>10} {'Recall':>10}")
+    for s in dual["pure_dxf"]["sweep"]:
+        print(f"{s['tol']:>8.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
+              f"{s['precision']:>10.1%} {s['recall']:>10.1%}")
+
+    print()
+    print("【增强口径】A2-full（physical，含 GT 标高辅助重建）——仅内部归因用")
+    print(f"模型杆件: {dual['n_model_full']}（含辅助 {dual['assisted']}）")
+    print(f"{'tol(mm)':>8} {'TP':>5} {'FP':>5} {'FN':>5} {'Precision':>10} {'Recall':>10} "
+          f"{'其中辅助增量':>12}")
+    for s in dual["full"]["sweep"]:
+        gain = next((g["assisted_gain"] for g in dual["assisted_gain"]
+                     if g["tol"] == s["tol"]), 0)
+        print(f"{s['tol']:>8.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
+              f"{s['precision']:>10.1%} {s['recall']:>10.1%} {gain:>12d}")
+
+    cl = dual["ceiling"]
+    print()
+    print(f"【口径上限】{args.view} 2D 理论天花板 {cl['ceiling_rate']:.1%} "
+          f"（{cl['ceiling']}/{cl['n_gt']}），超出部分属投影不可达：")
+    print(f"  - y_member {cl['y_member_unmeasurable']} 根：{cl['reason']['y_member']}")
+    print(f"  - depth_diag 重合损失 {cl['depth_diag_overlap_loss']} 根：{cl['reason']['depth_diag']}")
+    print()
+    print("tolerance sweep（physical 口径，兼容旧输出）：")
     print(f"{'tol(mm)':>8} {'TP':>5} {'FP':>5} {'FN':>5} {'Precision':>10} {'Recall':>10}")
     for s in result["sweep"]:
         print(f"{s['tol']:>8.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import math
+from collections import Counter
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # 2D 线段：(x1, y1, x2, y2, ...metadata)
@@ -700,6 +701,130 @@ def eval_a2_geometry_2d(
     return result
 
 
+def classify_gt_role_3d(p1, p2) -> str:
+    """GT 3D 杆件角色（口径唯一真相源，供 a2_caliber_audit / 上限计算复用）。
+
+    leg        近垂直且 x/y 向偏移均 < 10%·dz
+    depth_diag 近垂直但 y 向有偏移（x 向 < 10%·dz）——front 投影与 leg 重合
+    diagonal   面内斜材
+    horiz_x    水平且沿 x（front 投影仍是真实水平段）
+    y_member   水平且沿 y（front 投影退化为点，长度 0）
+    """
+    dx = abs(p1[0] - p2[0])
+    dy = abs(p1[1] - p2[1])
+    dz = abs(p1[2] - p2[2])
+    if dz < 50.0:
+        if dx > 50.0:
+            return "horiz_x"
+        if dy > 50.0:
+            return "y_member"
+        return "degenerate"
+    if dx / max(dz, 1e-9) < 0.10 and dy / max(dz, 1e-9) < 0.10:
+        return "leg"
+    if dx / max(dz, 1e-9) < 0.10:
+        return "depth_diag"
+    return "diagonal"
+
+
+def front_view_ceiling(gt: Dict[str, Any]) -> Dict[str, Any]:
+    """front 2D 投影口径的理论召回上限（P0 口径诚实化）。
+
+    front 视图取 (x, z)，天然丢失 y 向信息，存在两类结构性不可召回：
+      * y_member：沿 y 轴的水平杆，投影后长度退化为 0，几何上无法匹配；
+      * depth_diag：与 leg 在 front 投影完全重合（实测中位距离 0mm），
+        Hungarian 1:1 匹配下 leg+depth_diag 合计最多召回一半。
+
+    不扣除这两类就等于用一个永远达不到的分母衡量算法能力，会把优化方向
+    引向错误的地方（例如反复调容差或加强端点吸附）。
+    """
+    nodes = gt.get("nodes", {})
+    roles: Counter = Counter()
+    for b in gt.get("bars", []):
+        f, t = nodes.get(b["from"]), nodes.get(b["to"])
+        if f is None or t is None:
+            continue
+        roles[classify_gt_role_3d(f, t)] += 1
+    n_total = sum(roles.values())
+    n_y = roles.get("y_member", 0)
+    n_dd = roles.get("depth_diag", 0)
+    unreachable = n_y + n_dd // 2
+    ceiling = n_total - unreachable
+    return {
+        "n_gt": n_total,
+        "by_role": dict(roles),
+        "y_member_unmeasurable": n_y,
+        "depth_diag_overlap_loss": n_dd // 2,
+        "unreachable": unreachable,
+        "ceiling": ceiling,
+        "ceiling_rate": round(ceiling / n_total, 4) if n_total else 0.0,
+        "reason": {
+            "y_member": "front 投影 (x,z) 退化为点，长度 0，几何不可匹配",
+            "depth_diag": "与 leg 在 front 投影完全重合，1:1 匹配下损失一半",
+        },
+    }
+
+
+def eval_a2_dual_caliber(
+    gt: Dict[str, Any],
+    model: Dict[str, Any],
+    view: str = "front",
+    tols: Sequence[float] = DEFAULT_TOLS,
+    allow_legacy: bool = False,
+) -> Dict[str, Any]:
+    """A2 双口径评测（P0 口径诚实化，2026-08-31）。
+
+    physical 口径把「用 GT canonical 标高生成的横隔 / 节间杆」也算进模型侧，
+    这部分是借助 GT 信息重建出来的，不代表图纸→几何的真实识别能力。对外部
+    汇报（官网验收）若只报 physical，等于把抄答案的贡献算成算法能力。
+
+    返回两块并列指标 + 辅助增量归因：
+        pure_dxf     recognition 口径——仅模型直接从 DXF 识别的杆件（主口径）
+        full         physical 口径——含 GT 标高辅助重建（增强口径）
+        assisted     辅助成分统计与 TP 增量（透明化，不隐藏）
+        ceiling      view 口径理论上限（front 为 80.1%）
+    """
+    g = gt_bars_2d(gt, view)
+    gt_segs = [s for s, _, _ in g]
+
+    m_rec = bars_from_model_2d(model, view=view, mode="recognition",
+                               allow_legacy=allow_legacy)
+    m_phys = bars_from_model_2d(model, view=view, mode="physical",
+                                allow_legacy=allow_legacy)
+
+    pure = eval_segment_pr(gt_segs, [s for s, _ in m_rec], segment_cost, tols)
+    full = eval_segment_pr(gt_segs, [s for s, _ in m_phys], segment_cost, tols)
+    pure["metric_scope"] = "pure_dxf_recognition"
+    full["metric_scope"] = "full_physical_incl_gt_assisted"
+
+    assisted: Counter = Counter()
+    for _, p in m_phys:
+        if p.get("level_source") == "gt_canonical":
+            assisted["diaphragm@gt_levels"] += 1
+        elif p.get("level_source") == "dxf_derived" and p.get("reconstructed"):
+            assisted["diaphragm@dxf_levels"] += 1
+        if p.get("panel_subdivision"):
+            assisted["panel_subdivision"] += 1
+        if p.get("panel_levels_source") == "gt_canonical_z_only":
+            assisted["subdiv@gt_levels"] += 1
+
+    tp_pure = {s["tol"]: s["tp"] for s in pure["sweep"]}
+    assisted_gain = [
+        {"tol": s["tol"], "tp_pure": tp_pure.get(s["tol"], 0),
+         "tp_full": s["tp"], "assisted_gain": s["tp"] - tp_pure.get(s["tol"], 0)}
+        for s in full["sweep"]
+    ]
+
+    return {
+        "pure_dxf": pure,
+        "full": full,
+        "assisted": dict(assisted),
+        "assisted_gain": assisted_gain,
+        "n_model_pure": len(m_rec),
+        "n_model_full": len(m_phys),
+        "ceiling": front_view_ceiling(gt),
+    }
+
+
 def eval_m3_physical_3d(
     gt: Dict[str, Any],
     model: Dict[str, Any],
@@ -803,28 +928,93 @@ def _label_ids(gt: Dict[str, Any]) -> set:
 def _model_label_ids(model: Dict[str, Any]) -> set:
     """模型识别件号集合（tower_bar 的 bar_id，排除 UNLABELED/derived/canonical）。
 
-    S1c：另并入 drawing_file.orphan_label_ids 登记簿——残根剪除（几何去噪）
-    时从「孤立标注残片」上收来的真实图纸件号。它们不是结构杆（GT 不统计），
-    但件号确实标注在图纸上，A1（件号识别）应计为有效证据。
+    ⚠️ 阶段 P1（2026-08-31 口径修复）后此函数是「回退口径」：返回
+    attached + orphan 的并集（旧行为，保留兼容）。正式 A1 评测应改用
+    `split_a1_label_sets` —— attached prediction 与 orphan inventory 分离，
+    orphan 不再无条件并入 prediction（污染 437 个非 BOM 件号的根源）。
+    """
+    return split_a1_label_sets(model)["prediction_legacy"]
+
+
+def split_a1_label_sets(model: Dict[str, Any]) -> Dict[str, Any]:
+    """P1（2026-08-31）：把模型件号证据拆为「预测」与「登记簿」两层。
+
+    背景：A1 Precision 曾低至 19.4%（437 预测 vs 197 BOM），根因是
+    attached bar_id 混入了三类污染：
+        * derived/canonical 几何 ID（corner_leg_1_XX 等）——非图纸件号；
+        * 尺寸/长度数字（'4477'、'5014'、'0'/'1'/'3' 等短数字）——
+          标注文字被件号正则误收；
+        * 其他分册/节点详图件号——不属于当前物理模型。
+
+    拆分语义（用户裁定，Phase 1 口径）：
+        * attached_label_prediction：非 derived/canonical 物理杆上的 bar_id，
+          且「形似工程件号」（见 _looks_like_bar_label）。这是 A1 的
+          prediction 唯一来源。
+        * orphan_label_inventory：drawing_file.orphan_label_ids 登记簿——
+          残根剪除时收来的图纸标注证据。默认**不**进 prediction，
+          仅作 inventory 呈报（bom_valid / non_bom 分类由 caller 叠加）。
+        * prediction_legacy：旧口径（attached 全量 + orphan 全量），
+          仅供回归对照，不再用于正式指标。
+
+    返回 dict：
+        {"attached_label_prediction": set, "orphan_label_inventory": set,
+         "prediction_legacy": set}
     """
     comps = model.get("components", {})
-    ids: set = set()
+    attached: set = set()
+    orphan: set = set()
     for c in comps.values():
-        if c.get("kind") != "tower_bar":
+        if not isinstance(c, dict):
             continue
-        p = c.get("properties", {})
-        if not is_physical_bar(p):
-            continue
-        bid = p.get("bar_id")
-        if bid and not str(bid).startswith("UNLABELED"):
-            ids.add(str(bid))
-    for c in comps.values():
-        if c.get("kind") != "drawing_file":
-            continue
-        for lab in (c.get("properties", {}) or {}).get("orphan_label_ids") or []:
-            if lab and not str(lab).startswith("UNLABELED"):
-                ids.add(str(lab))
-    return ids
+        p = c.get("properties", {}) or {}
+        if c.get("kind") == "tower_bar":
+            if not is_physical_bar(p):
+                continue
+            bid = p.get("bar_id")
+            if bid and not str(bid).startswith("UNLABELED"):
+                attached.add(str(bid))
+        elif c.get("kind") == "drawing_file":
+            for lab in p.get("orphan_label_ids") or []:
+                if lab and not str(lab).startswith("UNLABELED"):
+                    orphan.add(str(lab))
+    prediction = {x for x in attached if _looks_like_bar_label(x)}
+    return {
+        "attached_label_prediction": prediction,
+        "orphan_label_inventory": orphan,
+        "prediction_legacy": attached | orphan,
+    }
+
+
+def _looks_like_bar_label(s: str) -> bool:
+    """P1：工程件号形态判据——过滤标注数字/几何 ID 污染。
+
+    国网件号形态（guowang_merged_bom.csv 实测）：
+        * 数字件号：2~4 位（'101'~'199'、'501'~'599' 系）；
+        * 带前缀负号的材料编号：'-145'、'-3(%%c17.5)'（垫铁/附加材料）。
+    污染形态（实测 attached-BOM 437 个）：
+        * 单字符/'0'/'1' 短数字：序号、视图编号；
+        * 5 位以上裸数字：长度/坐标数字（'4477'、'1078'、'1141'）；
+        * 下划线几何 ID：'corner_leg_1_XX'、'center_...'（derived/canonical）。
+    """
+    if not s:
+        return False
+    if "_" in s:
+        # 几何合成 ID（corner_leg_*/center_*）一律排除
+        return False
+    t = s.strip()
+    if t.startswith("-"):
+        # 材料编号形态 '-145' / '-3(%%c17.5)'：负号后允许 1~4 位数字 + 可选括注
+        body = t[1:].split("(")[0]
+        return body.isdigit() and 1 <= len(body) <= 4
+    if t.isdigit():
+        # 纯数字件号：2~3 位放行（BOM 实测 '101'~'699' 段）；'0'/'1' 单字符
+        # 与 '4477'/'1078' 等 4~5 位长度数字剔除。4 位仅 BOM '39XX' 段存在
+        # （3901~3922 垫板/节点板系），其余 4 位无 BOM 先例 → 剔除。
+        if len(t) == 4:
+            return t.startswith("39")
+        return 2 <= len(t) <= 3
+    # 非数字非下划线的短字母数字（如 'A12'）：保守放行
+    return len(t) <= 6 and any(ch.isalpha() for ch in t)
 
 
 def eval_a1_labels(
@@ -850,14 +1040,19 @@ def eval_a1_labels(
         gt_ids = set(gt_label_ids)
     else:
         gt_ids = _label_ids(gt)
-    model_ids = _model_label_ids(model)
+    # P1（2026-08-31）：正式口径改为 attached_label_prediction（过滤几何 ID
+    # 与标注数字污染），orphan 登记簿单独呈报，不再并入 prediction。
+    # prediction_legacy 保留在输出里作回归对照。
+    sets = split_a1_label_sets(model)
+    model_ids = set(sets["attached_label_prediction"])
+    orphan_ids = set(sets["orphan_label_inventory"])
     if id_mapping:
         mapped = {id_mapping.get(m, m) for m in model_ids}
         model_ids = mapped
     tp = len(gt_ids & model_ids)
     fp = len(model_ids - gt_ids)
     fn = len(gt_ids - model_ids)
-    return {
+    result = {
         "n_gt": len(gt_ids),
         "n_model": len(model_ids),
         "tp": tp,
@@ -866,7 +1061,23 @@ def eval_a1_labels(
         "precision": round(tp / len(model_ids), 4) if model_ids else 0.0,
         "recall": round(tp / len(gt_ids), 4) if gt_ids else 0.0,
         "exact_match_rate": round(tp / len(gt_ids), 4) if gt_ids else 0.0,
+        # P1 分层呈报：orphan 登记簿不进 prediction，但证据保留
+        "orphan_inventory": {
+            "total": len(orphan_ids),
+            "bom_valid": len(orphan_ids & gt_ids),
+            "non_bom": len(orphan_ids - gt_ids),
+        },
+        "legacy_prediction_count": len(sets["prediction_legacy"]),
     }
+    if gt_ids:
+        # 旧口径对照（attached+orphan 全量）：用于监控口径修复的幅度
+        legacy = set(sets["prediction_legacy"])
+        if id_mapping:
+            legacy = {id_mapping.get(m, m) for m in legacy}
+        ltp = len(gt_ids & legacy)
+        result["legacy_precision"] = round(ltp / len(legacy), 4) if legacy else 0.0
+        result["legacy_recall"] = round(ltp / len(gt_ids), 4)
+    return result
 
 
 def eval_a3_association(

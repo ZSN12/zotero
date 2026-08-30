@@ -30,25 +30,11 @@ from traceability.eval.metrics import (
     gt_bars_2d,
     hungarian_match,
     segment_cost,
+    # 角色判据收敛到 metrics 单一真相源（与 gt_role_stats.py 同一判据），
+    # 避免本脚本与 front_view_ceiling 各持一份、改一处漏一处。
+    classify_gt_role_3d,
+    front_view_ceiling,
 )
-
-
-def classify_gt_role_3d(p1, p2) -> str:
-    """GT 3D 杆件角色（与 gt_role_stats.py 同一判据）。"""
-    dx = abs(p1[0] - p2[0])
-    dy = abs(p1[1] - p2[1])
-    dz = abs(p1[2] - p2[2])
-    if dz < 50.0:
-        if dx > 50.0:
-            return "horiz_x"
-        if dy > 50.0:
-            return "y_member"
-        return "degenerate"
-    if dx / max(dz, 1e-9) < 0.10 and dy / max(dz, 1e-9) < 0.10:
-        return "leg"
-    if dx / max(dz, 1e-9) < 0.10:
-        return "depth_diag"
-    return "diagonal"
 
 
 def role_tp_breakdown(g, m, tol: float) -> dict:
