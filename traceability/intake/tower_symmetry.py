@@ -229,12 +229,32 @@ def expand_4_face_symmetry_model(
     # 系统重构：默认不启用 snap_diagonals_to_legs，因为它会把原本共享的
     # 节点重新吸附到新坐标，破坏已连通的杆件网络（实测 15 杆 1 组件 →
     # 48 杆 3 组件）。仅当 overlay 显式启用 snap_diagonals 时才执行。
+    # S1c 复测（ID 碰撞修复后）：snap 仍是回归（A2 4.4%→4.0%，悬空 220→348，
+    # 塔顶越界到 37349>GT 36600）——早期结论确认成立，非碰撞 bug 污染。
     if bool(spec.get("snap_diagonals")):
         snapped_nodes, snapped_bars = snap_diagonals_to_legs(
             work_nodes, work_bars, snap_tol=snap_tol,
         )
     else:
         snapped_nodes, snapped_bars = work_nodes, work_bars
+
+    # 阶段 5.5（S1c）：迭代剪除短悬臂残根（degree=1 端点的 <阈值 短杆）。
+    # DXF 标注引线 / 终止线 / T 打断残片是单端接触的短竖杆（85~300mm），
+    # 非结构杆（GT 不统计），却把门禁 genuine_dangling 推高。长杆（≥阈值）
+    # 即使悬空也保留——真实断裂需 S3/S4 拓扑缝合。
+    # 默认关闭（max_stub_len_mm=0）：与 min_diag_len_mm 同纪律，过滤有损，
+    # 须在 overlay 显式启用（guowang_35A1 生产 overlay 配 400mm），
+    # 避免误杀测试/其它调用方的合法短杆（小型塔的短腿即合法悬臂）。
+    # 件号保全：被剪残根若携带真实图纸件号（多为孤立标注残片，无结构附着
+    # 点无法转移），收进 orphan_label_ids 登记簿——几何清除噪声，A1 证据不丢。
+    max_stub_len = float(spec.get("max_stub_len_mm", 0.0))
+    orphan_label_ids: List[str] = []
+    if max_stub_len > 0:
+        from ..solve.tower_geometry import prune_short_stub_bars
+        snapped_nodes, snapped_bars, stub_rep = prune_short_stub_bars(
+            snapped_nodes, snapped_bars, max_stub_len_mm=max_stub_len,
+        )
+        orphan_label_ids = list(stub_rep.get("pruned_label_ids") or [])
 
     # Phase 2：四面镜像展开 + 四角主腿熔合 + 横隔面
     # 阶段 5.3：多段立面拼接边界自动缝合（消除段间重叠横杆与重复节点）。
@@ -469,6 +489,11 @@ def expand_4_face_symmetry_model(
 
     df = model.components.get("drawing_file")
     if df is not None:
+        # S1c 件号登记簿：与既有 orphan_label_ids 合并（多视图/多次展开去重累积）
+        merged_orphans = list(df.properties.get("orphan_label_ids") or [])
+        for lab in orphan_label_ids:
+            if lab not in merged_orphans:
+                merged_orphans.append(lab)
         df.properties.update({
             "expanded_4_face": True,
             "face_count": 4,
@@ -482,6 +507,8 @@ def expand_4_face_symmetry_model(
             "half_width_source": ("gt" if spec.get("use_gt_half_width")
                                   else "fit" if half_width_fitted else "none"),
             "half_width_degraded": (not spec.get("use_gt_half_width") and not half_width_fitted),
+            # S1c：被剪标注残片携带的件号（几何已清、A1 证据保留）
+            "orphan_label_ids": merged_orphans,
         })
     return model
 

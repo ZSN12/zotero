@@ -1141,5 +1141,6 @@
       "min_length_units": 3.0
     }
   },
-  "min_diag_len_mm": 500.0
+  "min_diag_len_mm": 500.0,
+  "max_stub_len_mm": 400.0
 }

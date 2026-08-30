@@ -780,7 +780,12 @@ def _label_ids(gt: Dict[str, Any]) -> set:
 
 
 def _model_label_ids(model: Dict[str, Any]) -> set:
-    """模型识别件号集合（tower_bar 的 bar_id，排除 UNLABELED/derived/canonical）。"""
+    """模型识别件号集合（tower_bar 的 bar_id，排除 UNLABELED/derived/canonical）。
+
+    S1c：另并入 drawing_file.orphan_label_ids 登记簿——残根剪除（几何去噪）
+    时从「孤立标注残片」上收来的真实图纸件号。它们不是结构杆（GT 不统计），
+    但件号确实标注在图纸上，A1（件号识别）应计为有效证据。
+    """
     comps = model.get("components", {})
     ids: set = set()
     for c in comps.values():
@@ -792,6 +797,12 @@ def _model_label_ids(model: Dict[str, Any]) -> set:
         bid = p.get("bar_id")
         if bid and not str(bid).startswith("UNLABELED"):
             ids.add(str(bid))
+    for c in comps.values():
+        if c.get("kind") != "drawing_file":
+            continue
+        for lab in (c.get("properties", {}) or {}).get("orphan_label_ids") or []:
+            if lab and not str(lab).startswith("UNLABELED"):
+                ids.add(str(lab))
     return ids
 
 

@@ -1020,6 +1020,98 @@ def generate_diaphragms(
     return new_nodes, new_bars
 
 
+def prune_short_stub_bars(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    max_stub_len_mm: float = 400.0,
+    max_rounds: int = 12,
+) -> Tuple[NodeMap, List[dict], Dict[str, int]]:
+    """迭代剪除「短悬臂残根」：degree=1 端点 + 短杆的噪声树修剪（S1c）。
+
+    问题：DXF 立面里的标注引线 / 杆件终止短线 / T 形打断残片是单端接触的
+    短竖杆（85~300mm），另一端悬空（degree=1）。它们不是结构杆（GT 不统计），
+    却把门禁 genuine_dangling 推高（S1b 修复后实测 2D 层 128 个悬空节点中，
+    LEG 角色悬空杆 56 根几乎全是这类残根，中位长 240mm）。
+
+    规则（迭代至稳定）：
+        1. 统计节点度数；
+        2. 对每个 degree=1 节点：若其唯一杆件长度 < max_stub_len_mm，
+           删除该杆件（若删除后另一端变为孤立节点，一并删除）；
+        3. 重复，直到无新增可删杆（最多 max_rounds 轮）。
+
+    长杆（≥ max_stub_len_mm）即使端点悬空也保留——它们是结构杆的真实断裂，
+    需要拓扑缝合（S3/S4），不能靠删除假装闭合。
+
+    件号保全：被剪残根可能携带真实图纸件号（S1c 实测 58 个件号里 19 个只在
+    残根上出现且全部是「孤立标注残片」，两端度数<2、无结构附着点，无法转移
+    给邻杆）。这些件号是 A1（件号识别）的有效证据——图纸确实标注了它们。
+    剪除杆件时把件号收进 pruned_label_ids 返回，由调用方挂到 drawing_file 的
+    orphan_label_ids 登记簿，A1 评测时并入模型识别件号集合（几何上清除噪声，
+    件号证据不丢）。
+
+    返回 (new_nodes, new_bars, {"pruned_bars": n, "pruned_rounds": k,
+                                "pruned_label_ids": [件号...]}）。
+    """
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = [dict(b) for b in bars]
+    pruned = 0
+    pruned_labels: List[str] = []
+    seen_labels: set = set()
+
+    def _label_of(b: dict) -> Optional[str]:
+        v = b.get("bar_id")
+        if v and not str(v).startswith("UNLABELED"):
+            return str(v)
+        return None
+
+    for _round in range(max_rounds):
+        deg: Dict[str, int] = {}
+        for b in new_bars:
+            deg[b["from"]] = deg.get(b["from"], 0) + 1
+            deg[b["to"]] = deg.get(b["to"], 0) + 1
+
+        # degree=1 节点 → 其唯一杆件
+        dang_bar_ids: set = set()
+        for nid, d in deg.items():
+            if d != 1:
+                continue
+            for b in new_bars:
+                if b["from"] != nid and b["to"] != nid:
+                    continue
+                f, t = new_nodes.get(b["from"]), new_nodes.get(b["to"])
+                if f is None or t is None:
+                    continue
+                L = math.hypot(float(t[0]) - float(f[0]), float(t[2]) - float(f[2]))
+                if L < max_stub_len_mm:
+                    dang_bar_ids.add(b["id"])
+                break
+
+        if not dang_bar_ids:
+            break
+
+        # 件号保全：收集被剪残根的件号（去重）
+        for b in new_bars:
+            if b["id"] in dang_bar_ids:
+                lab = _label_of(b)
+                if lab and lab not in seen_labels:
+                    seen_labels.add(lab)
+                    pruned_labels.append(lab)
+
+        new_bars = [b for b in new_bars if b["id"] not in dang_bar_ids]
+        pruned += len(dang_bar_ids)
+
+        # 清理孤立节点（degree=0）：只删「不再被任何杆件引用」的节点。
+        referenced = {b["from"] for b in new_bars} | {b["to"] for b in new_bars}
+        new_nodes = {nid: pos for nid, pos in new_nodes.items() if nid in referenced}
+
+    return new_nodes, new_bars, {
+        "pruned_bars": pruned,
+        "pruned_rounds": max_rounds,
+        "pruned_label_ids": pruned_labels,
+    }
+
+
 def inspect_model_topology(
     nodes: NodeMap,
     bars: List[dict],
