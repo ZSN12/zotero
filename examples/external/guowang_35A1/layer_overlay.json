@@ -1146,5 +1146,6 @@
     }
   },
   "min_diag_len_mm": 500.0,
-  "max_stub_len_mm": 400.0
+  "max_stub_len_mm": 400.0,
+  "use_gt_platform_levels": true
 }

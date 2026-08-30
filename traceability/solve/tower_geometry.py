@@ -560,6 +560,7 @@ def expand_4_face_symmetry(
     half_width_fn: Optional[Callable[[float], float]] = None,
     crossarm_half_width_fn: Optional[Callable[[float], float]] = None,
     crossarm_ratio: float = 1.3,
+    diaphragm_levels: Optional[List[float]] = None,
 ) -> Tuple[NodeMap, List[dict]]:
     """单立面 → 四面封闭空间网架（Phase 2 核心映射）。
 
@@ -887,7 +888,9 @@ def expand_4_face_symmetry(
 
     # 水平横隔面：每个具备 4 个角点的标高平台生成菱形/交叉隔面
     if add_diaphragms:
-        new_nodes, new_bars = generate_diaphragms(new_nodes, new_bars, wall=wall)
+        new_nodes, new_bars = generate_diaphragms(
+            new_nodes, new_bars, wall=wall, levels=diaphragm_levels,
+        )
 
     return new_nodes, new_bars
 
@@ -899,6 +902,7 @@ def generate_diaphragms(
     wall: Optional[float] = None,
     min_z_gap: float = 2000.0,
     with_perimeter: bool = True,
+    levels: Optional[List[float]] = None,
 ) -> Tuple[NodeMap, List[dict]]:
     """在各标高平台处生成水平横隔面（内部横隔材）。
 
@@ -912,6 +916,12 @@ def generate_diaphragms(
     离散标高平台（塔身面板点，间距 2000~3000mm）出现，若按 300mm 分桶
     会在每个中间节点标高都生成横隔面（67 个平台 / 406 根），使水平杆件
     虚高到 GT（299 根）的 3 倍。2000mm 分桶对齐 GT 面板粒度（~16 平台）。
+
+    S2b（levels 参数）：传入 canonical 平台标高列表时，横隔面直接在
+    这些标高生成（z-only 注入，用户 2026-08 裁定「数量/层级可注入，
+    x/y 禁止」）。角点 x/y 仍取自标高附近 DXF 节点证据（按象限取径向
+    最大、z 对齐到平台标高），消除 2000mm 粗分桶的层 z 偏移（实测
+    ±168~779mm，导致横隔层 9/15 对齐失败）。
     """
     if wall is None:
         wall = max((abs(p[0]) for p in nodes.values()), default=0.0)
@@ -924,33 +934,58 @@ def generate_diaphragms(
         by_z[round(float(p[2]), 1)].append((nid, p))
 
     quadrants = [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
-    # 先按 min_z_gap 分桶，避免每个中间节点标高都生成横隔面（会爆炸成数百根）。
-    buckets: Dict[float, List[float]] = {}
-    for z in sorted(by_z):
-        placed = False
-        for bz in buckets:
-            if abs(bz - z) <= min_z_gap:
-                buckets[bz].append(z)
-                placed = True
-                break
-        if not placed:
-            buckets[z] = [z]
 
+    # S2b：canonical levels 模式——横隔面 z 精确取平台标高，角点 x/y 取
+    # 标高附近（±level_pick_half_window）DXF 节点证据中象限径向最大者，
+    # 其 z 对齐到平台标高（生成新角节点，避免移动共享节点坐标）。
+    # 回退：levels=None 时走原 2000mm 粗分桶路径（生产兼容）。
     corner_ids_by_z: Dict[float, List[Optional[str]]] = {}
-    for bz in sorted(buckets):
-        cids: List[Optional[str]] = [None, None, None, None]
-        for ci, (sx, sy) in enumerate(quadrants):
-            cands = []
-            for z in buckets[bz]:
-                cands.extend(
-                    (nid, p) for nid, p in by_z[z]
-                    if math.copysign(1.0, p[0]) == sx and math.copysign(1.0, p[1]) == sy
-                )
-            if cands:
-                nid, _p = max(cands, key=lambda np: np[1][0] ** 2 + np[1][1] ** 2)
-                cids[ci] = nid
-        if all(c is not None for c in cids):
-            corner_ids_by_z[bz] = cids
+    if levels:
+        pick_window = 800.0
+        for lv in sorted(float(z) for z in levels):
+            cids: List[Optional[str]] = [None, None, None, None]
+            new_corn: List[Optional[str]] = [None, None, None, None]
+            for ci, (sx, sy) in enumerate(quadrants):
+                cands = [
+                    (nid, p) for nid, p in nodes.items()
+                    if abs(float(p[2]) - lv) <= pick_window
+                    and math.copysign(1.0, p[0]) == sx
+                    and math.copysign(1.0, p[1]) == sy
+                ]
+                if cands:
+                    nid, p = max(
+                        cands, key=lambda np: np[1][0] ** 2 + np[1][1] ** 2
+                    )
+                    new_corn[ci] = (nid, p)
+            if all(c is not None for c in new_corn):
+                corner_ids_by_z[lv] = new_corn  # type: ignore[assignment]
+    else:
+        # 先按 min_z_gap 分桶，避免每个中间节点标高都生成横隔面（会爆炸成数百根）。
+        buckets: Dict[float, List[float]] = {}
+        for z in sorted(by_z):
+            placed = False
+            for bz in buckets:
+                if abs(bz - z) <= min_z_gap:
+                    buckets[bz].append(z)
+                    placed = True
+                    break
+            if not placed:
+                buckets[z] = [z]
+
+        for bz in sorted(buckets):
+            cids = [None, None, None, None]
+            for ci, (sx, sy) in enumerate(quadrants):
+                cands = []
+                for z in buckets[bz]:
+                    cands.extend(
+                        (nid, p) for nid, p in by_z[z]
+                        if math.copysign(1.0, p[0]) == sx and math.copysign(1.0, p[1]) == sy
+                    )
+                if cands:
+                    nid, _p = max(cands, key=lambda np: np[1][0] ** 2 + np[1][1] ** 2)
+                    cids[ci] = nid
+            if all(c is not None for c in cids):
+                corner_ids_by_z[bz] = cids
 
     new_bars = list(bars)
     existing_keys = {
@@ -962,7 +997,30 @@ def generate_diaphragms(
     for z, cids in sorted(corner_ids_by_z.items()):
         if any(c is None for c in cids):
             continue
-        
+
+        # S2b levels 模式：cids 是 (nid, p) 元组——角点 x/y 取证据节点，
+        # z 对齐到平台标高（生成新角节点，不动共享节点坐标）。
+        if levels and isinstance(cids[0], tuple):
+            fixed_cids: List[Optional[str]] = []
+            for ci, (nid, p) in enumerate(cids):
+                x, y = float(p[0]), float(p[1])
+                pos = (x, y, float(z))
+                hit = None
+                for cand_id, cp in new_nodes.items():
+                    if (
+                        abs(float(cp[2]) - pos[2]) <= 1.0
+                        and abs(float(cp[0]) - pos[0]) <= 1.0
+                        and abs(float(cp[1]) - pos[1]) <= 1.0
+                    ):
+                        hit = cand_id
+                        break
+                if hit is None:
+                    node_id_counter += 1
+                    hit = f"dia_corner_{node_id_counter}"
+                    new_nodes[hit] = pos
+                fixed_cids.append(hit)
+            cids = fixed_cids  # type: ignore[assignment]
+
         # 4 个主角点坐标: c0=(+w,+w), c1=(-w,+w), c2=(-w,-w), c3=(+w,-w)
         p0, p1, p2, p3 = [new_nodes[c] for c in cids]
         w_x = abs(p0[0])
@@ -1018,6 +1076,220 @@ def generate_diaphragms(
                 "generated_4face": True,
             })
     return new_nodes, new_bars
+
+
+def derive_panel_levels(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    cluster_gap_mm: float = 400.0,
+    min_node_evidence: int = 4,
+    min_horiz_evidence: int = 2,
+) -> List[float]:
+    """S2b/S6 生产默认：从 DXF 节点证据聚类推导节间平台标高。
+
+    证据来源：非横隔杆件的端点 z。平台标高的判据（任务 3.1「多证据」）：
+        * 同一高度附近（cluster_gap_mm 内）有多个独立结构证据——节点数
+          >= min_node_evidence；或
+        * 有已绘水平材端点支持（横隔层证据）——水平端点数
+          >= min_horiz_evidence。
+
+    每簇取「节点数加权中位数」为层 z。精度受 DXF 提取噪声限制（实测
+    ±100~600mm）；use_gt_platform_levels 开启时用 canonical 标高表替代
+    （用户裁定 z-only 可注入）。
+    """
+    from collections import defaultdict
+
+    evidence: Dict[int, Dict[str, int]] = defaultdict(
+        lambda: {"n": 0, "horiz": 0}
+    )
+    bar_ids = {b.get("from") for b in bars} | {b.get("to") for b in bars}
+    for b in bars:
+        f = nodes.get(b.get("from"))
+        t = nodes.get(b.get("to"))
+        if f is None or t is None:
+            continue
+        is_horiz = abs(float(f[2]) - float(t[2])) < 100.0 and abs(
+            float(f[0]) - float(t[0])
+        ) > 300.0
+        for p in (f, t):
+            ev = evidence[int(round(float(p[2]) / 100.0) * 100)]
+            ev["n"] += 1
+            if is_horiz:
+                ev["horiz"] += 1
+
+    zs = sorted(evidence)
+    if not zs:
+        return []
+    clusters: List[List[int]] = []
+    cur = [zs[0]]
+    for z in zs[1:]:
+        if z - cur[-1] <= cluster_gap_mm:
+            cur.append(z)
+        else:
+            clusters.append(cur)
+            cur = [z]
+    clusters.append(cur)
+
+    levels: List[float] = []
+    for c in clusters:
+        n = sum(evidence[z]["n"] for z in c)
+        nh = sum(evidence[z]["horiz"] for z in c)
+        if n < min_node_evidence and nh < min_horiz_evidence:
+            continue
+        weighted: List[float] = []
+        for z in c:
+            weighted.extend([float(z)] * evidence[z]["n"])
+        weighted.sort()
+        levels.append(weighted[len(weighted) // 2])
+    # 相邻推导层过近时合并（保留证据更强的）
+    levels.sort()
+    merged: List[float] = []
+    for z in levels:
+        if merged and z - merged[-1] < 350.0:
+            merged[-1] = (merged[-1] + z) / 2.0
+        else:
+            merged.append(z)
+    return merged
+
+
+def subdivide_legs_at_levels(
+    nodes: NodeMap,
+    bars: List[dict],
+    levels: List[float],
+    *,
+    min_seg_len_mm: float = 400.0,
+    min_span_mm: float = 1500.0,
+    half_width_fn: Optional[Callable[[float], float]] = None,
+    hw_proximity: float = 0.30,
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S6 主腿节间化：把通长主腿按 canonical 平台标高切成节间物理杆。
+
+    背景：DXF 立面图的主腿是通长直线（一画到底），而真实塔的主腿角钢
+    按平台标高分节制造安装（GT 实测每角 63 段）。通长杆的端点只落在
+    段图框边界（如 6643/12143），与 GT 节间端点（平台标高）错位数百
+    毫米，且长度比门禁使通长杆几乎无法匹配任何 GT 节间杆（实测 leg
+    召回 3.4%）。
+
+    做法（P2-7 用户裁定）：
+        * 几何判据选杆（此阶段 role 尚未赋值）：近竖直
+          （|dx|/|dz|<0.10）+ 跨度 >= min_span_mm + 两端 |x| 贴合塔身
+          半宽曲线（|x|/hw(z)-1 <= hw_proximity，排除横担外张杆）。
+          role=LEG 的杆自然满足；横担斜撑（外张，如 bar_112）被半宽
+          邻近判据排除；
+        * 切点 z 只取 canonical 平台标高（z-only 注入，用户 2026-08 裁定
+          「数量/层级可注入，x/y 禁止」），或 derive_panel_levels 的
+          DXF 证据推导结果；
+        * 切点 x/y 在**原杆自身直线上线性插值**（保持杆件几何连续，
+          不引入外部 x/y）；
+        * 切出的节间杆标记 panel_subdivision=True、root_bar_id=原杆 id，
+          下游语义冻结为 reconstructed（geometry_origin=panel_subdivision）；
+        * 原通长杆被替换（不再进物理口径，节间杆携带其件号/溯源链）。
+
+    返回 (new_nodes, new_bars, report)。
+    """
+    if not levels:
+        return dict(nodes), [dict(b) for b in bars], {
+            "subdivided_legs": 0, "segments_created": 0,
+        }
+    lv = sorted(float(z) for z in levels)
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = []
+    n_legs = 0
+    n_segs = 0
+    node_seq = max(
+        (int(k.split("_")[-1]) for k in nodes if str(k).split("_")[-1].isdigit()),
+        default=100000,
+    )
+
+    def _is_leg_like(b: dict) -> bool:
+        f = nodes.get(b.get("from"))
+        t = nodes.get(b.get("to"))
+        if f is None or t is None:
+            return False
+        dx = abs(float(f[0]) - float(t[0]))
+        dz = abs(float(f[2]) - float(t[2]))
+        if dz < min_span_mm or dx / max(dz, 1e-9) >= 0.10:
+            return False
+        if half_width_fn is not None:
+            for p in (f, t):
+                hw = float(half_width_fn(float(p[2])))
+                if hw <= 1e-6:
+                    return False
+                if abs(abs(float(p[0])) / hw - 1.0) > hw_proximity:
+                    return False
+        return True
+
+    for b in bars:
+        f = nodes.get(b.get("from"))
+        t = nodes.get(b.get("to"))
+        if f is None or t is None:
+            new_bars.append(dict(b))
+            continue
+        # 几何判据（此阶段 role 未赋值，见 _is_leg_like 文档）
+        if not _is_leg_like(b):
+            new_bars.append(dict(b))
+            continue
+
+        z_a, z_b = float(f[2]), float(t[2])
+        if z_a > z_b:
+            f, t = t, f
+            z_a, z_b = z_b, z_a
+        # 杆内切点（平台标高落在杆跨度内部，留出最小节间长度）
+        cuts = [
+            z for z in lv
+            if z_a + min_seg_len_mm <= z <= z_b - min_seg_len_mm
+        ]
+        if len(cuts) < 1:
+            new_bars.append(dict(b))
+            continue
+
+        # 切点序列（含原端点），切点 x/y 沿原杆直线插值
+        zs = [z_a] + cuts + [z_b]
+        node_ids: List[str] = []
+        for z in zs:
+            frac = (z - z_a) / (z_b - z_a) if z_b > z_a else 0.0
+            x = float(f[0]) + (float(t[0]) - float(f[0])) * frac
+            y = float(f[1]) + (float(t[1]) - float(f[1])) * frac
+            # 复用已有节点（切点常与横隔/斜材端点重合）
+            nid = None
+            for cand_id, cp in new_nodes.items():
+                if (
+                    abs(float(cp[2]) - z) <= 1.0
+                    and abs(float(cp[0]) - x) <= 1.0
+                    and abs(float(cp[1]) - y) <= 1.0
+                ):
+                    nid = cand_id
+                    break
+            if nid is None:
+                node_seq += 1
+                nid = f"psn_{node_seq}"
+                new_nodes[nid] = (round(x, 3), round(y, 3), round(z, 3))
+            node_ids.append(nid)
+
+        base_id = str(b.get("id") or b.get("bar_id") or "leg")
+        for k in range(len(node_ids) - 1):
+            seg = dict(b)
+            seg.update({
+                "id": f"{base_id}_ps{k:02d}",
+                "from": node_ids[k],
+                "to": node_ids[k + 1],
+                "role": "LEG",
+                "panel_subdivision": True,
+                "root_bar_id": base_id,
+                "derived_from": b.get("derived_from") or base_id,
+                "subdiv_index": k,
+                "subdiv_count": len(node_ids) - 1,
+            })
+            new_bars.append(seg)
+            n_segs += 1
+        n_legs += 1
+
+    return new_nodes, new_bars, {
+        "subdivided_legs": n_legs,
+        "segments_created": n_segs,
+        "levels_used": len(lv),
+    }
 
 
 def prune_short_stub_bars(

@@ -275,12 +275,31 @@ def expand_4_face_symmetry_model(
             half_width_fn = fitted
             half_width_fitted = True
 
+    # S6 主腿节间化 + S2b 横隔层 z 对齐（用户 2026-08 裁定：canonical 平台
+    # 标高 z-only 可注入，x/y 严禁注入 GT）。use_gt_platform_levels 开启时
+    # 用 gt_profile.gt_platform_levels()；否则 derive_panel_levels 从 DXF
+    # 节点证据聚类推导（生产默认，精度受节点噪声限制）。
+    panel_levels: List[float] = []
+    if bool(spec.get("use_gt_platform_levels")) or bool(spec.get("subdivide_legs")):
+        if bool(spec.get("use_gt_platform_levels")):
+            from ..debug.gt_profile import gt_platform_levels
+            panel_levels = list(gt_platform_levels())
+        else:
+            from ..solve.tower_geometry import derive_panel_levels
+            panel_levels = derive_panel_levels(snapped_nodes, snapped_bars)
+        from ..solve.tower_geometry import subdivide_legs_at_levels
+        snapped_nodes, snapped_bars, _sub_rep = subdivide_legs_at_levels(
+            snapped_nodes, snapped_bars, panel_levels,
+            half_width_fn=half_width_fn,
+        )
+
     face_nodes, face_bars = expand_4_face_symmetry(
         snapped_nodes, snapped_bars,
         weld_corner_legs=weld_corner_legs,
         add_diaphragms=add_diaphragms,
         half_width_fn=half_width_fn,
         crossarm_half_width_fn=crossarm_half_width_fn,
+        diaphragm_levels=panel_levels if panel_levels else None,
     )
     topology = inspect_model_topology(face_nodes, face_bars, half_width_fn=half_width_fn)
     roles = classify_members(face_nodes, face_bars)
@@ -365,9 +384,17 @@ def expand_4_face_symmetry_model(
         #   recognized   —— primary 面（front）杆件，直接从 DXF 识别，进 physical P/R
         #   mirrored     —— 镜像派生面（b/l/r），几何派生但继承原组件 SourceRef
         #   derived      —— corner_leg / center 轴，纯展示几何，不进 P/R
-        #   reconstructed—— 横隔（diaphragm），确定性重建的真实物理杆（GT 有对应角钢）
+        #   reconstructed—— 横隔（diaphragm）/主腿节间化（panel_subdivision），
+        #                   确定性重建的真实物理杆（GT 有对应角钢）
         #                   进 physical P/R，但不进 recognition P/R
-        if b.get("corner_leg") or face in ("center", "corner"):
+        if b.get("panel_subdivision"):
+            # S6 主腿节间化杆：z 切点取 canonical 平台标高（z-only 注入，
+            # 用户裁定），x/y 沿原杆直线插值（DXF 几何）。这是确定性重建
+            # 的真实物理杆，非展示几何——reconstructed，进 physical P/R。
+            bar_source = orig_comp.source if (orig_comp is not None and orig_comp.source is not None) else SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "panel_subdivision"
+            evidence_status = "reconstructed"
+        elif b.get("corner_leg") or face in ("center", "corner"):
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "derived_4face"
             evidence_status = "derived"
@@ -420,6 +447,8 @@ def expand_4_face_symmetry_model(
             "role": b.get("role") or roles.get(b["id"], "DIAG"),
             "corner_leg": bool(b.get("corner_leg")),
             "diaphragm": is_diaphragm,
+            "panel_subdivision": bool(b.get("panel_subdivision")),
+            "root_bar_id": b.get("root_bar_id"),
             "generated_4face": True,
             "solve_status": "solved",
             # 证据链
@@ -436,8 +465,12 @@ def expand_4_face_symmetry_model(
             ),
         }
         # 阶段 0.2 GT 隔离：仅「GT 半宽注入」（use_gt_half_width）才打 gt_aligned。
+        # canonical 平台标高 z-only 注入（use_gt_platform_levels）不触碰 x/y，
+        # 用户裁定不需要 gt_aligned 拒评——但在组件上留痕以便审计。
         if spec.get("use_gt_half_width"):
             bar_props["gt_aligned"] = True
+        if b.get("panel_subdivision") and bool(spec.get("use_gt_platform_levels")):
+            bar_props["panel_levels_source"] = "gt_canonical_z_only"
         keep_components[comp_id] = Component(
             id=comp_id, name=b["id"], kind="tower_bar",
             source=bar_source,

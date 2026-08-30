@@ -539,6 +539,7 @@ GLB 几何门禁未通过：节点空间跨度 518.7mm < 门禁阈值 2000.0mm
 * **落地内容**：
   1. `tower_solver.py`：新增 `_is_internal_helper()` 判定与 `_iter_physical_bars()` 迭代器，将 `corner_leg`、`diaphragm` 等展示/辅助几何降级为 internal helper，排除在 GLB 物理实体与 `tower_geometry_gate` 物理杆件数之外。
   2. `tower_geometry.py`：新增 `stitch_segment_boundaries()` 函数，对多段拼接（02/04/05/06/07/40 各带 `z_offset` 与 `z_span_mm`）在段边界阈值（≤5mm）内自动共享合并节点 ID、消除重叠横向连接杆（dedup），且拼接前后物理几何长度不失真。
+     > 📌 2026-08-30 订正：`40` 当时仍参与拼接，后实测为构件加工详图并已从 `merge_stems_extra` 移除（commit 4c5de56），现拼接集合为 **02/04/05/06/07 五段**；底段 z[0,5500] 无源。
 * **验收命令**：
   ```bash
   python3 -m pytest tests/test_tower_geometry.py tests/test_tower_solver.py -q

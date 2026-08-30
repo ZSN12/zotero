@@ -96,6 +96,7 @@ blind_test（空）。**当前所有指标均属 development，禁止同塔调�
    - 修复 02 图纸将 1:100 单线图与 1:20 结构图混叠的问题，将结构图 region 隔离至 `[34440.0, 34867.0]`，对称原点调整至 `34578.0`。
 2. **阶段 5.3 六段塔接口自动缝合**：
    - 在 `tower_views.py` 中实现 `_stitch_multisheet_boundary_nodes`，在 25mm 阈值内自动缝合段边界共享节点，重指杆件引用并清理段间重复横杆。
+   - 📌 2026-08-30 订正：当时为「六段」（含 40）。`40` 后实测为加工详图并移除，现为**五段**（02/04/05/06/07）。
 3. **阶段 2 证据链完整闭环**：
    - `tower_views.py` 与 `tower_symmetry.py` 完整写入 `projection_refs` 数组、`geometry_class` 与 `geometry_origin`，`bar_inventory.py` 补充真实图纸证据覆盖统计。
 4. **阶段 8 测试分层规范**：

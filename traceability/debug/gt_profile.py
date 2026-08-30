@@ -49,3 +49,21 @@ def gt_crossarm_half_width(z: float) -> float:
     if abs(z - best_z) > 1500.0:
         return 0.0
     return best_hw
+
+
+def gt_platform_levels() -> list:
+    """35A1-JC1 canonical 平台标高表（z-only 设计常数，用户 2026-08 裁定）。
+
+    塔身/塔头的标准横隔平台标高（真实 mm），由 GT 横隔层聚类推导的 15 个
+    设计标高。用户在 P1 任务4 / P2-7 明确裁定：**z 层级（数量/位置）可注入，
+    x/y 坐标严禁注入**——横隔生成与主腿节间化只允许用这些标高做 z 对齐，
+    端点 x/y 必须来自 DXF 提取/收分曲线拟合。
+
+    与 gt_tower_half_width 同纪律：仅 debug/评测/经 overlay 显式开启的
+    生产实验（use_gt_platform_levels）可调用；生产默认不 import。
+    """
+    return [
+        6500.0, 8500.0, 11500.0, 14000.0, 16000.0, 19000.0, 20883.0,
+        22800.0, 24000.0, 30024.0, 30800.0, 32700.0, 33525.0, 34200.0,
+        36600.0,
+    ]

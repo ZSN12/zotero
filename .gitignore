@@ -27,6 +27,7 @@ tools/oda-file-converter/tmp-input/
 
 # 系统
 .DS_Store
+.workbuddy/
 
 # 本地 MLLM 密钥（勿提交）
 .env
