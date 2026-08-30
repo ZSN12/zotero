@@ -595,11 +595,43 @@ def _compile_bar_id_re(patterns: Optional[List[str]] = None) -> re.Pattern:
     return re.compile(r"\b(" + "|".join(alts) + r")\b")
 
 
-def _extract_bar_label(text: str, bar_id_re: re.Pattern) -> Optional[str]:
+def _stem_designation_tokens(stem: str) -> set:
+    """从图名 stem（如 ``35A1-JC1-06``）提取「图号片段」，用于排除件号误贴。
+
+    归因（阶段2）：图面内的图名/塔型文字（如 "JC1"、"SJG1"、"35A1"）会被
+    兜底件号正则 ``[A-Za-z]{0,3}\\d{1,5}`` 命中，再被 TEXT_SNAP 贴到 400mm 内
+    最近的杆件上，产生 ``bar_JC1_front`` 这类伪杆。这些图号片段**不是件号**，
+    必须排除。
+
+    只排除「既含字母又含数字」的字母数字片段（如 JC1 / SJG1 / 35A1 / 35C2），
+    不排除纯数字片段（如 stem 里的 "06"，可能是真实件号）与纯字母片段（如
+    "ML"，本身不会被件号正则命中）。返回规范化大写集合。
+    """
+    if not stem:
+        return set()
+    tokens = re.split(r"[^A-Za-z0-9]+", str(stem))
+    out = set()
+    for tok in tokens:
+        if not tok:
+            continue
+        has_alpha = any(c.isalpha() for c in tok)
+        has_digit = any(c.isdigit() for c in tok)
+        if has_alpha and has_digit:
+            out.add(tok.upper())
+    return out
+
+
+def _extract_bar_label(
+    text: str,
+    bar_id_re: re.Pattern,
+    exclude_tokens: Optional[set] = None,
+) -> Optional[str]:
     """从一条 TEXT/MTEXT 中提取合法件号，否则返回 None。
 
     P1：先排除材质（Q235/Q345/Q420）、截面（L40X3 等）、螺栓
     （M16X40 / 1M16X40 / 2M16X50 等），再做件号正则匹配。
+    阶段2：额外排除图号片段（exclude_tokens，见 _stem_designation_tokens），
+    避免把图名 "JC1" 贴成件号。
     """
     if not text:
         return None
@@ -607,7 +639,12 @@ def _extract_bar_label(text: str, bar_id_re: re.Pattern) -> Optional[str]:
         if excl.search(text):
             return None
     m = bar_id_re.search(text)
-    return m.group(1) if m else None
+    if not m:
+        return None
+    label = m.group(1)
+    if exclude_tokens and str(label).strip().upper() in exclude_tokens:
+        return None
+    return label
 
 
 def _extract_section_label(text: str) -> Optional[str]:
@@ -1120,8 +1157,9 @@ def extract_tower_from_dxf(
     # 也避免一改方向就 100% 瞎贴。允许同一件号出现在多个文字位置
     # （国网图同一编号可标多根杆件），重复件号由 r_no_duplicate_bar_id 报出。
     text_labels: List[Optional[str]] = []
+    designation_tokens = _stem_designation_tokens(stem)
     for t in texts:
-        text_labels.append(_extract_bar_label(t["text"], bar_id_re))
+        text_labels.append(_extract_bar_label(t["text"], bar_id_re, designation_tokens))
 
     segs_by_view: Dict[str, List[int]] = {}
     for idx, seg in enumerate(bar_segments):

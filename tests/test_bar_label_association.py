@@ -17,6 +17,7 @@ import pytest
 from traceability.intake.tower_dxf import (
     _compile_bar_id_re,
     _extract_bar_label,
+    _stem_designation_tokens,
     extract_tower_from_dxf,
 )
 
@@ -57,6 +58,28 @@ class BarLabelRegexTest(unittest.TestCase):
         self.assertEqual(self.label("885"), "885")
         self.assertEqual(self.label("M0001"), "M0001")
         self.assertEqual(self.label("G01"), "G01")
+
+    def test_stem_designation_tokens_extracted(self):
+        self.assertEqual(
+            _stem_designation_tokens("35A1-JC1-06"),
+            {"35A1", "JC1"},
+        )
+        self.assertEqual(
+            _stem_designation_tokens("35C2-SJG1-ML"),
+            {"35C2", "SJG1"},
+        )
+        self.assertEqual(_stem_designation_tokens(""), set())
+
+    def test_designation_fragment_not_a_bar_id(self):
+        # 阶段2：图号片段（JC1/SJG1/35A1 等）不得被贴成件号
+        tokens = _stem_designation_tokens("35A1-JC1-06")
+        self.assertIsNone(_extract_bar_label("JC1", self.re, tokens))
+        self.assertIsNone(_extract_bar_label("35A1", self.re, tokens))
+        # 真实件号不受影响
+        self.assertEqual(_extract_bar_label("M0001", self.re, tokens), "M0001")
+        self.assertEqual(_extract_bar_label("G01", self.re, tokens), "G01")
+        # 纯数字片段（如 stem 里的 06）不被排除，仍可是件号
+        self.assertEqual(_extract_bar_label("06", self.re, tokens), "06")
 
 
 @pytest.mark.integration
