@@ -353,6 +353,9 @@ def _interpolate_front_y_from_z_peers(
                 y = y1
             else:
                 t = (float(ux) - x1) / (x2 - x1)
+                # 阶段3 修复：同 Z 带 peer 全在单侧时 t 远超 [0,1]（实测 -23.58），
+                # 外推出假深度（N02 y=17988mm）。钳位到 [0,1] 退化为取最近 peer 的 y。
+                t = max(0.0, min(1.0, t))
                 y = y1 + t * (y2 - y1)
         solved_dict = {
             "x": round(float(ux), 2),
@@ -714,6 +717,9 @@ def _fill_unpaired_front_y(
                 y = y1
             else:
                 t = (float(ux) - x1) / (x2 - x1)
+                # 阶段3 修复：同 Z 带 peer 全在单侧时 t 远超 [0,1]（实测 -23.58），
+                # 外推出假深度（N02 y=17988mm）。钳位到 [0,1] 退化为取最近 peer 的 y。
+                t = max(0.0, min(1.0, t))
                 y = y1 + t * (y2 - y1)
         solved_dict = {
             "x": round(float(ux), 2),
