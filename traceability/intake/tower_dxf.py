@@ -398,6 +398,84 @@ def _merge_collinear_fragments(
     return merged
 
 
+def _subdivide_at_t_junctions(
+    segments: List[Dict],
+    *,
+    snap_tol: float = 8.0,
+    max_splits_per_seg: int = 24,
+) -> List[Dict]:
+    """阶段2.5：T 形交点打断——把「端点落在其它杆件线段上」的 2D 线段在交点处劈开。
+
+    背景：国网立面图把主腿画成一根通长 LINE，而斜材/横材的端点只画到主腿
+    中心线上。若不打断，主腿被提取成一根通长杆（如 06 段 5013mm），而 GT 在
+    每个节间（2000~3000mm）都有节点把主腿拆成多段——长度比/端点对不上，A2
+    召回为 0。本函数把每条线段的端点投影到其它线段上，距离 < snap_tol 且投影
+    落在目标线段内部时，把目标线段在该点劈成两段（递归拆分，最多
+    max_splits_per_seg 段）。
+
+    只在「同 view_type」内打断，绝不跨视图。返回拆分后的段列表（保持
+    start/end/layer/handle/region/view_type/scale_ratio 等元数据）。
+    """
+    if not segments:
+        return segments
+
+    work: List[Dict] = [dict(s) for s in segments]
+
+    # 原始端点集（一次性收集，不随拆分增长）——T 形交点定义就是「某根杆的端点
+    # 落在另一根杆的内部」，所以只需把原始端点投影到各线段内部一次，无需迭代。
+    endpoints: List[Tuple[float, float]] = []
+    for s in work:
+        endpoints.append(s["start"])
+        endpoints.append(s["end"])
+
+    def _proj_param(p, seg) -> float | None:
+        x1, y1 = seg["start"]
+        x2, y2 = seg["end"]
+        dx, dy = x2 - x1, y2 - y1
+        dd = dx * dx + dy * dy
+        if dd < 1e-12:
+            return None
+        t = ((p[0] - x1) * dx + (p[1] - y1) * dy) / dd
+        if t <= 1e-4 or t >= 1.0 - 1e-4:
+            return None  # 端点本身不算内部交点
+        px = x1 + t * dx
+        py = y1 + t * dy
+        perp = math.hypot(p[0] - px, p[1] - py)
+        if perp > snap_tol:
+            return None
+        return t
+
+    out: List[Dict] = []
+    for seg in work:
+        ts: List[float] = []
+        for p in endpoints:
+            t = _proj_param(p, seg)
+            if t is not None:
+                ts.append(t)
+        if not ts:
+            out.append(seg)
+            continue
+        ts = sorted(set(round(t, 6) for t in ts))
+        if len(ts) > max_splits_per_seg:
+            ts = ts[:max_splits_per_seg]
+        x1, y1 = seg["start"]
+        x2, y2 = seg["end"]
+        dx, dy = x2 - x1, y2 - y1
+        pts = [(x1, y1)] + [(x1 + t * dx, y1 + t * dy) for t in ts] + [(x2, y2)]
+        base = {k: v for k, v in seg.items() if k not in ("start", "end", "handle")}
+        for j in range(len(pts) - 1):
+            child = dict(base)
+            child["start"] = pts[j]
+            child["end"] = pts[j + 1]
+            # handle 追加拆分序号，保持可审计且唯一
+            h = seg.get("handle")
+            child["handle"] = f"{h}#s{j}" if h else None
+            child["split_from"] = seg.get("handle")
+            out.append(child)
+
+    return out
+
+
 def _stitch_collinear_with_geometry(
     segments: List[Dict],
     *,
@@ -1048,6 +1126,21 @@ def extract_tower_from_dxf(
                 s for s in bar_segments
                 if _dist(s["start"], s["end"]) * (s.get("scale_ratio") or 1.0) >= min_bar_len
             ]
+
+        # 阶段2.5：T 形交点打断（subdivide_at_t_junctions）——把「端点落在其它
+        # 杆件线段上」的通长杆在交点劈成多段，使主腿按节间节点分段，与 GT 的
+        # 面板细分对齐。只按 view_type 各自打断，绝不跨视图。仅当 overlay 显式
+        # 启用 subdivide_at_t_junctions 时执行（06 段先验证，其它段保持旧行为）。
+        if coll_cfg and coll_cfg.get("subdivide_at_t_junctions"):
+            sub_tol = float(coll_cfg.get("subdivide_snap_tol", 8.0))
+            subdivided: List[Dict] = []
+            for vk in sorted({seg["view_type"] or "_all" for seg in bar_segments}):
+                view_segs = [s for s in bar_segments if (s["view_type"] or "_all") == vk]
+                subdivided.extend(_subdivide_at_t_junctions(
+                    view_segs, snap_tol=sub_tol,
+                    max_splits_per_seg=int(coll_cfg.get("subdivide_max_splits", 24)),
+                ))
+            bar_segments = subdivided
 
     # ---- 2) 节点：按视图区域各自聚类（视图在图纸上空间分离）----
     # 聚类阈值 eps 是「真实 mm」；而端点坐标是图纸单位。有 scale_ratio 的视图

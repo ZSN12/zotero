@@ -131,7 +131,7 @@
   "assembly_interface_tol_mm": 500.0,
   "enable_4_face_expansion": true,
   "close_face_intersections": true,
-  "intersection_snap_tol_mm": 50.0,
+  "intersection_snap_tol_mm": 30.0,
   "snap_tol_mm": 80.0,
   "view_regions": {
     "35A1-JC1-02": [
@@ -1118,8 +1118,6 @@
   },
   "glb_gate_min_4face_bars": 50,
   "glb_gate_max_4face_bars": 5000,
-  "close_face_intersections": true,
-  "intersection_snap_tol_mm": 30.0,
   "prune_to_largest_component": {
     "enabled": false
   },
