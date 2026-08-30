@@ -62,6 +62,98 @@ def _model_stem(model: EngineeringModel) -> str:
     return name
 
 
+def _robust_segment_span(
+    vy_values: List[float],
+    lo_q: float = 0.02,
+    hi_q: float = 0.98,
+) -> Tuple[float, float]:
+    """分段立面图的稳健竖向几何跨度（阶段5.1）。
+
+    简单 min/max 会被图框刻度线/极值碎片拉扯（某段多一根 stray tick 就把
+    整段高程归一化拉偏）。这里用分位数取上下界：默认 2%/98% 分位，抵抗
+    少量极端碎片；样本过少（<5）时退回 min/max（分位数无意义）。
+    返回 (lo, hi)，保证 hi > lo。
+    """
+    if len(vy_values) < 5:
+        lo, hi = min(vy_values), max(vy_values)
+        return lo, hi if hi > lo else (lo, lo + 1.0)
+    s = sorted(vy_values)
+    n = len(s)
+    li = max(0, min(n - 1, int(n * lo_q)))
+    hi_i = max(li + 1, min(n - 1, int(n * hi_q)))
+    lo, hi = s[li], s[hi_i]
+    if hi <= lo:
+        lo, hi = s[0], s[-1]
+    if hi <= lo:
+        return lo, lo + 1.0
+    return lo, hi
+
+
+def _normalize_segment_view_y(
+    nodes_by_view: Dict[str, List[Tuple[str, Component]]],
+    overlay: Optional[str | Path | dict] = None,
+) -> Dict[str, Tuple[float, float]]:
+    """阶段5.1：把分段立面/侧立面的局部 view_y 归一化为全局 Z（原地改写 view_y）。
+
+    多段塔（02/04/05/06/07/40 各带 z_offset / z_span_mm）的每张图局部 view_y
+    0 点落在图框左上（region origin），塔段下方还有标注空间，所以直接把
+    view_y 加 z_offset 会把段间接头重叠累加进高程，产生全塔高累积漂移
+    ≈733.8mm。本函数按 (drawing_view, view_kind) 分组，用稳健分位数跨度
+    [lo,hi] 把该段竖向几何线性归一化到标注段高 [0, span_mm]，再加 z_offset，
+    原地改写 front/side 节点的 view_y 为全局 Z——这样下游所有
+    `z = view_y` 的路径（front 单立面、front+side 配对、peer-fill、gusset
+    锚定）都自动拿到正确高程，无需逐路径传参。
+
+    只改写「带 z_span_mm 声明」的分段图；无 z_span_mm 的单立面/详图不改。
+    返回 {key: (lo, hi)}（key = (drawing_view, view_kind)），供审计。
+
+    注意：原局部 view_y 会保存在 `view_y_local`（若非 None），保持可追溯。
+    """
+    from .tower_spec import view_z_offset, view_z_span_mm
+
+    # 1) 按 (drawing_view, view_kind) 收集 front/side 节点的 view_y。
+    #    只有声明了 z_span_mm 的段才参与归一化（否则保持原样）。
+    groups: Dict[str, Dict[str, Any]] = {}
+    for kind in ("front", "side"):
+        for cid, comp in nodes_by_view.get(kind, []):
+            p = comp.properties
+            vy = p.get("view_y")
+            if vy is None:
+                continue
+            dv = str(p.get("drawing_view") or "")
+            if not dv:
+                continue
+            span_mm = view_z_span_mm(dv, kind, overlay=overlay)
+            if span_mm is None:
+                continue
+            key = (dv, kind)
+            g = groups.setdefault(key, {
+                "span_mm": span_mm,
+                "z_off": view_z_offset(dv, kind, overlay=overlay),
+                "vals": [],
+                "nodes": [],
+            })
+            g["vals"].append(float(vy))
+            g["nodes"].append((cid, comp))
+
+    bounds: Dict[str, Tuple[float, float]] = {}
+    # 2) 逐组归一化并原地改写 view_y。
+    for key, g in groups.items():
+        dv, kind = key
+        span_mm = float(g["span_mm"])
+        z_off = float(g["z_off"])
+        lo, hi = _robust_segment_span(g["vals"])
+        bounds[f"{dv}__{kind}"] = (lo, hi)
+        for cid, comp in g["nodes"]:
+            p = comp.properties
+            raw = float(p["view_y"])
+            local = (raw - lo) / (hi - lo) * span_mm
+            p["view_y_local"] = p.get("view_y")
+            p["view_y"] = round(z_off + local, 2)
+            p["segment_z_normalized"] = True
+    return bounds
+
+
 def _region_meta(stem: str, overlay: Optional[str | Path | dict] = None) -> Dict[str, dict]:
     out: Dict[str, dict] = {}
     for r in view_regions(stem, overlay=overlay):
@@ -659,7 +751,12 @@ def merge_view_coordinates(
             # 来源节点被分到 nodes_by_view["elevation"] 而查不到 "front"。
             nodes_by_view[canonical_view_type(vk)].append((cid, comp))
 
-    # front/side/section 的分桶键：view_y（即 Z）
+    # 阶段5.1：分段立面/侧立面局部 view_y → 全局 Z 归一化（原地改写 view_y）。
+    # 必须在此处（所有分桶/配对之前）执行，否则 front+side 配对与 peer-fill
+    # 路径会用未归一化的 view_y 当 Z，把段间接头重叠累加进高程（733.8mm 漂移）。
+    _normalize_segment_view_y(nodes_by_view, overlay=overlay)
+
+    # front/side/section 的分桶键：view_y（即 Z，已在上面归一化为全局）
     def bucket(z: Optional[float]) -> Optional[int]:
         return None if z is None else round(float(z) / eps)
 
@@ -706,36 +803,15 @@ def merge_view_coordinates(
     # 会重新生成 4 面 y）。若存在 plan 视图，则优先用 plan 的 y 补半宽。
     side_kinds_present = bool(nodes_by_view.get("side") or nodes_by_view.get("section"))
     if not side_kinds_present:
-        from .tower_spec import view_z_offset, view_z_span_mm
         front_nodes = nodes_by_view.get("front", [])
-        # 分段立面图沿 Z 堆叠：每张图局部 view_y 的 0 点未必在塔段底部
-        # （region origin 通常在图纸左上角，塔段下方还有标注空间），因此先按
-        # drawing_view 求该段局部 view_y 最小值/最大值（=该段塔身几何上下界），
-        # 再线性归一化到标注段高 z_span_mm（消除相邻段接头重叠），最后加 z_offset。
-        seg_span = {}
-        for _cid, comp in front_nodes:
-            dv = comp.properties.get("drawing_view") or stem
-            vy = comp.properties.get("view_y")
-            if vy is None:
-                continue
-            lo, hi = seg_span.get(dv, (float("inf"), float("-inf")))
-            seg_span[dv] = (min(lo, float(vy)), max(hi, float(vy)))
-
+        # 阶段5.1：view_y 已在 _normalize_segment_view_y 中归一化为全局 Z，
+        # 这里直接 z = view_y（不再二次归一化）。
         for cid, comp in front_nodes:
             p = comp.properties
             ux, uz = p.get("view_x"), p.get("view_y")
             if ux is None or uz is None:
                 continue
-            node_stem = p.get("drawing_view") or stem
-            z_off = view_z_offset(str(node_stem), "front", overlay=overlay)
-            span_mm = view_z_span_mm(str(node_stem), "front", overlay=overlay)
-            # 阶段3.1：分段立面图 Z 映射。
-            # 若 view_y 本身已在 region 局部坐标中（origin 在段底部，即 min_y 对应 Z=0），
-            # 直接 uz_global = z_off + float(uz)。
-            # 只有当 view_y 跨度严重漂移时，才做归一化。
-            # 直接使用真实的图纸几何毫米偏移，避免极值碎片拉扯整段高程。
-            local = float(uz)
-            uz_global = z_off + local
+            uz_global = float(uz)
             # 尝试从 plan 视图按 x 就近取 y（四向镜像前只是参考，展开会重算）
             y = 0.0
             plan_nodes = nodes_by_view.get("plan", [])

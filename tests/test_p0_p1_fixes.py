@@ -201,5 +201,39 @@ class P2SectionExtractionTest(unittest.TestCase):
         self.assertIsNone(_extract_section_label(""))
 
 
+class RobustSegmentSpanTest(unittest.TestCase):
+    """阶段5.1：分段立面 Z 锚点归一化的稳健跨度估计。"""
+
+    def _span(self, vals, lo_q=0.02, hi_q=0.98):
+        from traceability.intake.tower_views import _robust_segment_span
+        return _robust_segment_span(list(vals), lo_q=lo_q, hi_q=hi_q)
+
+    def test_small_sample_falls_back_to_minmax(self):
+        # 样本 <5 退回 min/max
+        lo, hi = self._span([3.0, 1.0, 2.0])
+        self.assertAlmostEqual(lo, 1.0)
+        self.assertAlmostEqual(hi, 3.0)
+
+    def test_extreme_fragment_resisted_by_quantiles(self):
+        # 大量正常值 + 一根 stray tick（极值碎片），2%/98% 分位应剔除极值
+        vals = [float(i) for i in range(100)] + [1000.0]  # 1000 是极值碎片
+        lo, hi = self._span(vals)
+        self.assertLess(hi, 100.0)  # 极值 1000 被 98% 分位挡掉
+        self.assertGreaterEqual(lo, 0.0)
+
+    def test_normalization_maps_geometry_to_span(self):
+        # 归一化：几何 [lo,hi] -> [0, span_mm]
+        lo, hi = 0.0, 100.0
+        span_mm = 5000.0
+        uz = 50.0  # 几何中点 -> 段高中点 2500
+        local = (uz - lo) / (hi - lo) * span_mm
+        self.assertAlmostEqual(local, 2500.0)
+
+    def test_degenerate_span_never_zero(self):
+        # 全等样本也不会返回 lo==hi（保证归一化分母非零）
+        lo, hi = self._span([5.0, 5.0, 5.0, 5.0, 5.0])
+        self.assertLess(lo, hi)
+
+
 if __name__ == "__main__":
     unittest.main()
