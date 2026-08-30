@@ -228,5 +228,70 @@ class RunTowerAgentPipelineTest(unittest.TestCase):
         self.assertIn("r_scan_reviewed", model.rules)
 
 
+class SubdivideViewBboxTest(unittest.TestCase):
+    """阶段2.2：面板切片 + 局部 Z 范围记录（替代 height>1400px 像素阈值）。"""
+
+    def _view(self, **over):
+        v = {
+            "bbox": [100, 200, 400, 800],  # 高 600px
+            "view_type": "front",
+            "subdivide": True,
+            "panel_count": None,
+            "overlay_region": [34345.0, 34500.0, -7650.0, -7350.0],  # 高 300 绘图单位
+            "scale_y": 20.0,
+            "z_offset": 30000.0,
+            "z_flip": False,
+        }
+        v.update(over)
+        return v
+
+    def test_panel_count_slices_and_records_z_range(self):
+        from traceability.intake.tower_agent_pipeline import _subdivide_view_bbox
+        subs = _subdivide_view_bbox(self._view(panel_count=4), "x.png", panel_count=4)
+        self.assertEqual(len(subs), 4)
+        self.assertEqual([s["panel_index"] for s in subs], [0, 1, 2, 3])
+        # Z 范围单调递增且覆盖整区 [30000, 36000]
+        z0 = min(s["z_range"][0] for s in subs)
+        z1 = max(s["z_range"][1] for s in subs)
+        self.assertEqual((z0, z1), (30000.0, 36000.0))
+        # 相邻面板有重叠（z_range 交叠，便于 stitch 拼通长斜材）
+        self.assertLess(subs[0]["z_range"][1], subs[1]["z_range"][1])
+        self.assertGreater(subs[0]["z_range"][1], subs[1]["z_range"][0])
+        # 每个面板 bbox 都落在整区 bbox 内
+        for s in subs:
+            self.assertGreaterEqual(s["bbox"][1], 200)
+            self.assertLessEqual(s["bbox"][3], 800)
+
+    def test_no_split_when_not_subdivide(self):
+        from traceability.intake.tower_agent_pipeline import _subdivide_view_bbox
+        subs = _subdivide_view_bbox(self._view(subdivide=False), "x.png")
+        self.assertEqual(len(subs), 1)
+        self.assertEqual(subs[0]["z_range"], [30000.0, 36000.0])
+
+    def test_no_split_when_short_and_no_panel_count(self):
+        from traceability.intake.tower_agent_pipeline import _subdivide_view_bbox
+        # 未给 panel_count 且高 600 < 1400 → 不切（向后兼容像素阈值行为）
+        subs = _subdivide_view_bbox(self._view(panel_count=None), "x.png")
+        self.assertEqual(len(subs), 1)
+
+    def test_z_flip_reverses_z_direction(self):
+        from traceability.intake.tower_agent_pipeline import _subdivide_view_bbox
+        v = self._view(panel_count=2, z_flip=True)
+        subs = _subdivide_view_bbox(v, "x.png", panel_count=2)
+        # z_flip 时绘图 y 增大 = 塔身下降：panel 0(bbox 顶部, y 小) 应映射到更高的 Z。
+        # 面板 0 顶到 36000，面板 1 底到 30000，两者在交界处连续。
+        self.assertEqual(subs[0]["z_range"][1], 36000.0)
+        self.assertEqual(subs[1]["z_range"][0], 30000.0)
+        self.assertGreater(subs[0]["z_range"][0], subs[1]["z_range"][0])
+        # 相邻面板有 Z 重叠（供 stitch 拼通长斜材），非首尾相接
+        self.assertGreater(subs[1]["z_range"][1], subs[0]["z_range"][0])
+
+    def test_detail_view_not_subdivided(self):
+        from traceability.intake.tower_agent_pipeline import _subdivide_view_bbox
+        v = self._view(panel_count=4, view_type="detail")
+        subs = _subdivide_view_bbox(v, "x.png", panel_count=4)
+        self.assertEqual(len(subs), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

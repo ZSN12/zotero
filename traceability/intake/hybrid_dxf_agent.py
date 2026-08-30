@@ -313,14 +313,28 @@ def _layout_views_for_overlay(
     default_vt = raw_vt if raw_vt in ("front", "plan", "side", "detail") else "front"
 
     # 子区域切分白名单：只对斜腹杆密集、单区漏检的段切分
-    # （02/04/07/40 单区检测已够好，切分反而过度检测）
+    # （02/04/07/40 单区检测已够好，切分反而过度检测）。
+    # 阶段2.2：值可为 bool（True=默认 3 块）或 int（显式面板数，3-5 块）。
     subdivide_by_stem: Dict[str, bool] = {}
+    panel_count_by_stem: Dict[str, int] = {}
     if layer_map_path:
         try:
             _ov = json.loads(Path(layer_map_path).read_text(encoding="utf-8"))
-            subdivide_by_stem = {
-                str(k): bool(v) for k, v in _ov.get("subdivide_views_by_stem", {}).items()
-            }
+            for k, v in _ov.get("subdivide_views_by_stem", {}).items():
+                k = str(k)
+                if isinstance(v, bool):
+                    subdivide_by_stem[k] = v
+                elif isinstance(v, int) and v >= 2:
+                    subdivide_by_stem[k] = True
+                    panel_count_by_stem[k] = v
+                elif isinstance(v, dict):
+                    # {"panels": 4} 形式
+                    pn = int(v.get("panels") or 0)
+                    if pn >= 2:
+                        subdivide_by_stem[k] = True
+                        panel_count_by_stem[k] = pn
+                    else:
+                        subdivide_by_stem[k] = bool(v.get("subdivide"))
         except Exception:
             subdivide_by_stem = {}
 
@@ -340,6 +354,11 @@ def _layout_views_for_overlay(
             "bbox": bbox,
             "overlay_region": region,
             "subdivide": bool(subdivide_by_stem.get(stem)),
+            "panel_count": panel_count_by_stem.get(stem),
+            "scale_x": reg.get("scale_x"),
+            "scale_y": reg.get("scale_y"),
+            "z_offset": reg.get("z_offset"),
+            "z_flip": reg.get("z_flip"),
         })
     if not views:
         views = [{

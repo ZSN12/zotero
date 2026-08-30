@@ -265,41 +265,105 @@ def _subdivide_view_bbox(
     *,
     max_sub_height_px: int = 1400,
     overlap_ratio: float = 0.12,
-) -> List[List[int]]:
+    panel_count: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     """把视图 bbox 沿高度(Z)切成多个带重叠的子 bbox，降低单区斜腹杆密度。
 
-    只对 front/elevation/side 等正交视图切分（detail 不切）；高度不超过
-    max_sub_height_px 时不切。子区域带 overlap_ratio 重叠，便于跨子区边界的
-    斜腹杆在 stitch 阶段拼回通长。
+    阶段2.2：不再用「height > max_sub_height_px」这种纯像素阈值决定切片——
+    改成按平台/节间数（panel_count）切 3-5 块。overlay 显式给出 panel_count
+    时以它为准（每块含 1-2 个节间）；未给但 subdivide=True 时回退到旧的
+    像素阈值行为（向后兼容）。只对 front/elevation/side 等正交视图切分。
 
-    返回子 bbox 列表；不切时返回 [原 bbox]。
+    每块带 overlap_ratio 重叠（10-15%），并记录对应局部 Z 范围（z_range，
+    单位 mm），供下游 stitch 按 Z 连续性拼回通长斜材。
+
+    返回子区域字典列表（含 bbox / z_range / panel_index）；不切时返回
+    [{"bbox": [原 bbox], "z_range": [整区 z 范围] 或 None, "panel_index": 0}]。
     """
     bbox = view.get("bbox") or []
     if len(bbox) < 4:
-        return [list(bbox)] if bbox else [[]]
+        return [{"bbox": list(bbox), "z_range": None, "panel_index": 0}] if bbox else []
+
+    def _no_split():
+        return [{"bbox": list(bbox), "z_range": _region_z_range(view), "panel_index": 0}]
+
     # 只在 overlay 显式标记 subdivide=True 的段切分（白名单控制），
     # 避免对单区已够好的段（02/07）过度检测
     if not view.get("subdivide"):
-        return [list(bbox)]
+        return _no_split()
     vt = view.get("view_type") or ""
     if vt not in ("front", "elevation", "side"):
-        return [list(bbox)]
+        return _no_split()
 
     x0, y0, x1, y1 = [int(v) for v in bbox[:4]]
     height = y1 - y0
-    if height <= max_sub_height_px:
-        return [list(bbox)]
 
-    # 计算子区域数量（向上取整）
-    n = max(2, -(-height // max_sub_height_px))
+    # 面板数优先级：显式 panel_count > 像素阈值回退
+    if panel_count and panel_count >= 2:
+        n = panel_count
+    else:
+        if height <= max_sub_height_px:
+            return _no_split()
+        n = max(2, -(-height // max_sub_height_px))
+
     overlap = int(height * overlap_ratio / max(1, n - 1))
-    sub_bboxes: List[List[int]] = []
     step = (height - overlap) / n
+    region = view.get("overlay_region")
+    sub_views: List[Dict[str, Any]] = []
     for i in range(n):
         sy0 = int(y0 + round(i * step))
-        sy1 = y1 if i == n - 1 else int(min(y1, sy0 + max_sub_height_px))
-        sub_bboxes.append([x0, sy0, x1, sy1])
-    return sub_bboxes
+        sy1 = y1 if i == n - 1 else int(min(y1, sy0 + round(step + overlap)))
+        z_range = _sub_bbox_z_range([x0, sy0, x1, sy1], view, region)
+        sub_views.append({
+            "bbox": [x0, sy0, x1, sy1],
+            "z_range": z_range,
+            "panel_index": i,
+        })
+    return sub_views
+
+
+def _region_z_range(view: Dict[str, Any]) -> Optional[List[float]]:
+    """整个视图 bbox 对应的全局 Z 范围（mm），无法映射时返回 None。"""
+    return _sub_bbox_z_range(view.get("bbox"), view, view.get("overlay_region"))
+
+
+def _sub_bbox_z_range(
+    bbox: List[int],
+    view: Dict[str, Any],
+    region: Optional[List[float]],
+) -> Optional[List[float]]:
+    """子 bbox（像素）→ 全局 Z 范围（mm）。
+
+    region 是 overlay 的绘图坐标 bbox [x0,x1,y0,y1]；view 携带 overlay_region
+    （绘图坐标）与 scale_y/z_offset/z_flip。像素 y 线性映射回绘图 y，再按
+    z_flip 决定方向：z_flip=false 时绘图 y 增大=塔身升高（z 增大）。
+    返回 [z0, z1]（z0 <= z1）。
+    """
+    if not region or len(region) < 4:
+        return None
+    scale_y = float(view.get("scale_y") or view.get("scale_x") or 20.0)
+    z_offset = float(view.get("z_offset") or 0.0)
+    z_flip = bool(view.get("z_flip"))
+    # 像素 bbox → 绘图 y：需要 pixel↔drawing 仿射。视图 bbox 是整图像素坐标，
+    # region 是绘图坐标；两者比例 = (region[3]-region[2]) / (view bbox 高)。
+    vb = view.get("bbox") or []
+    if len(vb) < 4 or (vb[3] - vb[1]) <= 0:
+        return None
+    ry0, ry1 = region[2], region[3]
+    vy0, vy1 = vb[1], vb[3]
+    # 子 bbox 顶部/底部像素 → 绘图 y（线性插值）
+    by0, by1 = bbox[1], bbox[3]
+    draw_y0 = ry0 + (by0 - vy0) / (vy1 - vy0) * (ry1 - ry0)
+    draw_y1 = ry0 + (by1 - vy0) / (vy1 - vy0) * (ry1 - ry0)
+    if z_flip:
+        z0 = z_offset + (ry1 - draw_y1) * scale_y
+        z1 = z_offset + (ry1 - draw_y0) * scale_y
+    else:
+        z0 = z_offset + (draw_y0 - ry0) * scale_y
+        z1 = z_offset + (draw_y1 - ry0) * scale_y
+    if z0 > z1:
+        z0, z1 = z1, z0
+    return [round(z0, 1), round(z1, 1)]
 
 
 def _crop_scale_factors(crop: Dict[str, Any]) -> Tuple[float, float, float, float]:
@@ -475,11 +539,16 @@ def _mllm_detect_geometry(
         # 多个带重叠的子区域分别检测，降低单区斜腹杆密度，避免 MLLM 漏检
         # （06 段 112 根斜腹杆单次检测只出 43 根）。子区域坐标经
         # _geom_to_full_image 还原到整图后合并，重叠区不做去重（由 stitch 拼接）。
-        sub_bboxes = _subdivide_view_bbox(view, png_path)
-        for si, sub_bbox in enumerate(sub_bboxes):
-            sub_view_id = f"{view['view_id']}" if len(sub_bboxes) == 1 else f"{view['view_id']}_s{si}"
+        sub_views = _subdivide_view_bbox(view, png_path, panel_count=view.get("panel_count"))
+        for si, sub_view in enumerate(sub_views):
+            sub_bbox = sub_view["bbox"]
+            sub_view_id = f"{view['view_id']}" if len(sub_views) == 1 else f"{view['view_id']}_s{si}"
             try:
                 crop = _crop_view(png_path, sub_bbox, crops_dir, f"geom_{sub_view_id}")
+                if sub_view.get("z_range"):
+                    # 阶段2.2：给 crop 记录局部 Z 范围，供 stitch 按 Z 连续性拼通长斜材
+                    crop["z_range"] = sub_view["z_range"]
+                    crop["panel_index"] = sub_view.get("panel_index")
                 parsed, call_meta = mllm.call_agent_json(
                     GEOM_AGENT_PROMPT, crop["path"], GEOM_AGENT_SCHEMA, agent="a2_geom",
                 )
@@ -513,7 +582,7 @@ def _mllm_detect_geometry(
             except Exception as exc:
                 meta["failed_calls"] += 1
                 meta["warnings"].append(f"{sub_view_id}: {exc}")
-        if len(sub_bboxes) > 1:
+        if len(sub_views) > 1:
             meta.setdefault("subdivided_views", 0)
             meta["subdivided_views"] += 1
 
