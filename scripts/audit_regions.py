@@ -53,19 +53,25 @@ def audit_sheet(stem: str, dxf_dir: str, overlay: dict) -> dict:
         segs.append((e.dxf.start.x, e.dxf.start.y, e.dxf.end.x, e.dxf.end.y))
 
     total = len(segs)
-    front = [r for r in regions if r.get("kind") in ("front", "elevation") and r.get("region")]
-    if not front:
+    # 多 region 感知：front/side/elevation 都算「立面」覆盖目标（02 段已拆成
+    # front[34345,34500] + side[34540,34620]，两栏都是真实立面）。section/plan/
+    # drawing 不参与立面覆盖统计。
+    elevation_regions = [r for r in regions
+                         if r.get("kind") in ("front", "side", "elevation") and r.get("region")]
+    if not elevation_regions:
         return {"stem": stem, "total_lines": total, "regions": len(regions),
-                "front_regions": 0, "note": "无 front 区域声明"}
+                "elevation_regions": 0, "note": "无 front/side/elevation 区域声明"}
 
-    # 覆盖率（按段中点）+ 区域外分桶 y 跨度（簇感知）
+    # 覆盖率（按段中点落在任一立面 region 内即算覆盖）+ 区域外分桶 y 跨度（簇感知）
     covered = 0
     outside_buckets: dict = {}
-    rx0, rx1, ry0, ry1 = front[0]["region"]
-    reg_h = ry1 - ry0
+    reg_h = max(r["region"][3] - r["region"][2] for r in elevation_regions)
     for x0, y0, x1, y1 in segs:
         mx, my = (x0 + x1) / 2, (y0 + y1) / 2
-        if rx0 <= mx <= rx1 and ry0 <= my <= ry1:
+        hit = any(r["region"][0] <= mx <= r["region"][1] and
+                  r["region"][2] <= my <= r["region"][3]
+                  for r in elevation_regions)
+        if hit:
             covered += 1
             continue
         b = round(mx // 50) * 50
@@ -89,7 +95,7 @@ def audit_sheet(stem: str, dxf_dir: str, overlay: dict) -> dict:
     xs = [c for s in segs for c in (s[0], s[2])]
     ys = [c for s in segs for c in (s[1], s[3])]
     actual_bbox = (min(xs), max(xs), min(ys), max(ys))
-    decl_bbox = tuple(front[0]["region"]) if front else None
+    decl_bbox = [tuple(r["region"]) for r in elevation_regions]
 
     return {
         "stem": stem,
@@ -130,9 +136,9 @@ def main() -> int:
             continue
         flag = ("  ← 区域外有全高内容(立面被裁或全高表格,须目检)"
                 if rep["needs_split"] else "  ✓ 区域外无全高内容")
-        print(f"{stem}: 结构线 {rep['total_lines']} 根, region 覆盖 "
+        print(f"{stem}: 结构线 {rep['total_lines']} 根, 立面 region 覆盖 "
               f"{rep['covered']}/{rep['total_lines']} ({rep['coverage']:.0%}){flag}")
-        print(f"   声明 bbox {rep['declared_bbox']}")
+        print(f"   立面 bbox {rep['declared_bbox']}")
         print(f"   区域外全高簇 {rep['outside_full_height_lines']} 根 "
               f"(桶{rep['outside_full_height_buckets']}) | "
               f"局部簇(大样/表) {rep['outside_partial_lines']} 根")

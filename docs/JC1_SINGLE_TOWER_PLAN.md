@@ -236,6 +236,42 @@ projection_refs(region_id)；侧立面杆进 side 通道参与四面展开（而
 A1 保持 P≥80%/R≥55%；A2 R@200/R@500 预期随对齐显著提升；3D 门禁悬空节点下降。
 原则不变：不注入 GT、不放宽门禁、不改测试标准。
 
+## 9. 阶段2.2 连通分量定论（2026-08-30，覆盖桶级审计误报）
+
+桶级 y-span 审计（v2）把「竖直堆叠的多个局部大样」误判成全高立面。改用**端点吸附
+union-find 连通分量**（`scripts/classify_sheet_views.py`，权威判据）逐段分类，
+结果如下：
+
+| 段 | 左侧立面(region 内) | 右侧全高立面(region 外) | 结论 |
+|---|---|---|---|
+| 40 | 3337mm | **2745mm（漏）** | region 漏右侧立面 |
+| 07 | 4663mm | **2876mm（漏）** | region 漏右侧立面 |
+| 06 | 3723mm（已覆盖） | —（34816 处是材料表） | **region 正确，不改** |
+| 05 | 3910mm（已覆盖） | —（34932 处是材料表） | region 覆盖主立面 ✓ |
+| 04 | 2216mm | **2216mm（漏，等宽=方塔身前/侧）** | region 漏右侧立面 |
+| 02 | 2712mm（front 含横担） | 1212mm（side，=GT z31m 塔身宽） | **已拆 front+side** ✓ |
+
+**02 段铁证**（渲染目检 + 逐带廓形 + GT 宽度交叉验证）：
+- 图上有**两个全高立面**：front（2712mm，中部 y≈-7520 有 2523mm 横担隆起）
+  与 side（1212mm，单调收窄无隆起）。side 宽 1212mm 与 GT z=31m 塔身宽 1212mm
+  **分毫不差**（scale=20 由 DIM 实测确认：380mm↔19.0 单位，十余样本一致）。
+- 原 overlay 把**侧立面**框成 `front`，且 `sheets.front="35A1-JC1-02"` 拿它做
+  全塔 normalize_x——**真正的前立面（含横担）从未被提取**。
+
+**已完成代码优化**：
+1. `layer_overlay.json`：02 拆成 `front`[34345,34500,-7650,-7350]（含横担）+
+   `side`[34540,34620,-7645,-7340] 两个 region；`sheets.side` 由 null 改为
+   "35A1-JC1-02"（同 sheet 侧立面现已声明）。
+2. `scripts/audit_regions.py`：多 region 感知（front/side/elevation 均计覆盖），
+   不再只认第一个 front region。
+3. `scripts/classify_sheet_views.py`：新增连通分量分类（union-find，TOL 可调），
+   输出立面/大样/材料表 bbox 与 region 对照，是 Phase1 剩余段的定论工具。
+
+**待办（Phase 1 剩余）**：40/07/04 三段的右侧全高立面尚未写入 overlay（需像 02
+一样补 side region + 确认 front/side 归属）；05 建议复核是否有第二立面被 TOL=8
+碎裂（TOL=25 下 05 主立面 n=413 已含右延，未见独立第二立面）。
+
+
 
 
 

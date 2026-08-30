@@ -88,7 +88,7 @@
     "sheets": {
       "front": "35A1-JC1-02",
       "plan": "35C2-SJG1-ML",
-      "side": null,
+      "side": "35A1-JC1-02",
       "detail": "35A1-JC1-03"
     },
     "infer_side_on_stems": [],
@@ -137,7 +137,30 @@
     "35A1-JC1-02": [
       {
         "kind": "front",
-        "title": "正立面",
+        "title": "正立面(含横担)",
+        "origin": [
+          34422.5,
+          -7500.0
+        ],
+        "region": [
+          34345.0,
+          34500.0,
+          -7650.0,
+          -7350.0
+        ],
+        "axes": [
+          "x",
+          "z"
+        ],
+        "scale_x": 20.0,
+        "scale_y": 20.0,
+        "z_flip": false,
+        "z_offset": 30000.0,
+        "z_span_mm": 6600.0
+      },
+      {
+        "kind": "side",
+        "title": "侧立面",
         "origin": [
           34578.03,
           -7638.59
