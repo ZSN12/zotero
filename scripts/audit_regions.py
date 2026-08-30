@@ -58,15 +58,27 @@ def audit_sheet(stem: str, dxf_dir: str, overlay: dict) -> dict:
         return {"stem": stem, "total_lines": total, "regions": len(regions),
                 "front_regions": 0, "note": "无 front 区域声明"}
 
-    # 覆盖率（按段中点）
+    # 覆盖率（按段中点）+ 区域外分桶 y 跨度（簇感知）
     covered = 0
+    outside_buckets: dict = {}
+    rx0, rx1, ry0, ry1 = front[0]["region"]
+    reg_h = ry1 - ry0
     for x0, y0, x1, y1 in segs:
         mx, my = (x0 + x1) / 2, (y0 + y1) / 2
-        for r in front:
-            rx0, rx1, ry0, ry1 = r["region"]
-            if rx0 <= mx <= rx1 and ry0 <= my <= ry1:
-                covered += 1
-                break
+        if rx0 <= mx <= rx1 and ry0 <= my <= ry1:
+            covered += 1
+            continue
+        b = round(mx // 50) * 50
+        s = outside_buckets.setdefault(b, [1e18, -1e18, 0])
+        s[0] = min(s[0], y0, y1)
+        s[1] = max(s[1], y0, y1)
+        s[2] += 1
+
+    # 簇感知：区域外「全高」桶（y 跨度 >= 70% region 高）——立面被裁或全高表格，
+    # 须目检甄别；局部桶是节点大样/材料表局部框线，region 排除它是正确行为。
+    full_height = {b: s for b, s in outside_buckets.items() if s[1] - s[0] >= 0.7 * reg_h}
+    partial = {b: s for b, s in outside_buckets.items() if s[1] - s[0] < 0.7 * reg_h}
+    fh_lines = sum(s[2] for s in full_height.values())
 
     # x 直方图（每 50 单位）
     hist = Counter()
@@ -87,7 +99,12 @@ def audit_sheet(stem: str, dxf_dir: str, overlay: dict) -> dict:
         "declared_bbox": decl_bbox,
         "actual_bbox": actual_bbox,
         "x_histogram_50": dict(sorted(hist.items())),
-        "needs_split": (covered / total < 0.80) if total else False,
+        # 簇感知指标
+        "outside_full_height_lines": fh_lines,
+        "outside_full_height_buckets": sorted(full_height),
+        "outside_partial_lines": sum(s[2] for s in partial.values()),
+        # 区域外有全高内容才需要处理（立面被裁或全高表格，目检甄别）
+        "needs_split": fh_lines > 0,
     }
 
 
@@ -111,11 +128,14 @@ def main() -> int:
         if "error" in rep:
             print(f"{stem}: {rep['error']}")
             continue
-        flag = "  ← 需拆分/修正" if rep["needs_split"] else ""
+        flag = ("  ← 区域外有全高内容(立面被裁或全高表格,须目检)"
+                if rep["needs_split"] else "  ✓ 区域外无全高内容")
         print(f"{stem}: 结构线 {rep['total_lines']} 根, region 覆盖 "
               f"{rep['covered']}/{rep['total_lines']} ({rep['coverage']:.0%}){flag}")
         print(f"   声明 bbox {rep['declared_bbox']}")
-        print(f"   实际 bbox {rep['actual_bbox']}")
+        print(f"   区域外全高簇 {rep['outside_full_height_lines']} 根 "
+              f"(桶{rep['outside_full_height_buckets']}) | "
+              f"局部簇(大样/表) {rep['outside_partial_lines']} 根")
         print(f"   x 直方图(50桶) {rep['x_histogram_50']}")
         print()
     return 0
