@@ -323,12 +323,24 @@ def _merge_collinear_fragments(
     used = [False] * len(segs)
     ang_tol = math.radians(8.0)
 
+    def _region_key(s) -> object:
+        # region 身份：bbox + origin + kind 三元组；None 表示未分区（旧路径兼容）。
+        r = s.get("region")
+        if not isinstance(r, dict):
+            return None
+        return (
+            tuple(r.get("region") or []),
+            tuple(r.get("origin") or []),
+            r.get("kind"),
+        )
+
     for i in range(len(segs)):
         if used[i]:
             continue
         # 以 i 为起点做链式延伸
         chain = [segs[i]]
         used[i] = True
+        seed_region = _region_key(segs[i])
         grew = True
         while grew:
             grew = False
@@ -346,6 +358,12 @@ def _merge_collinear_fragments(
                 if used[j]:
                     continue
                 cand = segs[j]
+                # 阶段3 修复（C1）：共线链不得跨 region 延伸。国网 side 视图的塔身
+                # 与材料表同属一个 view_type，但空间分离；若不约束 region，链会从
+                # 塔身段「走」进材料表线簇（N154 案例：走 60u 进材料表，泄漏原始
+                # 图纸 x=34701 污染半宽）。仅当两端都带 region 时约束，None 回退旧行为。
+                if seed_region is not None and _region_key(cand) != seed_region:
+                    continue
                 da = abs(_ang(cand) - ba)
                 if da > ang_tol and abs(da - math.pi) > ang_tol:
                     continue
