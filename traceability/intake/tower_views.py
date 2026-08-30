@@ -109,7 +109,7 @@ def _normalize_segment_view_y(
 
     注意：原局部 view_y 会保存在 `view_y_local`（若非 None），保持可追溯。
     """
-    from .tower_spec import view_z_offset, view_z_span_mm
+    from .tower_spec import view_z_offset, view_z_span_mm, view_region
 
     # 1) 按 (drawing_view, view_kind) 收集 front/side 节点的 view_y。
     #    只有声明了 z_span_mm 的段才参与归一化（否则保持原样）。
@@ -130,6 +130,7 @@ def _normalize_segment_view_y(
             g = groups.setdefault(key, {
                 "span_mm": span_mm,
                 "z_off": view_z_offset(dv, kind, overlay=overlay),
+                "z_flip": bool((view_region(dv, kind, overlay=overlay) or {}).get("z_flip")),
                 "vals": [],
                 "nodes": [],
             })
@@ -142,12 +143,21 @@ def _normalize_segment_view_y(
         dv, kind = key
         span_mm = float(g["span_mm"])
         z_off = float(g["z_off"])
+        z_flip = bool(g["z_flip"])
         lo, hi = _robust_segment_span(g["vals"])
         bounds[f"{dv}__{kind}"] = (lo, hi)
         for cid, comp in g["nodes"]:
             p = comp.properties
             raw = float(p["view_y"])
-            local = (raw - lo) / (hi - lo) * span_mm
+            # view_y 语义：CAD 通常 Y 向下，view_y=0 落在段顶（几何窄端），
+            # view_y=hi 落在段底（宽端）。若 region 未声明 z_flip（默认），
+            # 需把几何翻转成「向上为正」：hi→0（段底=z_offset）、
+            # lo→span_mm（段顶=z_offset+span_mm）。若 z_flip=True（tower_dxf
+            # 已做过 ly=-ly），则 view_y=0 已是段底，直接 lo→0。
+            if z_flip:
+                local = (raw - lo) / (hi - lo) * span_mm
+            else:
+                local = (hi - raw) / (hi - lo) * span_mm
             p["view_y_local"] = p.get("view_y")
             p["view_y"] = round(z_off + local, 2)
             p["segment_z_normalized"] = True
