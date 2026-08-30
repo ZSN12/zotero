@@ -184,8 +184,8 @@ if not model.exists():
 print(f"PASS: view_type={sorted(vts)} + merged model 存在")
 PYEOF
 
-echo "==> [5/5] pytest 全量单测"
-"$PY" -m pytest tests -q
+echo "==> [5/5] pytest 全量单测（覆盖 pyproject 默认分层过滤，显式跑全量）"
+"$PY" -m pytest tests -q -o addopts="-q"
 
 if [ "$WITH_MLLM" = "1" ]; then
   echo "==> [5/5] Kimi 门禁（tower_front_hd + k3：A1>0、A3 关联率 > 3%）"

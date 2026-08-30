@@ -632,3 +632,59 @@ GLB 几何门禁未通过：节点空间跨度 518.7mm < 门禁阈值 2000.0mm
 - master BOM 冲突 10（length_mm≈0、截面空、plan 是另一系列 `35C2-SJG1-ML`）。
 - gusset/bolt 锚定需独立路径（detail 03 不进 cross_file 空间合并）。
 
+
+---
+
+## 《完整修复计划》第二轮跟进（DSH 会话，2026-08-30）
+
+> 审计 + 修复执行轮。先以代码为准逐阶段审计了计划的完成度（阶段0 ~85%、5 ~75%、
+> 6 ~80%、7 ~80%、1/2/8 ~65%、3 ~35%、4 ~30%），再落地审计指出的 5 项优先修复。
+> 期间检测到 Cursor 侧并发提交（ef6240d / f2c7fe8 / 3b394f6，阶段 A–G 收口），
+> 本轮所有改动基于该基线，无冲突。
+
+### 落地清单（14 改 + 4 新建，+432/-106）
+
+| 项 | 内容 | 文件 |
+|---|---|---|
+| 评测脚本修复 | `gt_segment_recall.py` / `diagnose_gt_gap.py` 的 ImportError（旧 API 残留）迁移到 `traceability/eval/metrics.py` 公共内核：Hungarian 一对一 + GT 泄漏 exit 3 + tolerance sweep | `scripts/gt_segment_recall.py`、`scripts/diagnose_gt_gap.py` |
+| F1-tolerance | `eval_segment_pr` sweep 每档补 `f1`（此前全仓 0 命中，阶段 1.2 缺口） | `traceability/eval/metrics.py` |
+| 镜像面分口径 | M3 新增 `model_count_by_face` / `matched_model_count_by_face` / `precision_by_face`（GT 无面标签，不伪造 per-face recall）；3D CLI 打印分面表 | `metrics.py`、`scripts/evaluate_ground_truth_3d.py` |
+| 语义 schema | `engineering_model.json` 的 component properties 加 `geometry_class`（4 值）/ `geometry_origin`（仓库名+计划名并集 11 值）枚举，存量模型校验兼容 | `schema/engineering_model.json` |
+| 阶段 3.1 漏检报告 | FN 五类（fragmented / length_mismatch / near_miss_geom / one_to_one_conflict / missing）+ FP 三类（duplicate_fp / near_frame / extra），全部可几何验证（延续阶段 7 反臆测原则）；`--miss-report` 落盘 JSON | **新建** `traceability/eval/miss_report.py`（14 测试）、`scripts/diagnose_recall.py`（+25 行接线） |
+| 阶段 4.4 件号证据 | `bar_id_evidence`（sheet_id / label_component_id / text / association_method / distance / distance_unit / confidence）三路径写入：DXF（nearest_text_same_view_greedy）、扫描（nearest_midpoint_same_view_greedy）、四面展开（镜像/派生面强制打 `propagated_via=symmetry_4face` + `propagated_face`，不冒充四次独立识别） | `tower_dxf.py`、`tower_agent_pipeline.py`、`tower_symmetry.py`、**新建** `tests/test_bar_id_evidence.py`（5 测试） |
+| 阶段 3.6 候选融合 | overlay 开关 `candidate_fusion`：默认 `mllm_replace`（行为不变）；`union_dedup` = MLLM/ezdxf 候选并集 + 空间去重（15°/1.5 长度比/中点半长三条件 AND，宁漏判不多删），保留矢量杆引用节点防悬空，meta 记 `vector_bars_kept` | `hybrid_dxf_agent.py`、**新建** `tests/test_candidate_fusion.py`（8 测试） |
+| 测试分层 | `pyproject.toml` addopts 默认 `-m 'not slow and not integration and not online'`（默认只跑快层）；`acceptance.sh` 显式 `-o addopts="-q"` 跑全量；conftest 新增 `guowang_sheet02_model()` 会话级缓存（深拷贝返回防变异污染）并接入 `test_p0_p1_fixes.py` 两处 | `pyproject.toml`、`scripts/acceptance.sh`、`tests/conftest.py`、`tests/test_p0_p1_fixes.py` |
+
+### 真实数据诊断结论（本轮最有价值产出）
+
+`diagnose_recall.py --miss-report` 在 35A1-JC1（front，500mm）实测：
+
+```
+FN（1066）: fragmented 951（89%）│ near_miss_geom 104 │ missing 仅 3
+FP（679）:  duplicate_fp 639（94%）│ extra 40
+```
+
+**检测几乎没漏（真缺失仅 3 根），失败集中在碎片化拼合与模型内部重复**——
+阶段 3.4/3.5（重叠 crop 去重 + 防错 stitching）一项可同时打击 ~90% FN 与 ~94% FP，
+是下一轮召回提升的最高杠杆；塔头/斜材专项与件号关联（阶段 4）次之。
+
+### 镜像面口径发现
+
+3D 物理杆件 2736 = 684×4（F/B/L/R 完美四等分），每面各匹配 33 根：
+四面镜像展开把 FP 放大 4 倍（总分 P 被稀释 4 倍），单面真实精度 4.8%。
+镜像面=reconstructed 进物理分母的口径使 P/R 在「3D 合并仅正立面」现状下失真，
+已通过 `precision_by_face` 让失真可见；是否给镜像杆单列口径待决策。
+
+### 验证
+
+- 默认快层（新增过滤）：**117 passed**（秒级）。
+- 全量（含 slow/integration）：**333 passed / 0 failed**，91.7s。
+- 未注入 GT、未放宽容差、未修改任何正确断言；`gt_segment_recall.py` /
+  `diagnose_gt_gap.py` / `diagnose_recall.py --miss-report` 均在真实数据上冒烟通过。
+
+### 遗留
+
+1. `union_dedup` 默认关闭——需真实 04-07 图跑批对比后再评估转默认。
+2. conftest 缓存只示范接入 2 处；bar_label_association / m6 / m7 / m8 待同模式迁移。
+3. `geometry_origin` 枚举为仓库名与计划名并集（dxf_geom 与 dxf_vector 并存），统一改名是破坏性重构，另行排期。
+4. 若 Cursor 侧继续并发，建议先收口再统一提交/推送。

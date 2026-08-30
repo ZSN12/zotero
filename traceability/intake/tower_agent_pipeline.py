@@ -654,22 +654,34 @@ def _associate_labels(
 
     bar_label: Dict[int, str] = {}
     bar_dist: Dict[int, float] = {}
+    bar_label_li: Dict[int, int] = {}
     used_labels: set = set()
     for d, bi, li, bar_id in pairs:
         if bi in bar_label or li in used_labels:
             continue
         bar_label[bi] = bar_id
         bar_dist[bi] = d
+        bar_label_li[bi] = li
         used_labels.add(li)
 
     assignments: List[Dict[str, Any]] = []
     for bi, bar in enumerate(bars):
         if bi in bar_label:
+            _li = bar_label_li[bi]
             assignments.append({
                 "bar_uid": bar["bar_uid"],
                 "bar_id": bar_label[bi],
                 "confidence": 0.75,
                 dist_field: round(bar_dist[bi], 2),
+                # 阶段4.4：件号证据——这个件号来自哪条文字、用什么方法、多远
+                "bar_id_evidence": [{
+                    "label_component_id": f"label_{_li}",
+                    "text": str(labels[_li].get("text") or ""),
+                    "association_method": "nearest_midpoint_same_view_greedy",
+                    "distance": round(bar_dist[bi], 2),
+                    "distance_unit": "px" if dist_field == "label_distance_px" else "mm",
+                    "confidence": 0.75,
+                }],
             })
         else:
             assignments.append({
@@ -677,6 +689,7 @@ def _associate_labels(
                 "bar_id": f"UNLABELED_{bar['bar_uid']}",
                 "confidence": 0.3,
                 dist_field: None,
+                "bar_id_evidence": [],
             })
 
     labeled = [a for a in assignments if not str(a["bar_id"]).startswith("UNLABELED")]
@@ -810,6 +823,8 @@ def _build_model_candidate(
         # 显式写回（区别于 px 距离），避免下游误把 px 距离当 mm 用。
         if assign.get("label_distance_mm") is not None:
             props["label_distance_mm"] = round(float(assign["label_distance_mm"]), 2)
+        # 阶段4.4：件号证据随杆件落盘（未贴号杆为空列表，诚实表达「无证据」）
+        props["bar_id_evidence"] = list(assign.get("bar_id_evidence") or [])
         objects.append(CandidateObject(
             obj_type="component",
             data={

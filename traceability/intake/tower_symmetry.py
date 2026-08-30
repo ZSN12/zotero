@@ -129,6 +129,8 @@ def expand_4_face_symmetry_model(
             "source_file": p.get("source_file"),
             "geometry_origin": p.get("geometry_origin"),
             "projection_refs": list(p.get("projection_refs") or []),
+            # 阶段4.4：件号证据随展开透传（solve 层 nb=dict(b) 浅拷贝复制）
+            "bar_id_evidence": list(p.get("bar_id_evidence") or []),
             # 源组件的 SourceRef（若有），用于重建时保留原始来源
             "_source_ref": comp.source,
         })
@@ -277,10 +279,21 @@ def expand_4_face_symmetry_model(
         projection_refs = copy.deepcopy(
             b.get("projection_refs") or (orig_comp.properties.get("projection_refs") if orig_comp else []) or []
         )
+        # 阶段4.4 件号证据传播：复制源杆 bar_id_evidence（深拷贝防共享污染）；
+        # 非 front 面（镜像/派生）必须标记 symmetry propagation——这是同一次
+        # 识别在展开中的传播，不得冒充四次独立识别。
+        bar_id_evidence = copy.deepcopy(
+            b.get("bar_id_evidence") or (orig_comp.properties.get("bar_id_evidence") if orig_comp else []) or []
+        )
 
         is_diaphragm = bool(b.get("diaphragm"))
         face = b.get("face")
         generated_face = face.upper() if face and face not in ("diaphragm", "center", "corner") else face
+
+        if bar_id_evidence and (face is None or str(face).lower() != "f"):
+            for _ev in bar_id_evidence:
+                _ev["propagated_via"] = "symmetry_4face"
+                _ev["propagated_face"] = generated_face
 
         # 来源引用 + 语义冻结（阶段0）：
         #   recognized   —— primary 面（front）杆件，直接从 DXF 识别，进 physical P/R
@@ -340,6 +353,7 @@ def expand_4_face_symmetry_model(
             "geometry_origin": geometry_origin,
             "geometry_class": geometry_class,
             "projection_refs": projection_refs,
+            "bar_id_evidence": bar_id_evidence,
             "evidence_status": evidence_status,
             "length_mm_3d": round(
                 math.sqrt(sum((face_nodes[b["to"]][i] - face_nodes[b["from"]][i]) ** 2 for i in range(3))), 2,

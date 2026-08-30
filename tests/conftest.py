@@ -48,3 +48,27 @@ def guowang_cross_file_result():
     # 缓存解析结果对象（dict），供多个测试复用；绝不在 fixture 内二次解析。
     yield result
     _tmp.cleanup()
+
+
+# --------------------------------------------------------------------------- #
+# 阶段8.2：unittest 风格测试无法注入 fixture 参数，提供会话级缓存加载函数。
+# 首次调用真正解析，之后每次返回深拷贝（防止测试原地修改污染缓存）。
+# --------------------------------------------------------------------------- #
+
+_SHEET02_CACHE: dict = {}
+
+
+def guowang_sheet02_model():
+    """国网 35A1-JC1-02 单图解析模型（会话级只解析一次，深拷贝返回）。"""
+    import copy
+
+    if "model" not in _SHEET02_CACHE:
+        dxf = GUOWANG_DIR / "35A1-JC1-02.dxf"
+        if not dxf.exists():
+            raise RuntimeError(f"国网 02 图纸不存在: {dxf}")
+        from traceability.intake.tower_dxf import extract_tower_from_dxf
+
+        _SHEET02_CACHE["model"] = extract_tower_from_dxf(
+            str(dxf), layer_map_path=str(GUOWANG_OVERLAY),
+        )
+    return copy.deepcopy(_SHEET02_CACHE["model"])

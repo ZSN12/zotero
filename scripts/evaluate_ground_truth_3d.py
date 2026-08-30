@@ -59,6 +59,17 @@ def main():
         if total:
             print(f"  {t:12s}: 共 {total:4d} 根，漏检 {missed:4d} 根（召回 {info.get('recall', 0.0):.1%}）")
 
+    # 镜像面分口径（阶段 5.2 审计）：镜像重建面（B/L/R）是合成预测，与仅来自
+    # 正立面合并的 GT 对不上时会推高 FP——分面精度必须可见，不静默混入总分。
+    by_face = result.get("model_count_by_face") or {}
+    if by_face:
+        print("\n按生成面分解（模型物理杆件，GT 无面标签故仅输出计数/精度）：")
+        prec_face = result.get("precision_by_face", {})
+        matched_face = result.get("matched_model_count_by_face", {})
+        for f in sorted(by_face):
+            print(f"  face {f:8s}: 共 {by_face[f]:4d} 根，匹配 {matched_face.get(f, 0):4d} 根"
+                  f"（精度 {prec_face.get(f, 0.0):.1%}）")
+
 
 if __name__ == "__main__":
     main()

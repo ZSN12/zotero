@@ -1157,24 +1157,47 @@ def extract_tower_from_dxf(
 
     seg_label: Dict[int, str] = {}
     seg_label_dist: Dict[int, float] = {}
+    seg_label_text_idx: Dict[int, int] = {}
     used_texts: set = set()
     for d, si, ti, label in pairs:
         if si in seg_label or ti in used_texts:
             continue
         seg_label[si] = label
         seg_label_dist[si] = d
+        seg_label_text_idx[si] = ti
         used_texts.add(ti)
 
     # 同一 handle 可能对应多条线段（LWPOLYLINE / 重复 INSERT），取距离最近的
     # 文字作为该 handle 的件号，所有同 handle 线段共用（保持旧版语义）。
     handle_best: Dict[str, Tuple[float, str]] = {}
+    handle_best_text: Dict[str, int] = {}
     for si, label in seg_label.items():
         h = bar_segments[si]["handle"]
         d = seg_label_dist[si]
         if h not in handle_best or d < handle_best[h][0]:
             handle_best[h] = (d, label)
+            handle_best_text[h] = seg_label_text_idx.get(si)
     handle_to_label: Dict[str, str] = {h: v[1] for h, v in handle_best.items()}
     handle_label_dist: Dict[str, float] = {h: v[0] for h, v in handle_best.items()}
+
+    # ---- 4.4) 件号证据（bar_id_evidence）：记录「这根杆的件号来自哪条文字」----
+    # 自包含、可追溯：sheet / 文字实体 / 原文 / 方法 / 距离 / 置信度。
+    # distance_unit=drawing：与 label_distance 同口径（图面单位，随视图比例换算前）。
+    handle_label_evidence: Dict[str, dict] = {}
+    for h, (d, _label) in handle_best.items():
+        ti = handle_best_text.get(h)
+        if ti is None:
+            continue
+        t = texts[ti]
+        handle_label_evidence[h] = {
+            "sheet_id": stem,
+            "label_component_id": f"text_{t.get('handle', ti)}",
+            "text": str(t.get("text") or ""),
+            "association_method": "nearest_text_same_view_greedy",
+            "distance": round(float(d), 2),
+            "distance_unit": "drawing",
+            "confidence": 0.85,
+        }
 
     # ---- 4.5) 截面型号关联（Phase 2）：截面文字 → 最近杆段，一对一贪心 ----
     # 与件号关联共用同一套 texts / 距离 / 贪心机制，但提取的是截面型号
@@ -1282,6 +1305,10 @@ def extract_tower_from_dxf(
         }
         if handle in handle_label_dist:
             properties["label_distance"] = round(handle_label_dist[handle], 2)
+        # 阶段4.4：有件号的杆必须带 bar_id_evidence（件号从哪条文字来）
+        _ev = handle_label_evidence.get(handle)
+        if _ev is not None:
+            properties["bar_id_evidence"] = [dict(_ev)]
         if is_dup:
             properties["bar_id_dup"] = True
             properties["bar_id_primary"] = is_primary

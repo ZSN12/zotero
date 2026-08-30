@@ -1,7 +1,10 @@
 [tool.pytest.ini_options]
-addopts = "-q"
+# 阶段8.3 测试分层：默认只跑快层（unit/pipeline，秒级~分钟内）；
+# 全量（含 slow/integration）用 `pytest -o addopts="-q"` 或 `bash scripts/acceptance.sh`；
+# 定时 CI 才跑 `pytest -m "integration or online"`。
+addopts = "-q -m 'not slow and not integration and not online'"
 markers = [
-    "slow: 耗时测试（>2s，读取大图/跑全链），可用 -m 'not slow' 跳过",
-    "integration: 依赖外部文件/端到端的集成测试",
-    "online: 需要网络或真实 MLLM API 的测试",
+    "slow: 耗时测试（>2s，读取大图/跑全链），默认跳过，可用 -m 'slow' 单独跑",
+    "integration: 依赖外部文件/端到端的集成测试，默认跳过",
+    "online: 需要网络或真实 MLLM API 的测试，默认跳过（当前 0 使用）",
 ]

@@ -404,13 +404,17 @@ def _vector_labeled_count(model: EngineeringModel, bars: List[Dict[str, Any]]) -
     return n
 
 
-def _strip_vector_geometry(model: EngineeringModel) -> int:
+def _strip_vector_geometry(model: EngineeringModel, keep: Optional[set] = None) -> int:
     """清除 ezdxf/hough 产生的杆件与节点，供 MLLM 几何「替换」而非「追加」。
 
     P0-1 后续隐患：extract_tower_from_dxf 对 04-07 双线角钢图常产出 layer-0
     垃圾几何（数百根碎杆）。若 MLLM 检测成功却只「追加」到 ezdxf 几何旁，
     merge 后仍混入冗余杆件。这里在 MLLM 注入前清空所有 tower_node/tower_bar，
     使 MLLM 成为唯一几何来源（MLLM 失败时才回退 ezdxf/hough）。
+
+    阶段3.6 候选融合：``keep`` 指定要保留的组件 id（与 MLLM 杆件不重复的
+    矢量杆候选）。保留的杆件不参与清除，其引用（connections/rules 等）随
+    之保留。默认 None = 全部清除（原 mllm_replace 行为，向后兼容）。
 
     除删除 components 外，同步清理引用这些组件 id 的：
       * connections（from/to 指向被删 node/bar 的连接）
@@ -426,6 +430,7 @@ def _strip_vector_geometry(model: EngineeringModel) -> int:
     removed_ids = [
         cid for cid, comp in model.components.items()
         if comp.kind in ("tower_node", "tower_bar")
+        and not (keep and cid in keep)
     ]
     removed = set(removed_ids)
 
@@ -480,6 +485,98 @@ def _strip_vector_geometry(model: EngineeringModel) -> int:
     return len(removed_ids)
 
 
+def _seg_duplicate(
+    a: Tuple[float, float, float, float],
+    b: Tuple[float, float, float, float],
+    *,
+    angle_tol_deg: float = 15.0,
+    length_ratio_tol: float = 1.5,
+    midpoint_ratio: float = 0.5,
+) -> bool:
+    """判断两根图面坐标（drawing mm）线段是否为同一杆的重复候选。
+
+    阶段3.6 候选去重判据（三条件同时满足才判重复，宁漏判不多删）：
+        * 无向方向夹角 <= angle_tol_deg；
+        * 长度比（归一化 >=1）<= length_ratio_tol；
+        * 中点距离 <= midpoint_ratio * min(la, lb)。
+    """
+    import math as _math
+
+    dxa, dya = a[2] - a[0], a[3] - a[1]
+    dxb, dyb = b[2] - b[0], b[3] - b[1]
+    la = _math.hypot(dxa, dya)
+    lb = _math.hypot(dxb, dyb)
+    if la <= 1e-9 or lb <= 1e-9:
+        return False
+    dot = abs((dxa * dxb + dya * dyb) / (la * lb))
+    dot = max(-1.0, min(1.0, dot))
+    if _math.acos(dot) > _math.radians(angle_tol_deg):
+        return False
+    lr = (la / lb) if la >= lb else (lb / la)
+    if lr > length_ratio_tol:
+        return False
+    ma = ((a[0] + a[2]) / 2.0, (a[1] + a[3]) / 2.0)
+    mb = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)
+    if _math.hypot(ma[0] - mb[0], ma[1] - mb[1]) > midpoint_ratio * min(la, lb):
+        return False
+    return True
+
+
+def _vector_bars_not_covered(
+    model: EngineeringModel,
+    mllm_bars: List[Dict[str, Any]],
+    view_type: str,
+    *,
+    angle_tol_deg: float = 15.0,
+    length_ratio_tol: float = 1.5,
+    midpoint_ratio: float = 0.5,
+) -> set:
+    """返回与 MLLM 杆件【不】重复、应保留的矢量杆组件 id 集合。
+
+    阶段3.6 候选并集：MLLM 与 ezdxf 候选做空间去重，重复者以 MLLM 为准
+    （由调用方从模型中删除），不重复者保留为补充候选（来源标记 dxf_geom
+    不变）——MLLM 漏检的杆可由 ezdxf 候补，而不是被整体清除。
+
+    返回集合包含保留杆件引用的 tower_node id（节点随杆保留，避免悬空引用）。
+    """
+    nodes = {
+        cid: c for cid, c in model.components.items() if c.kind == "tower_node"
+    }
+    mllm_segs = [
+        (float(b["x1"]), float(b["y1"]), float(b["x2"]), float(b["y2"]))
+        for b in mllm_bars
+        if not (b.get("view_type") and view_type and b["view_type"] != view_type)
+    ]
+    keep: set = set()
+    for cid, comp in model.components.items():
+        if comp.kind != "tower_bar":
+            continue
+        props = comp.properties
+        fn, tn = props.get("from_node"), props.get("to_node")
+        nf, nt = nodes.get(fn), nodes.get(tn)
+        if nf is None or nt is None:
+            # 无几何可判，保守保留（删除是不可逆动作）
+            keep.add(cid)
+            continue
+        seg = (
+            float(nf.properties["x"]), float(nf.properties["y"]),
+            float(nt.properties["x"]), float(nt.properties["y"]),
+        )
+        if not any(
+            _seg_duplicate(seg, ms, angle_tol_deg=angle_tol_deg,
+                           length_ratio_tol=length_ratio_tol,
+                           midpoint_ratio=midpoint_ratio)
+            for ms in mllm_segs
+        ):
+            keep.add(cid)
+            # 保留杆件引用的节点随杆保留（否则 strip 后 from/to 悬空）
+            if fn in nodes:
+                keep.add(fn)
+            if tn in nodes:
+                keep.add(tn)
+    return keep
+
+
 def _merge_label_lists(*groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """合并多源件号，按 (bar_id, round x, round y) 去重。"""
     seen: set = set()
@@ -520,7 +617,7 @@ def run_hybrid_dxf_agent_pipeline(
     from ..io import save_model, validate_references
     from ..intake.tower_pipeline import finalize_tower_model
     from ..harness.tower_validators import inject_tower_rules
-    from .tower_spec import canonical_view_type, is_ortho_view_type
+    from .tower_spec import canonical_view_type, is_ortho_view_type, load_tower_spec
 
     dxf_path = Path(dxf_path)
     out_dir = Path(out_dir)
@@ -604,9 +701,20 @@ def run_hybrid_dxf_agent_pipeline(
                 if stitched:
                     mllm_geom_meta["stitched_fragments"] = stitched
                 a2_method = "mllm_geom"
-                # MLLM 有杆时始终注入/替换：ezdxf 对 04-07 这类双线角钢图
-                # 常产出 layer-0 垃圾几何，MLLM 优先于 ezdxf（而非仅 0 杆时注入）。
-                stripped = _strip_vector_geometry(model)
+                # 阶段3.6 候选融合开关（overlay: candidate_fusion）：
+                #   * mllm_replace（默认）：MLLM 有杆时整体替换 ezdxf 几何——
+                #     ezdxf 对 04-07 这类双线角钢图常产出 layer-0 垃圾几何。
+                #   * union_dedup：候选并集 + 空间去重——只删除与 MLLM 杆件
+                #     空间重复的矢量杆，其余矢量杆保留为补充候选（来源 dxf_geom
+                #     不变），MLLM 漏检的杆可由 ezdxf 候补。
+                candidate_fusion = str(
+                    (load_tower_spec(layer_map_path).get("candidate_fusion")
+                     or "mllm_replace"))
+                keep_vector: Optional[set] = None
+                if candidate_fusion == "union_dedup":
+                    keep_vector = _vector_bars_not_covered(model, bars, view_type)
+                    mllm_geom_meta["vector_bars_kept"] = len(keep_vector)
+                stripped = _strip_vector_geometry(model, keep=keep_vector)
                 injected = _inject_mllm_bars_into_model(
                     model, bars, view_type=view_type,
                     stem=stem, layer_map_path=layer_map_path,
@@ -615,6 +723,7 @@ def run_hybrid_dxf_agent_pipeline(
                 mllm_geom_meta["injected_bars"] = injected
                 mllm_geom_meta["stripped_vector_components"] = stripped
                 mllm_geom_meta["ezdxf_bars"] = bar_count
+                mllm_geom_meta["candidate_fusion"] = candidate_fusion
                 graph.finish(
                     bars=len(bars), nodes=node_count,
                     **{k: v for k, v in mllm_geom_meta.items()

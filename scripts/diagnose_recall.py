@@ -341,6 +341,9 @@ def main():
     ap.add_argument("--max-fn", type=int, default=20)
     ap.add_argument("--max-fp", type=int, default=20)
     ap.add_argument("--save", help="把 FN/FP 样例导出为 hard-case JSON（错误回放数据集）")
+    ap.add_argument("--miss-report", dest="miss_report", default=None,
+                    help="追加生成阶段 3.1 FN/FP 漏检报告 JSON 到指定路径"
+                         "（可几何验证口径，复用 --view/--tol-2d）")
     args = ap.parse_args()
 
     gt_path = args.gt_named or args.gt
@@ -392,6 +395,28 @@ def main():
         save_path = Path(args.save)
         save_path.write_text(json.dumps(hard_cases, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"\n✓ hard-case 回放数据集已保存 -> {save_path}")
+
+    # 阶段 3.1：FN/FP 漏检报告（可几何验证口径）。只追加输出，不改上方诊断逻辑。
+    if args.miss_report:
+        from traceability.eval.miss_report import (
+            build_miss_report,
+            FN_FAILURE_TYPES,
+            FP_FAILURE_TYPES,
+        )
+
+        report = build_miss_report(gt, model, view=args.view, tol=args.tol_2d)
+        miss_path = Path(args.miss_report)
+        miss_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n[阶段 3.1 FN/FP 漏检报告（可几何验证口径）] view={args.view} tol={args.tol_2d}mm")
+        print(f"  GT={report['n_gt']} 模型={report['n_model']} 匹配={report['matched']} "
+              f"FN={len(report['fn'])} FP={len(report['fp'])}")
+        print("  FN 失败分类:")
+        for k in FN_FAILURE_TYPES:
+            print(f"    {k:22s}{report['fn_summary'].get(k, 0):6d}")
+        print("  FP 失败分类:")
+        for k in FP_FAILURE_TYPES:
+            print(f"    {k:22s}{report['fp_summary'].get(k, 0):6d}")
+        print(f"  ✓ 漏检报告已保存 -> {miss_path}")
 
 
 if __name__ == "__main__":

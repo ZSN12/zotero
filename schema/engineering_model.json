@@ -17,7 +17,23 @@
           "name": { "type": "string" },
           "kind": { "type": "string" },
           "source": { "$ref": "#/$defs/sourceRef" },
-          "properties": { "type": "object" },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "geometry_class": {
+                "description": "阶段0 四类几何语义：recognized=直接识别 / reconstructed=确定性重建(含镜像) / derived=派生展示几何(corner_leg/diaphragm) / canonical=GT权威(仅评测)",
+                "enum": ["recognized", "reconstructed", "derived", "canonical"]
+              },
+              "geometry_origin": {
+                "description": "几何来源。仓库名：dxf_geom/hough_fallback/mllm_geom/mllm_inject/derived_4face；计划枚举名：hough/dxf_vector/multiview_solve/symmetry_rule/derived_diaphragm；gim=GT权威(仅评测/debug)",
+                "enum": [
+                  "mllm_geom", "hough", "hough_fallback", "dxf_vector", "dxf_geom",
+                  "multiview_solve", "symmetry_rule", "derived_4face", "derived_diaphragm",
+                  "mllm_inject", "gim"
+                ]
+              }
+            }
+          },
           "tags": { "type": "array", "items": { "type": "string" } }
         }
       }

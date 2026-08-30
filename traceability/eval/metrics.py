@@ -457,9 +457,11 @@ def eval_segment_pr(
         n_gt = len(gt)
         precision = tp / n_model if n_model else 0.0
         recall = tp / n_gt if n_gt else 0.0
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
         sweep.append({
             "tol": tol, "tp": tp, "fp": fp, "fn": fn,
             "precision": round(precision, 4), "recall": round(recall, 4),
+            "f1": round(f1, 4),
         })
         if tol == tols[-1]:
             matched_at_default = matched
@@ -706,6 +708,24 @@ def eval_m3_physical_3d(
     result["precision_by_semantic"] = {
         s: round(sem_matched[s] / sem[s], 4) if sem[s] else 0.0
         for s in ("recognized", "reconstructed")
+    }
+    # 镜像面分口径（审计补充）：physical P/R 含四面展开的镜像重建面（B/L/R）。
+    # 当 3D 合并只来自正立面 sheet 时，镜像面几何是合成预测，与 GT 的 B/L/R 面
+    # 天然对不上，会推高 FP——必须让这一失真在指标里可见，而不是静默混在总分里。
+    # 只输出「可真实计算」的计数/精度分解；GT 无面标签，per-face recall 无法
+    # 计算，不伪造。
+    by_face: Counter = Counter()
+    matched_by_face: Counter = Counter()
+    for mi, (seg, p) in enumerate(m):
+        face = str(p.get("generated_face") or p.get("face") or "unknown").upper()
+        by_face[face] += 1
+        if mi in matched_model_idx:
+            matched_by_face[face] += 1
+    result["model_count_by_face"] = dict(by_face)
+    result["matched_model_count_by_face"] = {f: matched_by_face.get(f, 0) for f in by_face}
+    result["precision_by_face"] = {
+        f: round(matched_by_face.get(f, 0) / by_face[f], 4) if by_face[f] else 0.0
+        for f in by_face
     }
     return result
 

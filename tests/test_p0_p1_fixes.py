@@ -43,12 +43,10 @@ class P01OverlayThreadingTest(unittest.TestCase):
 
     def test_merge_view_coordinates_accepts_overlay(self):
         from traceability.intake.tower_views import merge_view_coordinates
-        from traceability.intake.tower_dxf import extract_tower_from_dxf
+        from conftest import guowang_sheet02_model
         ov = EXAMPLES / "external" / "guowang_35A1" / "layer_overlay.json"
-        model = extract_tower_from_dxf(
-            EXAMPLES / "external" / "guowang_35A1" / "35A1-JC1-02.dxf",
-            layer_map_path=ov,
-        )
+        # 阶段8.2：02 解析走会话级缓存（首次解析后深拷贝返回），断言不变
+        model = guowang_sheet02_model()
         # 单立面：merge 不应抛错，也不臆造 3D（front 无 side/section）
         merged = merge_view_coordinates(model, overlay=ov)
         # front 节点保持 (view_x, view_y=z)，z 缺 None 不臆造
@@ -56,12 +54,9 @@ class P01OverlayThreadingTest(unittest.TestCase):
 
     def test_finalize_tower_model_passes_layer_map(self):
         from traceability.intake.tower_pipeline import finalize_tower_model
-        from traceability.intake.tower_dxf import extract_tower_from_dxf
+        from conftest import guowang_sheet02_model
         ov = EXAMPLES / "external" / "guowang_35A1" / "layer_overlay.json"
-        model = extract_tower_from_dxf(
-            EXAMPLES / "external" / "guowang_35A1" / "35A1-JC1-02.dxf",
-            layer_map_path=ov,
-        )
+        model = guowang_sheet02_model()
         finalize_tower_model(model, merge=True, layer_map_path=ov)
         self.assertGreater(len(model.rules), 0)
 
