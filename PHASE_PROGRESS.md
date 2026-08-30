@@ -655,7 +655,7 @@ GLB 几何门禁未通过：节点空间跨度 518.7mm < 门禁阈值 2000.0mm
 | 阶段 3.6 候选融合 | overlay 开关 `candidate_fusion`：默认 `mllm_replace`（行为不变）；`union_dedup` = MLLM/ezdxf 候选并集 + 空间去重（15°/1.5 长度比/中点半长三条件 AND，宁漏判不多删），保留矢量杆引用节点防悬空，meta 记 `vector_bars_kept` | `hybrid_dxf_agent.py`、**新建** `tests/test_candidate_fusion.py`（8 测试） |
 | 测试分层 | `pyproject.toml` addopts 默认 `-m 'not slow and not integration and not online'`（默认只跑快层）；`acceptance.sh` 显式 `-o addopts="-q"` 跑全量；conftest 新增 `guowang_sheet02_model()` 会话级缓存（深拷贝返回防变异污染）并接入 `test_p0_p1_fixes.py` 两处 | `pyproject.toml`、`scripts/acceptance.sh`、`tests/conftest.py`、`tests/test_p0_p1_fixes.py` |
 
-### 真实数据诊断结论（本轮最有价值产出）
+### 真实数据诊断结论（本轮阶段性产出）
 
 `diagnose_recall.py --miss-report` 在 35A1-JC1（front，500mm）实测：
 
@@ -664,9 +664,10 @@ FN（1066）: fragmented 951（89%）│ near_miss_geom 104 │ missing 仅 3
 FP（679）:  duplicate_fp 639（94%）│ extra 40
 ```
 
-**检测几乎没漏（真缺失仅 3 根），失败集中在碎片化拼合与模型内部重复**——
-阶段 3.4/3.5（重叠 crop 去重 + 防错 stitching）一项可同时打击 ~90% FN 与 ~94% FP，
-是下一轮召回提升的最高杠杆；塔头/斜材专项与件号关联（阶段 4）次之。
+> **注意（2026-08-31 认知订正）**：
+> 上述“fragmented 89%”包含了图纸与 GT 在节间节点细分粒度上的客观差异（图纸通长画法 vs GT 节间打断多段），
+> 并非图纸本身被切碎（实测斜材在 layer 4/1/0 中均为 4.2~4.5m 通长杆）。
+> 详见权威定稿文档 [`docs/JC1_SINGLE_TOWER_PLAN.md`](docs/JC1_SINGLE_TOWER_PLAN.md)。
 
 ### 镜像面口径发现
 
