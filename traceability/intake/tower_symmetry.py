@@ -188,12 +188,26 @@ def expand_4_face_symmetry_model(
             ]
             merged_split_nodes: NodeMap = {}
             merged_split_bars: List[dict] = []
-            for z_lo, z_hi in z_bins:
+            for bi, (z_lo, z_hi) in enumerate(z_bins):
                 sub_b = [b for b in work_bars if z_lo <= (work_nodes[b["from"]][2] + work_nodes[b["to"]][2]) / 2.0 <= z_hi]
                 if not sub_b:
                     continue
                 sub_n = {nid: work_nodes[nid] for b in sub_b for nid in (b["from"], b["to"])}
                 nn, nb = close_face_intersections(sub_n, sub_b, snap_tol=snap_inter_tol, max_rounds=2)
+                # S1 修复（节点 ID 跨 bin 碰撞）：close_face_intersections 内部
+                # _get_or_add_node 用 f"N{len(nodes):04d}" 生成新节点 ID，各 bin 的
+                # len(nodes) 不同但可能撞出相同 ID（如两个 bin 都生成 N0041）。
+                # 直接 update 会让后 bin 的 N0041 覆盖前 bin 的——杆件端点被
+                # 「传送」到别的 z 段（实测 07 段主腿端点 z=6643 被改写到 z=32594，
+                # 产生 21-27m 幽灵杆）。修复：合并前把「该 bin 新建的节点」重命名
+                # 为全局唯一 ID（_zb{bi} 前缀），并重映射该 bin 杆件端点。
+                new_ids = [nid for nid in nn if nid not in sub_n]
+                if new_ids:
+                    rename = {nid: f"{nid}_zb{bi}" for nid in new_ids}
+                    nn = {rename.get(nid, nid): pos for nid, pos in nn.items()}
+                    for b in nb:
+                        b["from"] = rename.get(b["from"], b["from"])
+                        b["to"] = rename.get(b["to"], b["to"])
                 merged_split_nodes.update(nn)
                 merged_split_bars.extend(nb)
             # 补充跨段杆件（如果有）

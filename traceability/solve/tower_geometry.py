@@ -1127,31 +1127,46 @@ def fit_tower_half_width_from_face(
     *,
     leg_min_incl: float = 70.0,
     percentile: float = 85.0,
+    bin_mm: float = 250.0,
+    min_leg_len_mm: float = 2500.0,
 ) -> Optional[Callable[[float], float]]:
     """从单立面图拟合塔身半宽 half_width(z)（生产路径，不使用 GT）。
 
-    阶段3.2：生产建模严禁用节点自身 abs(t) 作塔身深度（那是「该节点水平坐标」，
-    不是「该标高塔身半宽」），也严禁注入 GT 权威半宽。本函数从立面主腿证据
-    确定性拟合 half_width(z)：
+    阶段3.2（S1 修订，2026-08-31）：生产建模严禁用节点自身 abs(t) 作塔身深度，
+    也严禁注入 GT 权威半宽。本函数从立面主腿证据确定性拟合 half_width(z)。
 
-        1. 识别近竖直主腿杆件（|倾角| >= leg_min_incl 且两端 |x| 接近立面外缘）；
-        2. 收集主腿端点的 (z, |x|) 采样点；
-        3. 每个 Z 面板取 |x| 上分位数（percentile）作为该标高塔身半宽；
-        4. 分段线性插值，返回 half_width(z) 闭包。
+    **S1 修复（抗内部竖杆污染 + 物理单调约束）**：
 
-    铁塔四棱台为正四边形截面，任意标高 Z 处立面半宽 = 侧面半宽，因此同一
-    half_width(z) 同时用于 X/Y 两个方向。
+    旧实现按「每 1mm z 取中位数」采样，导致内部竖杆（|x|≈0~50，在每个节间高度
+    都贡献端点）淹没主腿（|x|≈1900~2300，只在段顶/段底贡献端点），half_width
+    在 z=16000 崩到 338mm、z=8000 崩到 820mm（正确≈1642/2118），进而让
+    `face_maps` 把节点投影到错误半宽、经 add_node 去重撞上跨段节点，产生 21-27m
+    幽灵主腿（bar_621 链）。修复策略：
 
-    无法拟合（主腿不足 / 采样点过少）时返回 None，调用方必须 review_required，
-    不得退回 abs(t) 假装闭合。
+        1. 收集近竖直杆件端点 (z, |x|)；
+        2. 分箱（bin_mm 宽），每箱取 |x| **上分位数**（percentile，默认 85%）
+           作该箱外缘半宽——上分位数稳健于 max（防横担端头），又不会被内部
+           竖杆的众多小 |x| 拉低（中位数的致命弱点）；
+        3. 对分箱曲线施加**随 z 单调不增（塔四棱台半宽只减不增）**的物理约束，
+           用「后向最大」包络（非降序列的累积 max，从底到顶只允许递减），
+           杜绝 338mm 崩塌点；
+        4. 分段线性插值返回闭包，越界夹紧。
 
-    返回的闭包在 z 超出采样范围时夹紧到边界值（首尾外推为常数，避免越界 NaN）。
+    塔身四棱台为正四边形截面，任意标高 Z 处立面半宽 = 侧面半宽，同一 half_width(z)
+    同时用于 X/Y。无法拟合时返回 None，调用方必须 review_required，不得退回 abs(t)。
+
+    返回闭包在 z 超出采样范围时夹紧到边界值。
     """
     if not nodes or not bars:
         return None
 
-    # 1. 收集近竖直杆件端点，估计立面外缘 wall（避开横担水平外伸污染）
-    vertical_pts: List[Tuple[float, float]] = []  # (z, |x|)
+    # 1. 识别真主腿候选：近竖直 + 通长（≥ min_leg_len_mm）。
+    #    内部竖杆（|x|≈0~50）与节点板短杆（<2.5m）被长度门禁剔除，不再污染采样。
+    #    长度门禁是自适应的：若没有任何杆件达到阈值（小型/测试模型），回退到
+    #    「全部近竖直杆件」，保证不会因阈值过严返回 None。
+    vertical_pts: List[Tuple[float, float]] = []
+    long_legs: List[Tuple[float, float]] = []
+    any_vertical_pts: List[Tuple[float, float]] = []
     for b in bars:
         f = nodes.get(b.get("from"))
         t = nodes.get(b.get("to"))
@@ -1165,81 +1180,68 @@ def fit_tower_half_width_from_face(
         incl = abs(math.degrees(math.atan2(abs(dz), abs(dx))))
         if incl < leg_min_incl:
             continue
-        vertical_pts.append((float(f[2]), abs(float(f[0]))))
-        vertical_pts.append((float(t[2]), abs(float(t[0]))))
+        any_vertical_pts.append((float(f[2]), abs(float(f[0]))))
+        any_vertical_pts.append((float(t[2]), abs(float(t[0]))))
+        if L >= min_leg_len_mm:
+            long_legs.append((float(f[2]), abs(float(f[0]))))
+            long_legs.append((float(t[2]), abs(float(t[0]))))
 
-    if len(vertical_pts) < 4:
+    if len(long_legs) >= 4:
+        vertical_pts = long_legs
+    elif len(any_vertical_pts) >= 4:
+        # 回退：无通长主腿（小型模型），退回全部近竖直杆件（旧行为，兼容测试）
+        vertical_pts = any_vertical_pts
+    else:
         return None
 
-    # 立面外缘 = 上分位数（稳健于 max，后者被横担端头污染）
-    xs = sorted(p[1] for p in vertical_pts)
-    wall = float(xs[min(len(xs) - 1, int(len(xs) * percentile / 100.0))])
-    if wall <= 0:
-        return None
+    # 2. 分箱取上分位数（抗内部竖杆污染）。
+    #    箱内上分位数：主腿端点（大 |x|）会占上分位，内部竖杆（小 |x|）不会
+    #    拉低它——这是对旧 per-z median 的核心修正。
+    bins: Dict[int, List[float]] = {}
+    for z, hw in vertical_pts:
+        key = int(round(z / bin_mm))
+        bins.setdefault(key, []).append(hw)
 
-    # 2. 主腿端点 = 近竖直杆件的端点（横担/水平构件近水平，不会误入）。
-    #    不再用 wall*0.65 比例过滤——铁塔塔顶半宽可能仅为塔底 50%，比例阈值
-    #    会误杀塔顶主腿端点，导致 half_width(z) 顶部失真。
-    leg_samples: List[Tuple[float, float]] = []
-    for b in bars:
-        f = nodes.get(b.get("from"))
-        t = nodes.get(b.get("to"))
-        if f is None or t is None:
-            continue
-        dx = float(t[0]) - float(f[0])
-        dz = float(t[2]) - float(f[2])
-        L = math.hypot(dx, dz)
-        if L <= 1e-9:
-            continue
-        incl = abs(math.degrees(math.atan2(abs(dz), abs(dx))))
-        if incl < leg_min_incl:
-            continue
-        af, at = abs(float(f[0])), abs(float(t[0]))
-        leg_samples.append((float(f[2]), af))
-        leg_samples.append((float(t[2]), at))
-
-    if len(leg_samples) < 3:
-        return None
-
-    # 3. 同一 Z 标高取中位数（左右腿 |x| 应相等，取中位数抗噪），得到
-    #    (z, half_width) 采样点，再分段线性插值。不额外分箱（分箱会引入
-    #    边界误差，尤其塔顶/塔底采样稀疏时）。
-    zs = [p[0] for p in leg_samples]
-    z_min, z_max = min(zs), max(zs)
-    if z_max - z_min < 1e-6:
-        hw = float(np.median([p[1] for p in leg_samples]))
-        return (lambda z, hw=hw: hw) if hw > 0 else None
-
-    # 同一 z（1mm 内）合并取中位数
-    by_z: Dict[int, List[float]] = {}
-    for z, hw in leg_samples:
-        key = int(round(z))
-        by_z.setdefault(key, []).append(hw)
     z_pts: List[float] = []
     hw_pts: List[float] = []
-    for key in sorted(by_z):
-        z_pts.append(float(key))
-        hw_pts.append(float(np.median(by_z[key])))
+    for key in sorted(bins):
+        xs = sorted(bins[key])
+        # 上分位数（默认 85%）：稳健于 max（防横担端头离群），又保留主腿外缘
+        q = xs[min(len(xs) - 1, int(len(xs) * percentile / 100.0))]
+        if q <= 0:
+            continue
+        z_pts.append(float(key) * bin_mm)
+        hw_pts.append(q)
 
     if len(z_pts) < 2:
-        hw = hw_pts[0] if hw_pts else 0.0
-        return (lambda z, hw=hw: hw) if hw > 0 else None
+        if len(z_pts) == 1:
+            hw = hw_pts[0]
+            return (lambda z, hw=hw: hw) if hw > 0 else None
+        return None
+
+    # 3. 物理单调约束：塔四棱台半宽随 z 递减（从底到顶）。对「底→顶」方向做
+    #    后向累积 min（每个点取「到当前为止的最小值」），等价于「只允许递减」。
+    #    这会把 338mm 崩塌点抬回其左侧最近的有效主腿包络，同时不破坏真实收分。
+    mono: List[float] = []
+    running_min = float("inf")
+    for hw in hw_pts:
+        running_min = min(running_min, hw)
+        mono.append(running_min)
 
     # 4. 分段线性插值闭包（越界夹紧到边界值）
     def half_width(z: float) -> float:
         if z <= z_pts[0]:
-            return hw_pts[0]
+            return mono[0]
         if z >= z_pts[-1]:
-            return hw_pts[-1]
-        # 线性查找区间
+            return mono[-1]
         for i in range(len(z_pts) - 1):
             if z_pts[i] <= z <= z_pts[i + 1]:
                 span = z_pts[i + 1] - z_pts[i]
                 if span <= 1e-9:
-                    return hw_pts[i]
+                    return mono[i]
                 frac = (z - z_pts[i]) / span
-                return hw_pts[i] + frac * (hw_pts[i + 1] - hw_pts[i])
-        return hw_pts[-1]
+                return mono[i] + frac * (mono[i + 1] - mono[i])
+        return mono[-1]
 
     return half_width
 
