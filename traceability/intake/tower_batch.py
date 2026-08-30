@@ -357,6 +357,15 @@ def cross_file_batch(
         # P3 修复：cross_file_batch 与 deliver_project 路径对齐——当 overlay 启用
         # enable_4_face_expansion 时，单立面 front 节点经四向镜像展开得到正确 y
         # （GT 半宽由 use_gt_half_width 权威给出），替代旧的 synthetic_side。
+        # 阶段1.1'：四面展开前先跑来源段门禁（fail-closed）——剔除跨段污染杆
+        # （06 段节点被映射进 04 段 Z 范围的 484 根 dz>8m 由此而来），避免
+        # 污染被镜像复制 4 倍。
+        from .tower_views import enforce_source_segment_gate
+        seg_gate = enforce_source_segment_gate(merged, overlay=layer_map_path)
+        merge_report["segment_gate"] = {
+            k: v for k, v in seg_gate.items() if k != "removed_ids"
+        }
+        merge_report["segment_gate_removed_ids"] = seg_gate["removed_ids"]
         from .tower_symmetry import expand_4_face_symmetry_model
         expanded = expand_4_face_symmetry_model(merged, overlay=layer_map_path)
         merged = expanded if expanded is not None else merged

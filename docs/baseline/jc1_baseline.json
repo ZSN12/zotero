@@ -1,0 +1,69 @@
+{
+  "$comment": "35A1-JC1 冻结基线（阶段0.3）。来源：scripts/run_35A1_jc1_full.py 重跑产物 out/35A1-JC1-full-deliver/ + evaluate_ground_truth*.py / diagnose_recall.py 实测。禁止用本基线坐标修生产模型；只用于前后对比。",
+  "frozen_at": "2026-08-30",
+  "model_path": "out/35A1-JC1-full-deliver/model.json",
+  "run_entry": "scripts/run_35A1_jc1_full.py",
+  "a1_label_recognition": {
+    "gt_source": "BOM 图纸件号（examples/external/guowang_35A1/guowang_merged_bom.csv）",
+    "command": "python3 scripts/evaluate_ground_truth.py examples/gt/35A1-JC1_ground_truth.json out/35A1-JC1-full-deliver/model.json --bom examples/external/guowang_35A1/guowang_merged_bom.csv",
+    "gt_labels": 197,
+    "model_labels": 136,
+    "exact_match": 112,
+    "precision": 0.823,
+    "recall": 0.569,
+    "note": "禁止 PM_XXXX 对图纸数字件号（阶段7.1）"
+  },
+  "a2_geometry_2d": {
+    "gt_bars_2d": 1071,
+    "model_recognition_bars": 684,
+    "matcher": "Hungarian 严格一对一 + segment_gates 硬门禁",
+    "sweep": {
+      "50":  {"tp": 0,  "fp": 684, "fn": 1071, "precision": 0.0,   "recall": 0.0},
+      "100": {"tp": 1,  "fp": 683, "fn": 1070, "precision": 0.001, "recall": 0.001},
+      "200": {"tp": 5,  "fp": 679, "fn": 1066, "precision": 0.007, "recall": 0.005},
+      "500": {"tp": 30, "fp": 654, "fn": 1041, "precision": 0.044, "recall": 0.028}
+    },
+    "note": "A2 口径=四面展开前 recognition 杆；684×4=2736 物理杆（四面纯复制）"
+  },
+  "a3_association": {
+    "matched_pairs_at_500mm": 30,
+    "correct": 2,
+    "rate": 0.067
+  },
+  "m3_physical_3d": {
+    "model_physical_bars": 2736,
+    "gt_physical_bars": 1071,
+    "precision_at_800mm": 0.048,
+    "recall_at_800mm": 0.123,
+    "face_split": "2736 = 684×4 完美四等分（F/B/L/R），每面各匹配 33 根；镜像展开把 FP 放大 4 倍"
+  },
+  "anomalies": {
+    "dz_gt_8m_bars": 484,
+    "dz_unique_root_bars": 213,
+    "dz_by_sheet": {"35A1-JC1-06": 440, "35A1-JC1-07": 44},
+    "dangling_nodes": 116,
+    "short_fragments_lt_300mm": 263,
+    "model_z_range": [-0.1, 35866.2],
+    "gt_z_range": [0.0, 36600.0],
+    "tower_height_gap_mm": 733.8,
+    "model_base_width_x": [-2338.1, 2338.1],
+    "gt_base_width_x": [-2762.0, 2762.0]
+  },
+  "root_causes_confirmed": [
+    "merge 阶段 region→z_offset 错配：06 段部分节点 z 落入 25000-30000（04 段范围），06 杆节点 z 双峰 11000-17000 / 25000-30000",
+    "图纸角部图号章区域（205×285 图面单位）混入 front region：'JC1' 文字被 TEXT_SNAP 贴为件号产生 bar_JC1_front 伪杆",
+    "FP 中 263 根 <300mm 短碎片（05/06 刻度线与图框辅助线）",
+    "全塔高累积漂移 ≈734mm（z_offset 简单累加，非锚点映射）",
+    "GT 投影 1071 含背面重叠杆与塔头横担腹杆，模型 front 仅 684 —— 口径差异，靠每段可见杆 GT 解决（阶段2.6/3）"
+  ],
+  "eval_kernel": {
+    "entrypoints": [
+      "scripts/evaluate_ground_truth.py",
+      "scripts/evaluate_ground_truth_3d.py",
+      "scripts/diagnose_recall.py --miss-report",
+      "scripts/gt_segment_recall.py",
+      "scripts/diagnose_gt_gap.py"
+    ],
+    "rule": "唯一评测口径；容差只 sweep 不放宽；GT 泄漏 exit 3"
+  }
+}

@@ -8,6 +8,7 @@ M8：master BOM 物理件号核对 + 模块装配 demo + Web 工作台增强。
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +21,7 @@ from .module_build import (
     try_assembly_from_merged,
     try_assembly_m1_m6_from_merged,
 )
+from .run_manifest import build_run_manifest, write_run_manifest
 
 
 def export_detail_qa_atlas(
@@ -248,13 +250,15 @@ def _build_hybrid_project(
     *,
     layer_map_path: Optional[str | Path],
     bom_path: Optional[str | Path],
-) -> tuple[ProjectModel, str, Dict[str, EngineeringModel]]:
+) -> tuple[ProjectModel, str, Dict[str, EngineeringModel], Dict[str, Dict[str, Any]]]:
     """agent_mode="hybrid"：用 Kimi/MLLM Agent 链跑每张 sheet，构建 Project 索引。
 
     每张 sheet 用 run_hybrid_dxf_agent_pipeline 产出 model.json（MLLM 几何替换
     ezdxf 垃圾几何、节点带 view_x/view_y + view_type=front），再登记进
     ProjectModel（复用 build_project_from_directory 的索引/模块/证据聚合逻辑）。
-    返回 (project, project_path, {sheet_id: EngineeringModel})。
+    返回 (project, project_path, {sheet_id: EngineeringModel}, pipelines)，
+    pipelines 为每张 sheet 的 {steps_path, mllm_provider, mllm_model}
+    （阶段 0.2 run_manifest 的 mllm / 视觉缓存 / 事件聚合来源）。
     """
     from ..intake.dwg import ensure_dxf_batch
     from ..intake.hybrid_dxf_agent import run_hybrid_dxf_agent_pipeline
@@ -277,6 +281,8 @@ def _build_hybrid_project(
 
     project = ProjectModel(project_id=pid, name=pid)
     sheet_models: Dict[str, EngineeringModel] = {}
+    # 阶段 0.2：每张 sheet 的 steps.json 路径 + MLLM 上下文（run_manifest 来源）。
+    pipelines: Dict[str, Dict[str, Any]] = {}
     failures: List[Dict[str, str]] = []
     dxf_list = sorted(dxf_paths)
     total = len(dxf_list)
@@ -290,7 +296,7 @@ def _build_hybrid_project(
             # 降级：跳过 MLLM 几何+件号，只用 ezdxf 矢量 + DXF TEXT 件号（秒级），
             # 避免 dpi=800 下 detail 详图 MLLM 检测耗时数分钟却对塔身无贡献。
             mergeable = sheet_is_spatial_mergeable(stem, overlay=layer_map_path)
-            run_hybrid_dxf_agent_pipeline(
+            pipe_info = run_hybrid_dxf_agent_pipeline(
                 dxf, sheet_out,
                 layer_map_path=str(layer_map_path) if layer_map_path else None,
                 mllm=mllm,
@@ -298,6 +304,11 @@ def _build_hybrid_project(
                 geom_method="ezdxf" if not mergeable else "auto",
                 skip_mllm=not mergeable,
             )
+            pipelines[stem] = {
+                "steps_path": pipe_info.get("steps_path"),
+                "mllm_provider": pipe_info.get("mllm_provider"),
+                "mllm_model": pipe_info.get("mllm_model"),
+            }
         except Exception as exc:
             import traceback
             tb = traceback.format_exc()
@@ -336,7 +347,7 @@ def _build_hybrid_project(
         project.metadata["master_bom_path"] = str(bom_path)
     project.metadata["agent_mode"] = "hybrid"
     project_path = save_project(project, out_dir / "project.json")
-    return project, project_path, sheet_models
+    return project, project_path, sheet_models, pipelines
 
 
 def _select_assembly(
@@ -406,8 +417,12 @@ def deliver_project(
     if bom_path is None and resolved_bom:
         bom_path = resolved_bom
 
+    # 阶段 0.2：run_manifest 数据来源。
+    #   * pipelines：hybrid 路径每张 sheet 的 steps.json + MLLM provider/model
+    #   * ezdxf 路径无 MLLM / steps.json，对应字段在 manifest 中为 null
+    pipelines: Dict[str, Dict[str, Any]] = {}
     if agent_mode == "hybrid":
-        project, project_path, sheet_models = _build_hybrid_project(
+        project, project_path, sheet_models, pipelines = _build_hybrid_project(
             input_dir, out_dir, pid,
             layer_map_path=layer_map_path, bom_path=bom_path,
         )
@@ -973,6 +988,73 @@ def deliver_project(
         "project_harness": project_harness,
         "artifact_paths": artifact_paths,
     }
+
+    # ---- 阶段 0.2：run_manifest.json（运行清单，尽力而为，不中断主管线）----
+    # 输入哈希 / MLLM 上下文与视觉缓存 / 每 sheet 阶段计数 / 输出文件 / 杆件
+    # 变更事件全部集中由 build_run_manifest() 纯函数组装；取不到的字段为 null。
+    run_manifest_path: Optional[str] = None
+    try:
+        steps_by_stem = {
+            stem: info.get("steps_path")
+            for stem, info in pipelines.items()
+            if info.get("steps_path")
+        }
+        mllm_provider = next(
+            (info.get("mllm_provider") for info in pipelines.values()
+             if info.get("mllm_provider")),
+            None,
+        )
+        mllm_model = next(
+            (info.get("mllm_model") for info in pipelines.values()
+             if info.get("mllm_model")),
+            None,
+        )
+        output_candidates: List[Path] = [
+            out_dir / "project.json",
+            out_dir / "index.json",
+            out_dir / "model.json",
+            out_dir / "cross_file" / "model.json",
+            out_dir / "skeleton.glb",
+            out_dir / "assembly_model.json",
+            out_dir / "assembly.glb",
+            out_dir / "canonical.glb",
+            out_dir / "detail_qa_atlas.glb",
+            out_dir / "bar_inventory.json",
+            out_dir / "bom_tree.json",
+            out_dir / "project_harness.json",
+            out_dir / "batch" / "batch_report.json",
+            out_dir / "batch" / "model.json",
+            *sorted((out_dir / "sheets").glob("*/model.json")),
+            *sorted((out_dir / "sheets").glob("*/steps.json")),
+        ]
+        run_manifest = build_run_manifest(
+            project_id=pid,
+            input_dir=input_dir,
+            overlay_path=layer_map_path,
+            bom_path=bom_path,
+            out_dir=out_dir,
+            sheet_ids=list(project.sheets.keys()),
+            sheet_stats=sheet_stats,
+            merged_model=merged_model,
+            steps_by_stem=steps_by_stem,
+            merge_report=mr,
+            output_candidates=output_candidates,
+            mllm_provider=mllm_provider,
+            mllm_model=mllm_model,
+        )
+        # 这两个文件都由本次运行写出（project_delivery.json 紧随其后落盘），
+        # 不受 collect_outputs 存在性过滤的影响，如实列入。
+        run_manifest["outputs"] = sorted(
+            set(run_manifest.get("outputs") or [])
+            | {"project_delivery.json", "run_manifest.json"}
+        )
+        run_manifest_path = write_run_manifest(run_manifest, out_dir)
+        delivery["run_id"] = run_manifest["run_id"]
+        delivery["run_manifest_path"] = run_manifest_path
+    except Exception as exc:
+        # manifest 构建/落盘失败只 warning，绝不中断主管线。
+        warnings.warn(f"run_manifest 构建失败（不中断主管线）：{exc}")
+
     manifest_path = out_dir / "project_delivery.json"
     manifest_path.write_text(json.dumps(delivery, ensure_ascii=False, indent=2), encoding="utf-8")
     delivery["manifest_path"] = str(manifest_path)

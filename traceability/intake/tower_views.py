@@ -19,7 +19,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..model import Component, EngineeringModel
 from .tower_spec import (
@@ -877,6 +877,148 @@ def _bar_3d_length(bar: Component, model: EngineeringModel) -> Optional[float]:
     if None in (pf.get("x"), pf.get("y"), pf.get("z"), pt.get("x"), pt.get("y"), pt.get("z")):
         return None
     return math.sqrt((pf["x"] - pt["x"]) ** 2 + (pf["y"] - pt["y"]) ** 2 + (pf["z"] - pt["z"]) ** 2)
+
+
+# --------------------------------------------------------------------------- #
+# 阶段1.1' / 1.3（JC1 单塔修复计划）：来源段门禁（fail-closed）。
+#
+# 归因记录（2026-08-30，484 根 dz>8m 杆）：merge_view_coordinates 的
+# `uz_global = z_off + view_y` 对 region 拿错的节点（整塔单线图 / 图纸角部
+# 图号章区）量纲爆炸——06 段节点 z 被算进 25000-30000（04 段范围）。
+# 本门禁在四面展开前按 source_sheet 的段 Z 范围剔除越界杆，并给全部物理杆
+# 写 source_sheet / source_z_range / interface_bar 溯源属性。
+# --------------------------------------------------------------------------- #
+
+# 35A1-JC1 六段塔身默认段高表（mm）。可被 overlay 的 module_z_ranges 覆盖。
+DEFAULT_MODULE_Z_RANGES: Dict[str, Tuple[float, float]] = {
+    "35A1-JC1-40": (0.0, 5500.0),
+    "35A1-JC1-07": (5500.0, 11000.0),
+    "35A1-JC1-06": (11000.0, 16000.0),
+    "35A1-JC1-05": (16000.0, 23000.0),
+    "35A1-JC1-04": (23000.0, 30000.0),
+    "35A1-JC1-02": (30000.0, 36600.0),
+}
+
+
+def enforce_source_segment_gate(
+    model: EngineeringModel,
+    *,
+    overlay: Optional[str | Path | dict] = None,
+    tol_mm: float = 1000.0,
+    ranges: Optional[Dict[str, Tuple[float, float]]] = None,
+) -> Dict[str, Any]:
+    """来源段门禁：物理杆两端 Z 必须落在 source_sheet 的段范围内。
+
+    规则（对齐 JC1 修复计划 阶段1.3）：
+      * 只检查 recognized / reconstructed 物理杆；derived/helper 不参与
+        门禁（它们也不进 P/R）。
+      * source_sheet 的段范围查 overlay 的 module_z_ranges（缺省用
+        DEFAULT_MODULE_Z_RANGES）；不在段表内的 sheet（如平面图）跳过。
+      * 边界容差 tol_mm 只吸收 Z 映射的段间漂移（实测 ≈734mm 累积），
+        不是评测容差；跨段污染（如 06 节点 z≈25000-30000）远超此容差。
+      * interface_bar=true 的杆豁免（相邻模块接口杆在阶段 5 拼接）。
+      * 违规杆 fail-closed：打 segment_gate_failed 标记后**删除**，并清理
+        悬空的 connections / rules / dimensions 引用；绝不静默保留。
+
+    返回报告 dict（checked / removed / removed_ids / removed_by_sheet /
+    no_z_skipped / kept_interface），供 run_manifest 与 review_queue 记录。
+    """
+    from .tower_spec import load_tower_spec
+
+    if ranges:
+        rng = {str(k): (float(v[0]), float(v[1])) for k, v in ranges.items()}
+    else:
+        raw = load_tower_spec(overlay).get("module_z_ranges")
+        rng = {}
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                try:
+                    rng[str(k)] = (float(v[0]), float(v[1]))
+                except (TypeError, ValueError, IndexError, KeyError):
+                    continue
+        if not rng:
+            rng = {k: (float(v[0]), float(v[1])) for k, v in DEFAULT_MODULE_Z_RANGES.items()}
+
+    nodes = {
+        cid: c for cid, c in model.components.items() if c.kind == "tower_node"
+    }
+    checked = removed = no_z = kept_interface = 0
+    removed_ids: List[str] = []
+    by_sheet: Dict[str, int] = {}
+
+    for cid, comp in list(model.components.items()):
+        if comp.kind != "tower_bar":
+            continue
+        p = comp.properties
+        if p.get("geometry_class") not in ("recognized", "reconstructed"):
+            continue
+        raw_sheet = str(p.get("source_file") or p.get("drawing_view") or "")
+        stem = raw_sheet.replace("\\", "/").rsplit("/", 1)[-1]
+        r = rng.get(stem)
+        # 阶段1.3 溯源属性：无论是否命中段表都写（无段表写 None）
+        p["source_sheet"] = stem or None
+        p["source_z_range"] = [r[0], r[1]] if r else None
+        if "interface_bar" not in p:
+            p["interface_bar"] = False
+        if r is None:
+            continue
+        fn, tn = p.get("from_node"), p.get("to_node")
+        nf, nt = nodes.get(fn), nodes.get(tn)
+        zf = nf.properties.get("z") if nf is not None else None
+        zt = nt.properties.get("z") if nt is not None else None
+        if zf is None or zt is None:
+            no_z += 1
+            continue
+        checked += 1
+        if p.get("interface_bar"):
+            kept_interface += 1
+            continue
+        lo = float(r[0]) - float(tol_mm)
+        hi = float(r[1]) + float(tol_mm)
+        if lo <= float(zf) <= hi and lo <= float(zt) <= hi:
+            continue
+        # 越界：fail-closed 剔除
+        removed += 1
+        removed_ids.append(cid)
+        by_sheet[stem] = by_sheet.get(stem, 0) + 1
+        p["segment_gate_failed"] = True
+
+    if removed_ids:
+        removed_set = set(removed_ids)
+        for cid in removed_ids:
+            del model.components[cid]
+            model.staleness.pop(cid, None)
+        if model.connections:
+            drop = [
+                k for k, c in model.connections.items()
+                if c.from_component in removed_set or c.to_component in removed_set
+            ]
+            for k in drop:
+                del model.connections[k]
+                model.staleness.pop(k, None)
+        if model.rules:
+            drop = [
+                k for k, rule in model.rules.items()
+                if rule.applies_to and any(a in removed_set for a in rule.applies_to)
+            ]
+            for k in drop:
+                del model.rules[k]
+                model.staleness.pop(k, None)
+        if model.dimensions:
+            drop = [k for k, d in model.dimensions.items() if d.applies_to in removed_set]
+            for k in drop:
+                del model.dimensions[k]
+                model.staleness.pop(k, None)
+
+    return {
+        "checked": checked,
+        "removed": removed,
+        "removed_ids": removed_ids[:200],
+        "removed_by_sheet": by_sheet,
+        "no_z_skipped": no_z,
+        "kept_interface": kept_interface,
+        "tol_mm": float(tol_mm),
+    }
 
 
 def merge_view_bars(
