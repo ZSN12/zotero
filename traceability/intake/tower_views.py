@@ -144,6 +144,14 @@ def _normalize_segment_view_y(
         span_mm = float(g["span_mm"])
         z_off = float(g["z_off"])
         z_flip = bool(g["z_flip"])
+        # z_invert（S2 前置发现）：该段的「宽端」画在图框上部（view_y 小=段底）。
+        # 注意与 z_flip 的本质区别：z_flip=True 会同时触发 tower_dxf 的 ly=-ly
+        # 与本函数的公式切换，两者数学上恰好抵消（lo/hi 随符号翻转镜像，
+        # (hi-raw) 与 (raw'-lo') 代入后同值），对最终 Z 无净效果。
+        # z_invert 只在归一化层把方向反过来（local → span-local），不触碰
+        # DXF 层——用于「图框顶=宽端」的图纸（35A1-JC1 的 07/06/05/04 段，
+        # 实测主腿锥度 +0.076/mm 与 GT -0.07/mm 镜像，翻转后吻合到 3~11mm）。
+        z_invert = bool((view_region(dv, kind, overlay=overlay) or {}).get("z_invert"))
         lo, hi = _robust_segment_span(g["vals"])
         bounds[f"{dv}__{kind}"] = (lo, hi)
         for cid, comp in g["nodes"]:
@@ -158,9 +166,13 @@ def _normalize_segment_view_y(
                 local = (raw - lo) / (hi - lo) * span_mm
             else:
                 local = (hi - raw) / (hi - lo) * span_mm
+            if z_invert:
+                local = span_mm - local
             p["view_y_local"] = p.get("view_y")
             p["view_y"] = round(z_off + local, 2)
             p["segment_z_normalized"] = True
+            if z_invert:
+                p["segment_z_inverted"] = True
     return bounds
 
 
