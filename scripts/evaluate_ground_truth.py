@@ -84,6 +84,15 @@ def main():
         print(f"{s['tol']:>8.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
               f"{s['precision']:>10.1%} {s['recall']:>10.1%}")
 
+    # 任务 5（P3）：A2-effective 有效高度口径（底段 z<6500 无图纸来源，
+    # 客观源缺失不应算进识别能力的分母；双口径并列，全高口径仍为正式指标）
+    eff = result.get("effective")
+    if eff:
+        print(f"\nA2-effective（z >= {eff['z_min_mm']:.0f}mm，双侧同口径，剔除 GT 无源杆 {eff['gt_excluded']} 根）：")
+        for s in eff["sweep"]:
+            print(f"{s['tol']:>8.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
+                  f"{s['precision']:>10.1%} {s['recall']:>10.1%}")
+
     # A3 关联评测（几何匹配对中的件号是否正确关联）
     a3 = eval_a3_association(gt, model, view=args.view, id_mapping=id_mapping,
                              allow_legacy=args.allow_legacy_semantics)

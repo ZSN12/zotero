@@ -646,6 +646,7 @@ def eval_a2_geometry_2d(
     view: str = "front",
     tols: Sequence[float] = DEFAULT_TOLS,
     allow_legacy: bool = False,
+    effective_z_min: Optional[float] = 6500.0,
 ) -> Dict[str, Any]:
     """A2 几何检测（2D 投影）：GT 投影 vs 模型物理 2D 杆件。
 
@@ -655,6 +656,11 @@ def eval_a2_geometry_2d(
     1071 根物理杆（含横隔 295），两侧口径对齐：横隔在 GT 是真实安装角钢，
     模型侧由 `generate_diaphragms` 确定性重建，双方均计入。
     镜像面 b/l/r 仍不进 front 投影（face→side 映射，view 过滤排除）。
+
+    任务 5（P3）A2-effective：底段 z[0,5500] 无图纸来源（拼接后模型 bbox 自
+    z≈6500 起），全高召回把客观源缺失算进识别能力的分母，系统性低估。返回体
+    附加 "effective" 子块：GT 与模型双侧均限定 z_mid >= effective_z_min
+    （默认 6500mm）重算整套 tolerance sweep。effective_z_min=None 关闭。
     """
     g = gt_bars_2d(gt, view)
     # 阶段 D1：A2 = physical 口径（recognized + reconstructed 横隔，排除 derived），
@@ -676,6 +682,15 @@ def eval_a2_geometry_2d(
         "exact": exact,
         "rate": round(exact / len(result["matched_at_default"]), 4) if result["matched_at_default"] else 0.0,
     }
+    # 任务 5（P3）：A2-effective 有效高度口径（双指标并列，不替代全高口径）
+    if effective_z_min is not None:
+        g_eff = [x for x in g if (x[0][1] + x[0][3]) / 2.0 >= effective_z_min]
+        m_eff = [x for x in m if (x[0][1] + x[0][3]) / 2.0 >= effective_z_min]
+        eff = eval_segment_pr(
+            [s for s, _, _ in g_eff], [s for s, _ in m_eff], segment_cost, tols)
+        eff["z_min_mm"] = effective_z_min
+        eff["gt_excluded"] = len(g) - len(g_eff)
+        result["effective"] = eff
     return result
 
 

@@ -119,16 +119,56 @@ def model_stats(model: dict) -> dict:
             c = _classify_2d(seg)
             overlong[c] += 1
 
-    # degree-1 节点（来自 drawing_file 属性，若存在）
-    df = model.get("drawing_file")
+    # 任务 4 / P0-2：degree-1 统一用 inspect_model_topology 现算（不再依赖
+    # drawing_file 旧静态字段作唯一来源）。说明：门禁（tower_solver）读取的是
+    # 管线在「主腿节间化切分之前」用 front 面拟合的 half_width(z) 算出的
+    # topology_genuine_dangling；最终模型里主腿已被切成 ~1m 段，事后无法复现
+    # 该拟合（上分位被斜材端点污染）。因此报告主口径为「无半宽现算」
+    # （横担端头仅认 role==CROSS，genuine 为保守上界），管线记录值作为
+    # 辅口径并标注来源，两者并列供审计。
+    from traceability.solve.tower_geometry import inspect_model_topology
+
+    node_map = {}
+    bar_list = []
+    for c in comps.values():
+        k = c.get("kind")
+        p = c.get("properties", {})
+        if k == "tower_node":
+            x, y, z = p.get("x"), p.get("y"), p.get("z")
+            if x is not None and y is not None and z is not None:
+                node_map[c.get("id")] = (float(x), float(y), float(z))
+        elif k == "tower_bar":
+            f, t = p.get("from_node"), p.get("to_node")
+            if f and t:
+                bar_list.append({"id": c.get("id"), "from": f, "to": t, "role": p.get("role")})
     degree1 = None
     genuine_degree1 = None
     components_topology = None
+    crossarm_tips = None
+    pipeline_recorded = None
+    if node_map and bar_list:
+        try:
+            topology = inspect_model_topology(node_map, bar_list)
+            degree1 = topology.get("dangling_degree1")
+            genuine_degree1 = topology.get("genuine_dangling_degree1")
+            components_topology = topology.get("components")
+            crossarm_tips = topology.get("crossarm_tip_count")
+        except Exception as exc:  # 拓扑现算失败不阻断报告
+            print(f"[warn] inspect_model_topology 现算失败: {exc}", file=sys.stderr)
+    # 辅口径：管线在正确阶段（半宽拟合可用时）记录的门禁值，仅审计对照
+    df = comps.get("drawing_file")
+    if not isinstance(df, dict):
+        df = next((c for c in comps.values() if c.get("kind") == "drawing_file"), None)
     if isinstance(df, dict):
-        props = df.get("properties", {})
-        degree1 = props.get("topology_degree1")
-        genuine_degree1 = props.get("topology_genuine_dangling")
-        components_topology = props.get("topology_components")
+        dp = df.get("properties", {})
+        if dp.get("topology_degree1") is not None:
+            pipeline_recorded = {
+                "degree1": dp.get("topology_degree1"),
+                "genuine_dangling": dp.get("topology_genuine_dangling"),
+                "crossarm_tips": dp.get("topology_crossarm_tips"),
+                "components": dp.get("topology_components"),
+                "note": "管线阶段记录（含半宽拟合的横担端头判定），与现算口径不同",
+            }
 
     # 横隔 z 水平数
     dia_z = set()
@@ -157,7 +197,9 @@ def model_stats(model: dict) -> dict:
         "overlong_gt6m": overlong,
         "degree1": degree1,
         "genuine_degree1": genuine_degree1,
+        "crossarm_tips": crossarm_tips,
         "topology_components": components_topology,
+        "topology_pipeline_recorded": pipeline_recorded,
         "diaphragm_z_levels": sorted(dia_z),
         "diaphragm_z_level_count": len(dia_z),
     }
@@ -275,6 +317,7 @@ def main():
             "n_gt": a2["n_gt"],
             "n_model": a2["n_model"],
             "sweep": a2["sweep"],
+            "effective": a2.get("effective"),
         },
         "recall_by_category": cat,
         "front_bars_by_segment": seg,
@@ -290,7 +333,10 @@ def main():
     print(f"斜材(front)数: {ms['diag_count_front']}  | 中位长度: {ms['diag_len_median']}mm")
     print(f"斜材长度分布: {ms['diag_len_distribution']}")
     print(f">6m 超长杆(按类): {ms['overlong_gt6m']}")
-    print(f"degree-1 节点: {ms['degree1']}  | genuine: {ms['genuine_degree1']}  | 拓扑组件: {ms['topology_components']}")
+    print(f"degree-1 节点(现算): {ms['degree1']}  | genuine(保守上界): {ms['genuine_degree1']}  | 横担端头(仅role=CROSS): {ms['crossarm_tips']}  | 拓扑组件: {ms['topology_components']}")
+    if ms.get("topology_pipeline_recorded"):
+        pr = ms["topology_pipeline_recorded"]
+        print(f"degree-1 节点(管线记录): degree1={pr.get('degree1')} genuine={pr.get('genuine_dangling')} tips={pr.get('crossarm_tips')} components={pr.get('components')}")
     print()
     print("GT 杆件:", gs)
     print()
@@ -299,6 +345,12 @@ def main():
     for s in a2["sweep"]:
         print(f"{s['tol']:>6.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
               f"{s['precision']:>8.1%} {s['recall']:>8.1%}")
+    eff = a2.get("effective")
+    if eff:
+        print(f"A2-effective (z>={eff['z_min_mm']:.0f}mm, 剔除无源 GT {eff['gt_excluded']} 根):")
+        for s in eff["sweep"]:
+            print(f"{s['tol']:>6.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
+                  f"{s['precision']:>8.1%} {s['recall']:>8.1%}")
     print()
     print("各类别 500mm 召回:")
     for c, d in cat.items():
