@@ -1006,6 +1006,17 @@ def merge_view_bars(
                     b_ln = bar.properties.get("length_mm_3d")
                     if b_ln is not None and abs(p_ln - b_ln) / b_ln <= 0.01:
                         target_bar_ids.append(bar.id)
+        # 阶段 5.2：多候选时用截面（section）作为第三属性消歧。
+        # 件号缺失 + 长度碰撞的对称杆件，常可通过截面类型（角钢/圆钢/规格）区分。
+        if len(target_bar_ids) > 1:
+            p_sec = c.properties.get("section")
+            if p_sec:
+                sec_matches = [
+                    bid_ for bid_ in target_bar_ids
+                    if model.components.get(bid_, Component(id="", name="", kind="")).properties.get("section") == p_sec
+                ]
+                if len(sec_matches) == 1:
+                    target_bar_ids = sec_matches
         if len(target_bar_ids) == 1:
             projection_refs_by_bar[target_bar_ids[0]].append(proj_ref)
         elif len(target_bar_ids) > 1:

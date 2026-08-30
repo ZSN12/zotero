@@ -314,6 +314,37 @@ class OverlapBarDedupTest(unittest.TestCase):
         self.assertEqual(len(deduped), 2, "不同视图不应去重")
         self.assertEqual(len(groups), 0)
 
+    def test_dedup_short_fragment_overlapping_long_bar(self):
+        # §6.1：短碎片与长杆共线且重叠达阈值 → 判重；重叠不足阈值 → 保留
+        from traceability.intake.tower_agent_pipeline import _deduplicate_overlapping_bars
+
+        # 长杆 (0,0)-(100,0)，短碎片 (20,0)-(60,0) 完全在长杆内且重叠 100%
+        bars = [
+            {"bar_uid": "long", "x1": 0.0, "y1": 0.0, "x2": 100.0, "y2": 0.0, "view_type": "front"},
+            {"bar_uid": "frag", "x1": 20.0, "y1": 0.0, "x2": 60.0, "y2": 0.0, "view_type": "front"},
+        ]
+        deduped, groups = _deduplicate_overlapping_bars(bars)
+        uids = {b["bar_uid"] for b in deduped}
+        self.assertIn("long", uids)
+        self.assertNotIn("frag", uids, "完全重叠的短碎片应判重")
+        self.assertEqual(len(groups), 1)
+
+    def test_dedup_keeps_barely_overlapping_fragments(self):
+        # 重叠比例低于阈值（默认 0.5）的共线碎片不应判重
+        from traceability.intake.tower_agent_pipeline import _deduplicate_overlapping_bars
+
+        # 长杆 (0,0)-(100,0)，碎片 (90,0)-(110,0) 只重叠 10/20=50% 边界，端点不重合
+        # 重叠比例 = overlap 10 / shorter 20 = 0.5，恰好等于阈值；改用更小重叠验证
+        bars = [
+            {"bar_uid": "long", "x1": 0.0, "y1": 0.0, "x2": 100.0, "y2": 0.0, "view_type": "front"},
+            {"bar_uid": "tip", "x1": 95.0, "y1": 0.0, "x2": 105.0, "y2": 0.0, "view_type": "front"},
+        ]
+        deduped, groups = _deduplicate_overlapping_bars(bars, overlap_ratio_threshold=0.8)
+        uids = {b["bar_uid"] for b in deduped}
+        self.assertIn("long", uids)
+        self.assertIn("tip", uids, "重叠不足阈值的碎片不应判重")
+        self.assertEqual(len(groups), 0)
+
 
 class CoordUnitNamingTest(unittest.TestCase):
     """P3-8：坐标/单位命名规范（x_px/drawing_x/x_mm 不混用）。"""

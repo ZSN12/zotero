@@ -60,10 +60,13 @@ def _schema_errors(data: dict) -> list[str]:
 def _is_dxf_handle(s: str) -> bool:
     """判断一个字符串是否像 DXF 实体 handle（十六进制）。
 
-    DXF handle 是纯十六进制字符串（如 '2F'、'A1B2'、'0x2F'），是外部实体
+    DXF handle 是纯十六进制字符串（如 '2F'、'A1B2'、'101'、'0x2F'），是外部实体
     句柄而非模型组件 ID，因此 validate_references 不应要求其在 components 内可解析。
-    注意：纯数字如 '123' 既可能是十进制数字也可能是十六进制 handle，但为了
-    避免误吞真实组件 ID，只把「含字母的十六进制」或显式 0x 前缀当 handle。
+
+    本代码库的组件 ID（bar_M0051_front、node_A、4f_..._F、drawing_file、bom_row）
+    必含非十六进制字符（下划线/连字符/超出 a-f 的字母），因此「纯十六进制串」是
+    与组件 ID 不相交的可靠判据——含纯数字（如 '101'）也算 handle（'101' 是合法
+    十六进制）。
     """
     s = s.strip()
     if not s:
@@ -71,12 +74,8 @@ def _is_dxf_handle(s: str) -> bool:
     if s.startswith("0x") or s.startswith("0X"):
         body = s[2:]
         return bool(body) and all(ch in "0123456789abcdefABCDEF" for ch in body)
-    # 含十六进制字母（a-f）的纯十六进制串，且长度合理（DXF handle 通常 2~8 位）
-    hex_chars = set("0123456789abcdefABCDEF")
-    if 2 <= len(s) <= 16 and all(ch in hex_chars for ch in s):
-        # 必须含至少一个字母，避免把纯数字组件 ID（如 '123'）误判为 handle
-        return any(ch in "abcdefABCDEF" for ch in s)
-    return False
+    # 纯十六进制串（含纯数字）：与组件 ID 不相交（组件 ID 必含非十六进制字符）
+    return all(ch in "0123456789abcdefABCDEF" for ch in s)
 
 
 def validate_references(model: EngineeringModel) -> list[str]:

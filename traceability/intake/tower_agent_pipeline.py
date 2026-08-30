@@ -388,6 +388,22 @@ def _deduplicate_overlapping_bars(
         dot = max(-1.0, min(1.0, d1[0] * d2[0] + d1[1] * d2[1]))
         return math.degrees(math.acos(dot))
 
+    def _overlap_ratio(
+        p: Tuple[float, float], q: Tuple[float, float],
+        r: Tuple[float, float], s: Tuple[float, float],
+        d: Tuple[float, float],
+    ) -> float:
+        """两条共线线段在方向 d 上的投影重叠比例（相对较短者）。"""
+        # 把四个端点投影到方向 d 上
+        proj = lambda pt: pt[0] * d[0] + pt[1] * d[1]  # noqa: E731
+        a1, a2 = sorted((proj(p), proj(q)))
+        b1, b2 = sorted((proj(r), proj(s)))
+        overlap = max(0.0, min(a2, b2) - max(a1, b1))
+        shorter = min(a2 - a1, b2 - b1)
+        if shorter < 1e-9:
+            return 0.0
+        return overlap / shorter
+
     n = len(bars)
     keep = [True] * n
     groups: List[List[str]] = []
@@ -409,14 +425,18 @@ def _deduplicate_overlapping_bars(
             # 端点正反顺序都试：同向 (i1~j1, i2~j2) 或反向 (i1~j2, i2~j1)
             same_dir = (_dist(i1, j1) <= endpoint_tol_px and _dist(i2, j2) <= endpoint_tol_px)
             rev_dir = (_dist(i1, j2) <= endpoint_tol_px and _dist(i2, j1) <= endpoint_tol_px)
-            if not (same_dir or rev_dir):
-                continue
             # 方向夹角（反向杆用反向单位向量比较）
             dj = _dir(bj)
             if rev_dir:
                 dj = (-dj[0], -dj[1])
             if _angle_diff(di, dj) > angle_tol_deg:
                 continue
+            # 阶段 6.1/7.3：端点几乎重合（same_dir/rev_dir）时直接判重；
+            # 端点不重合但共线重叠达阈值的短碎片也判重（去重短碎片）。
+            if not (same_dir or rev_dir):
+                ov = _overlap_ratio(i1, i2, j1, j2, di)
+                if ov < overlap_ratio_threshold:
+                    continue
             keep[j] = False
             group.append(bj.get("bar_uid") or f"bar_{j}")
         if len(group) > 1:
@@ -786,6 +806,10 @@ def _build_model_candidate(
         }
         if assign.get("label_distance_px") is not None:
             props["label_distance_px"] = assign["label_distance_px"]
+        # 阶段 7.4：label_distance_mm 不得被丢弃——若 MLLM 提供了物理距离，
+        # 显式写回（区别于 px 距离），避免下游误把 px 距离当 mm 用。
+        if assign.get("label_distance_mm") is not None:
+            props["label_distance_mm"] = round(float(assign["label_distance_mm"]), 2)
         objects.append(CandidateObject(
             obj_type="component",
             data={
