@@ -416,6 +416,7 @@ def inject_mllm_bars_into_model(
                 "from_node": fn, "to_node": tn,
                 "view_type": vt,
                 "geometry_origin": bar.get("geometry_origin") or "mllm_geom",
+                "geometry_class": "recognized",
                 "drawing_view": stem,
                 "bar_id": bar_bid,
             },
@@ -531,6 +532,7 @@ def remove_x_crossing_nodes(model: EngineeringModel, *, angle_tol_deg: float = 8
                     "from_node": ai["other"], "to_node": aj["other"],
                     "view_type": bars[ai["bar"]].properties.get("view_type"),
                     "geometry_origin": "x_crossing_uncouple",
+                    "geometry_class": "recognized",
                     "bar_id": bars[ai["bar"]].properties.get("bar_id")
                               or f"UNLABELED_{new_bar_id}",
                     "uncoupled_from": [ai["bar"], aj["bar"]],

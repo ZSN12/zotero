@@ -1317,6 +1317,10 @@ def extract_tower_from_dxf(
             "from_node": f"node_{from_nid}",
             "to_node": f"node_{to_nid}",
             "layer": seg["layer"],
+            # 阶段2.6：ezdxf 直接识别出的杆件显式标记 recognized（非 derived/mirrored），
+            # 否则单段 2D 评测时 bars_from_model_2d(mode=recognition) 因缺
+            # geometry_class 而 fail-closed 全部排除。
+            "geometry_class": "recognized",
             "drawing_view": stem,
             "source_file": stem,
             "geometry_origin": "dxf_geom",
@@ -1330,7 +1334,11 @@ def extract_tower_from_dxf(
                 "sheet_id": stem,
                 "view_id": f"{stem}__{vk}",
                 "view_type": vk,
-                "source_component_id": str(handle),
+                # handle 缺失时用 sheet:// 稳定 URI（外部自包含引用），
+                # 绝不写 str(None)="None"——否则 validate_references 会把它
+                # 误判为悬空的组件内引用（正确性修复）。
+                "source_component_id": str(handle) if handle is not None
+                                       else f"sheet://{stem}#{vk}",
                 "source_reference": dxf_path,
                 "region_id": seg.get("region"),
                 "geometry_origin": "dxf_geom",

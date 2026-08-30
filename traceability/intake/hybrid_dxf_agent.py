@@ -848,7 +848,7 @@ def run_hybrid_dxf_agent_pipeline(
                        if k not in ("method", "bars", "nodes", "ezdxf_bars")},
                     method=a2_method,
                 )
-            elif geom_method == "centerline" and ezdxf_bars:
+            elif geom_method == "centerline" and ezdxf_bars and mapping:
                 # 阶段2.4：候选中心线 + 视觉分类。
                 # ezdxf 已做双轮廓配对→中心线 + 共线缝合（高召回、坐标精确），
                 # 这里把 DXF 中心线当候选，MLLM 只做「保留/剔除」二分类滤掉
@@ -865,7 +865,7 @@ def run_hybrid_dxf_agent_pipeline(
                 cand_ids = [f"C{i + 1:03d}" for i in range(len(cand_px))]
                 keep_ids: Optional[set] = None
                 cl_meta: Dict[str, Any] = {"candidates": len(cand_px)}
-                if (not skip_mllm and mllm_backend.available() and mapping and views):
+                if (not skip_mllm and mllm_backend.available() and views):
                     keep_set, cl_meta = _mllm_classify_centerlines(
                         str(png_path), views, cand_px, crops_dir, mllm_backend,
                     )
@@ -875,22 +875,36 @@ def run_hybrid_dxf_agent_pipeline(
                     }
                     cl_meta["kept"] = len(keep_ids)
                     cl_meta["dropped"] = len(cand_px) - len(keep_ids)
-                bars = ezdxf_bars
                 a2_method = "centerline"
                 if keep_ids is not None and len(keep_ids) < len(cand_px):
-                    bars = [b for b in ezdxf_bars if b.get("bar_uid") in keep_ids]
-                    keep_component = {b["component_id"] for b in bars if b.get("component_id")}
+                    # MLLM 分类成功且有剔除：保留 keep 的矢量杆，删除其余。
+                    # keep 集合须同时含保留杆件及其 from_node/to_node，否则
+                    # _strip_vector_geometry 会把被保留杆件的节点一并清除。
+                    keep_component = set()
+                    for b in ezdxf_bars:
+                        if b.get("bar_uid") not in keep_ids:
+                            continue
+                        if b.get("component_id"):
+                            keep_component.add(b["component_id"])
+                        fn = model.components.get(b["component_id"]).properties.get("from_node") if b.get("component_id") else None
+                        tn = model.components.get(b["component_id"]).properties.get("to_node") if b.get("component_id") else None
+                        if fn:
+                            keep_component.add(fn)
+                        if tn:
+                            keep_component.add(tn)
                     stripped = _strip_vector_geometry(model, keep=keep_component)
                     cl_meta["stripped_vector_components"] = stripped
+                    bars = [b for b in ezdxf_bars if b.get("bar_uid") in keep_ids]
                 else:
-                    cl_meta["kept"] = len(bars)
+                    # 无 MLLM / 分类失败 / 无剔除：候选全保留（高召回）
+                    cl_meta["kept"] = len(ezdxf_bars)
                     cl_meta["dropped"] = 0
                     cl_meta["note"] = "MLLM 不可用/失败或无剔除，候选全保留（高召回）"
+                    bars = ezdxf_bars
                 # 阶段2.5：X 交叉解耦（中心线候选来自 ezdxf，交叉处同样可能被劈段）
                 uncoupled = _remove_x_crossing_nodes(model)
                 if uncoupled:
                     cl_meta["x_crossings_uncoupled"] = uncoupled
-                cl_meta["method"] = a2_method
                 graph.finish(bars=len(bars), nodes=node_count, **cl_meta, method=a2_method)
             elif geom_method == "ezdxf" and ezdxf_bars:
                 # 显式 ezdxf：只在这种模式下才用 ezdxf 几何（默认 auto 不优先 ezdxf，

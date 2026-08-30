@@ -380,6 +380,7 @@ def cmd_run_tower(args):
         input_dir=getattr(args, "input_dir", None),
         use_ocr_fallback=not getattr(args, "no_ocr_fallback", False),
         agent_mode=getattr(args, "agent_mode", "ezdxf"),
+        geom_method=getattr(args, "geom_method", "auto"),
     )
     if result.get("ok"):
         print("✓ 全链完成")
@@ -728,6 +729,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--input-dir", help="批量模式：目录内全部 DWG/DXF（A3）")
     p_run.add_argument("--agent-mode", choices=["ezdxf", "hybrid"], default="ezdxf",
                        help="单文件 DXF 几何后端：ezdxf（默认）/ hybrid（MLLM Agent 链）")
+    p_run.add_argument("--geom-method", choices=["auto", "mllm", "ezdxf", "centerline"],
+                       default="auto",
+                       help="hybrid 模式 A2 几何后端：auto/mllm（MLLM 重画坐标）/"
+                            "ezdxf（矢量中心线）/ centerline（DXF 候选中心线 + MLLM 分类）")
     p_run.set_defaults(func=cmd_run_tower)
 
     p_batch = sub.add_parser("intake-tower-batch", help="目录内全部 DWG 转 DXF 并批量 intake（A3/B7）")

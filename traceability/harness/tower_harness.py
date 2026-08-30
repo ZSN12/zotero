@@ -148,6 +148,7 @@ def run_tower(
     mllm: Optional[Any] = None,
     use_ocr_fallback: bool = True,
     agent_mode: str = "ezdxf",
+    geom_method: str = "auto",
 ) -> Dict[str, Any]:
     """一步命令跑完全链：intake → compile → cross_check → verify → retry → export。
 
@@ -314,6 +315,7 @@ def run_tower(
                     mllm=mllm,
                     bom_path=bom_path,
                     use_ocr_fallback=use_ocr_fallback,
+                    geom_method=geom_method,
                 )
                 # hybrid 管线内部已完成 A0-A4（含 finalize + Harness verify + export），
                 # 直接返回其结果，不再走下方通用的 compile/verify/export 流程
