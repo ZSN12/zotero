@@ -115,7 +115,6 @@
     },
     "synthetic_side_view_x_scale": 1.0,
     "merge_stems_extra": [
-      "35A1-JC1-40",
       "35A1-JC1-07",
       "35A1-JC1-06",
       "35A1-JC1-05",
@@ -1092,7 +1091,7 @@
     "35A1-JC1-37": "node_detail",
     "35A1-JC1-38": "node_detail",
     "35A1-JC1-39": "node_detail",
-    "35A1-JC1-40": "assembly_front",
+    "35A1-JC1-40": "node_detail",
     "35A1-JC1-41": "node_detail",
     "35A1-JC1-42": "node_detail",
     "35A1-JC1-43": "node_detail",
