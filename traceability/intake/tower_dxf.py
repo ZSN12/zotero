@@ -476,6 +476,99 @@ def _subdivide_at_t_junctions(
     return out
 
 
+def _subdivide_at_levels(
+    segments: List[Dict],
+    *,
+    level_cluster_tol: float = 4.0,
+    min_seg_len: float = 3.0,
+    min_member_len: float = 40.0,
+    min_diag_len: float = 35.0,
+    diagonal_ang_deg: Tuple[float, float] = (20.0, 75.0),
+) -> List[Dict]:
+    """阶段2.5（方案A）：按「长斜材端点 y 聚类导出的节间水平」对通长主材做参数化打断。
+
+    与 `_subdivide_at_t_junctions`（端点投影到线段）不同：国网斜材端点只画到
+    节点板边缘，距主腿中心线 0.84~1.67 图纸单位，端点投影法 snap_tol 大了
+    过度拆分、小了找不到交点。本方案：
+      1. 收集**长斜向杆**（角度落在 diagonal_ang_deg 区间、长度 >= min_diag_len，
+         即 X 形通长斜材而非 1050~1250mm 的节间短斜材）的全部端点 y；
+      2. 1D 聚类（间距 < level_cluster_tol）得到候选节间水平；
+      3. 仅对「近竖直且为最长的通长主材」（长度 >= min_member_len）在这些
+         y 水平处沿其方向做参数化打断（沿杆参数 t，不做全局垂直投影）。
+    只切主材、不切斜材（避免在 X 交叉点制造假节点），误杀面最小。返回打断后
+    段列表，保留 split_from / handle#s{j} 溯源元数据。
+    """
+    if not segments:
+        return segments
+
+    def _ang(s):
+        dx = s["end"][0] - s["start"][0]
+        dy = s["end"][1] - s["start"][1]
+        return math.degrees(math.atan2(dy, dx))
+
+    def _len(s):
+        return math.hypot(s["end"][0] - s["start"][0], s["end"][1] - s["start"][1])
+
+    # 1) 长斜材端点 y 收集（用绝对角度，斜材近似 ±30°~±60° 或 120°~150°）。
+    #    min_diag_len 只保留 X 形通长斜材，排除节间短斜材的端点污染。
+    diag_ys: List[float] = []
+    for s in segments:
+        if _len(s) < min_diag_len:
+            continue
+        a = abs(_ang(s)) % 180.0
+        if diagonal_ang_deg[0] <= a <= diagonal_ang_deg[1] or \
+           (180.0 - diagonal_ang_deg[1]) <= a <= (180.0 - diagonal_ang_deg[0]):
+            diag_ys.append(s["start"][1])
+            diag_ys.append(s["end"][1])
+
+    if not diag_ys:
+        return segments
+    diag_ys.sort()
+    levels: List[float] = []
+    for y in diag_ys:
+        if not levels or y - levels[-1] > level_cluster_tol:
+            levels.append(y)
+        else:
+            levels[-1] = (levels[-1] + y) / 2.0  # 运行均值收敛到簇心
+
+    # 2) 主材识别：近竖直（角度 ±85°~±95°）且长度达阈值
+    out: List[Dict] = []
+    for seg in segments:
+        a = abs(_ang(seg)) % 180.0
+        is_vertical = (85.0 <= a <= 95.0)
+        is_long = _len(seg) >= min_member_len
+        if not (is_vertical and is_long):
+            out.append(seg)
+            continue
+        x1, y1 = seg["start"]
+        x2, y2 = seg["end"]
+        # 沿杆方向参数化：主材竖直，直接用 y 参数
+        if abs(y2 - y1) < 1e-9:
+            out.append(seg)
+            continue
+        y_lo, y_hi = sorted((y1, y2))
+        # 收集落在主材内部（留端点余量）的节间水平
+        hits = [y for y in levels if y_lo + min_seg_len < y < y_hi - min_seg_len]
+        if not hits:
+            out.append(seg)
+            continue
+        # 端点 + 节间水平 → 排序 → 相邻成段
+        ypts = sorted([y_lo] + hits + [y_hi])
+        base = {k: v for k, v in seg.items() if k not in ("start", "end", "handle")}
+        # 沿方向插值 x（主材竖直，x 随 y 线性）
+        frac = [(y - y_lo) / (y_hi - y_lo) for y in ypts]
+        for j in range(len(ypts) - 1):
+            child = dict(base)
+            child["start"] = (x1 + (x2 - x1) * frac[j], ypts[j])
+            child["end"] = (x1 + (x2 - x1) * frac[j + 1], ypts[j + 1])
+            h = seg.get("handle")
+            child["handle"] = f"{h}#s{j}" if h else None
+            child["split_from"] = seg.get("handle")
+            child["subdivide_levels"] = [round(y, 2) for y in hits]
+            out.append(child)
+    return out
+
+
 def _stitch_collinear_with_geometry(
     segments: List[Dict],
     *,
@@ -1139,6 +1232,22 @@ def extract_tower_from_dxf(
                 subdivided.extend(_subdivide_at_t_junctions(
                     view_segs, snap_tol=sub_tol,
                     max_splits_per_seg=int(coll_cfg.get("subdivide_max_splits", 24)),
+                ))
+            bar_segments = subdivided
+
+        # 阶段2.5（方案A）：按斜材端点 y 聚类导出的节间水平对通长主材做参数化打断。
+        # 与 subdivide_at_t_junctions 互斥（端点投影法在斜材端点距主腿 0.84~1.67u
+        # 时不稳定）。仅当显式 subdivide_at_levels 时启用。
+        if coll_cfg and coll_cfg.get("subdivide_at_levels"):
+            subdivided: List[Dict] = []
+            for vk in sorted({seg["view_type"] or "_all" for seg in bar_segments}):
+                view_segs = [s for s in bar_segments if (s["view_type"] or "_all") == vk]
+                subdivided.extend(_subdivide_at_levels(
+                    view_segs,
+                    level_cluster_tol=float(coll_cfg.get("level_cluster_tol", 4.0)),
+                    min_seg_len=float(coll_cfg.get("subdivide_min_seg_len", 3.0)),
+                    min_member_len=float(coll_cfg.get("subdivide_min_member_len", 40.0)),
+                    min_diag_len=float(coll_cfg.get("subdivide_min_diag_len", 35.0)),
                 ))
             bar_segments = subdivided
 
