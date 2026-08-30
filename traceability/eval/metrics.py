@@ -670,6 +670,10 @@ def eval_a2_geometry_2d(
     gt_segs = [s for s, _, _ in g]
     model_segs = [s for s, _ in m]
     result = eval_segment_pr(gt_segs, model_segs, segment_cost, tols)
+    # 风险2（2026-08-31 口径审计）：结果必须自带 scope 标注，防止
+    # effective 子块被误读为全塔指标。主结果 = full_tower；effective =
+    # known_source_range（剔除无图纸底段的辅助口径）。
+    result["metric_scope"] = "full_tower"
     # 件号 Exact Match（匹配对中，A1 标签 + A3 关联的产物）
     exact = 0
     for gi, mj in result["matched_at_default"]:
@@ -688,6 +692,8 @@ def eval_a2_geometry_2d(
         m_eff = [x for x in m if (x[0][1] + x[0][3]) / 2.0 >= effective_z_min]
         eff = eval_segment_pr(
             [s for s, _, _ in g_eff], [s for s, _ in m_eff], segment_cost, tols)
+        eff["metric_scope"] = "known_source_range"
+        eff["excluded_reason"] = "drawing_missing"
         eff["z_min_mm"] = effective_z_min
         eff["gt_excluded"] = len(g) - len(g_eff)
         result["effective"] = eff

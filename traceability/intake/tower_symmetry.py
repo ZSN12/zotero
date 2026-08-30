@@ -276,22 +276,42 @@ def expand_4_face_symmetry_model(
             half_width_fitted = True
 
     # S6 主腿节间化 + S2b 横隔层 z 对齐（用户 2026-08 裁定：canonical 平台
-    # 标高 z-only 可注入，x/y 严禁注入 GT）。use_gt_platform_levels 开启时
-    # 用 gt_profile.gt_platform_levels()；否则 derive_panel_levels 从 DXF
-    # 节点证据聚类推导（生产默认，精度受节点噪声限制）。
-    panel_levels: List[float] = []
-    if bool(spec.get("use_gt_platform_levels")) or bool(spec.get("subdivide_legs")):
+    # 标高 z-only 可注入，x/y 严禁注入 GT）。
+    #
+    # 旗标（2026-08-31 口径审计重构，风险3 拆分）：
+    #   panel_level_source: "gt"   — canonical 平台标高（z-only GT 注入，level-assisted 口径）
+    #                    | "dxf"   — derive_panel_levels DXF 证据推导（纯 DXF 口径）
+    #                    | "off"   — 不启用平台标高（旧 2000mm 粗分桶横隔 + 通长腿）
+    #   subdivide_legs: bool — 主腿节间化开关（默认随 levels 启用；显式 false
+    #                          可单独隔离「横隔 Z 对齐」收益）
+    # 兼容旧旗标：use_gt_platform_levels=true → panel_level_source="gt"；
+    #            subdivide_legs=true（无 gt 旗标）→ "dxf"。
+    level_source = spec.get("panel_level_source")
+    if level_source is None:
         if bool(spec.get("use_gt_platform_levels")):
-            from ..debug.gt_profile import gt_platform_levels
-            panel_levels = list(gt_platform_levels())
+            level_source = "gt"
+        elif bool(spec.get("subdivide_legs")):
+            level_source = "dxf"
         else:
-            from ..solve.tower_geometry import derive_panel_levels
-            panel_levels = derive_panel_levels(snapped_nodes, snapped_bars)
-        from ..solve.tower_geometry import subdivide_legs_at_levels
-        snapped_nodes, snapped_bars, _sub_rep = subdivide_legs_at_levels(
-            snapped_nodes, snapped_bars, panel_levels,
-            half_width_fn=half_width_fn,
-        )
+            level_source = "off"
+    level_source = str(level_source)
+
+    panel_levels: List[float] = []
+    if level_source == "gt":
+        from ..debug.gt_profile import gt_platform_levels
+        panel_levels = list(gt_platform_levels())
+    elif level_source == "dxf":
+        from ..solve.tower_geometry import derive_panel_levels
+        panel_levels = derive_panel_levels(snapped_nodes, snapped_bars)
+
+    if panel_levels:
+        subdivide_on = bool(spec.get("subdivide_legs", True))
+        if subdivide_on:
+            from ..solve.tower_geometry import subdivide_legs_at_levels
+            snapped_nodes, snapped_bars, _sub_rep = subdivide_legs_at_levels(
+                snapped_nodes, snapped_bars, panel_levels,
+                half_width_fn=half_width_fn,
+            )
 
     face_nodes, face_bars = expand_4_face_symmetry(
         snapped_nodes, snapped_bars,
@@ -300,6 +320,9 @@ def expand_4_face_symmetry_model(
         half_width_fn=half_width_fn,
         crossarm_half_width_fn=crossarm_half_width_fn,
         diaphragm_levels=panel_levels if panel_levels else None,
+        level_source_label=(
+            "gt_canonical" if level_source == "gt" else "dxf_derived"
+        ) if panel_levels else None,
     )
     topology = inspect_model_topology(face_nodes, face_bars, half_width_fn=half_width_fn)
     roles = classify_members(face_nodes, face_bars)
@@ -449,6 +472,7 @@ def expand_4_face_symmetry_model(
             "diaphragm": is_diaphragm,
             "panel_subdivision": bool(b.get("panel_subdivision")),
             "root_bar_id": b.get("root_bar_id"),
+            "level_source": b.get("level_source"),
             "generated_4face": True,
             "solve_status": "solved",
             # 证据链
@@ -469,7 +493,7 @@ def expand_4_face_symmetry_model(
         # 用户裁定不需要 gt_aligned 拒评——但在组件上留痕以便审计。
         if spec.get("use_gt_half_width"):
             bar_props["gt_aligned"] = True
-        if b.get("panel_subdivision") and bool(spec.get("use_gt_platform_levels")):
+        if b.get("panel_subdivision") and level_source == "gt":
             bar_props["panel_levels_source"] = "gt_canonical_z_only"
         keep_components[comp_id] = Component(
             id=comp_id, name=b["id"], kind="tower_bar",

@@ -561,6 +561,7 @@ def expand_4_face_symmetry(
     crossarm_half_width_fn: Optional[Callable[[float], float]] = None,
     crossarm_ratio: float = 1.3,
     diaphragm_levels: Optional[List[float]] = None,
+    level_source_label: Optional[str] = None,
 ) -> Tuple[NodeMap, List[dict]]:
     """单立面 → 四面封闭空间网架（Phase 2 核心映射）。
 
@@ -890,6 +891,7 @@ def expand_4_face_symmetry(
     if add_diaphragms:
         new_nodes, new_bars = generate_diaphragms(
             new_nodes, new_bars, wall=wall, levels=diaphragm_levels,
+            level_source_label=level_source_label,
         )
 
     return new_nodes, new_bars
@@ -903,6 +905,7 @@ def generate_diaphragms(
     min_z_gap: float = 2000.0,
     with_perimeter: bool = True,
     levels: Optional[List[float]] = None,
+    level_source_label: Optional[str] = None,
 ) -> Tuple[NodeMap, List[dict]]:
     """在各标高平台处生成水平横隔面（内部横隔材）。
 
@@ -1067,14 +1070,20 @@ def generate_diaphragms(
             if key in existing_keys:
                 continue
             existing_keys.add(key)
-            new_bars.append({
+            dia_bar = {
                 "id": f"diaphragm_{z:07.1f}_{idx:02d}",
                 "from": a,
                 "to": b,
                 "face": "diaphragm",
                 "diaphragm": True,
                 "generated_4face": True,
-            })
+            }
+            # 风险3 透明度：levels 模式下标高来源必须可审计——
+            # "gt_canonical"（z-only GT 注入，level-assisted 口径）
+            # / "dxf_derived"（DXF 证据推导，纯 DXF 口径）。
+            if levels and level_source_label:
+                dia_bar["level_source"] = str(level_source_label)
+            new_bars.append(dia_bar)
     return new_nodes, new_bars
 
 
@@ -1089,21 +1098,24 @@ def derive_panel_levels(
     """S2b/S6 生产默认：从 DXF 节点证据聚类推导节间平台标高。
 
     证据来源：非横隔杆件的端点 z。平台标高的判据（任务 3.1「多证据」）：
-        * 同一高度附近（cluster_gap_mm 内）有多个独立结构证据——节点数
+        * 同一高度附近（cluster_gap_mm 内）有多个**独立结构证据**——
+          按杆件 ID 去重后的端点数（2026-08-31 风险5 修复：同一根杆
+          的两个端点只计一次，且同杆双端落同簇时加权也只算一份）
           >= min_node_evidence；或
-        * 有已绘水平材端点支持（横隔层证据）——水平端点数
+        * 有已绘水平材支持（横隔层证据）——水平杆根数
           >= min_horiz_evidence。
 
-    每簇取「节点数加权中位数」为层 z。精度受 DXF 提取噪声限制（实测
-    ±100~600mm）；use_gt_platform_levels 开启时用 canonical 标高表替代
-    （用户裁定 z-only 可注入）。
+    每簇取「节点数加权中位数」为层 z（端点级加权——同一根杆的两个
+    端点落在同簇内时对中位数贡献两票，但判据门槛只按杆件数计）。
+    精度受 DXF 提取噪声限制（实测 ±100~600mm）；use_gt_platform_levels
+    开启时用 canonical 标高表替代（用户裁定 z-only 可注入）。
     """
     from collections import defaultdict
 
-    evidence: Dict[int, Dict[str, int]] = defaultdict(
-        lambda: {"n": 0, "horiz": 0}
+    # z-bucket -> {杆件ID集合, 水平杆ID集合, 端点计数（仅加权中位数用）}
+    evidence: Dict[int, Dict[str, object]] = defaultdict(
+        lambda: {"bars": set(), "horiz": set(), "n": 0}
     )
-    bar_ids = {b.get("from") for b in bars} | {b.get("to") for b in bars}
     for b in bars:
         f = nodes.get(b.get("from"))
         t = nodes.get(b.get("to"))
@@ -1112,11 +1124,13 @@ def derive_panel_levels(
         is_horiz = abs(float(f[2]) - float(t[2])) < 100.0 and abs(
             float(f[0]) - float(t[0])
         ) > 300.0
+        bid = b.get("id") or f"{b.get('from')}->{b.get('to')}"
         for p in (f, t):
             ev = evidence[int(round(float(p[2]) / 100.0) * 100)]
+            ev["bars"].add(bid)
             ev["n"] += 1
             if is_horiz:
-                ev["horiz"] += 1
+                ev["horiz"].add(bid)
 
     zs = sorted(evidence)
     if not zs:
@@ -1133,9 +1147,14 @@ def derive_panel_levels(
 
     levels: List[float] = []
     for c in clusters:
-        n = sum(evidence[z]["n"] for z in c)
-        nh = sum(evidence[z]["horiz"] for z in c)
-        if n < min_node_evidence and nh < min_horiz_evidence:
+        # 风险5 证据去重：跨簇合并杆件 ID 集合后再计数——同一根杆
+        # 在簇内多 bucket / 双端点均只算一个独立证据。
+        c_bars: set = set()
+        c_horiz: set = set()
+        for z in c:
+            c_bars |= evidence[z]["bars"]
+            c_horiz |= evidence[z]["horiz"]
+        if len(c_bars) < min_node_evidence and len(c_horiz) < min_horiz_evidence:
             continue
         weighted: List[float] = []
         for z in c:
