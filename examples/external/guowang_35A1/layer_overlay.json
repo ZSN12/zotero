@@ -1140,5 +1140,6 @@
       "max_angle_rad": 0.25,
       "min_length_units": 3.0
     }
-  }
+  },
+  "min_diag_len_mm": 500.0
 }

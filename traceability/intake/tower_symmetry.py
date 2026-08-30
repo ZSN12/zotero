@@ -136,6 +136,38 @@ def expand_4_face_symmetry_model(
         })
         bar_meta[cid] = comp
 
+    # 阶段 5.4：过滤节间短斜材（< min_diag_len_mm 的斜向杆）。
+    # 国网节点板连接处的短角钢（154~850mm）在 DXF 里就是独立短段，其端点
+    # 画到节点板边缘、未连到主腿中心线，展开后大量 degree=1 悬空（实测
+    # 346 个真悬空里 278 个来自 <500mm 短杆）。GT 斜材最短 554mm、不统计
+    # 这些节点板连接件，故过滤是「去噪」而非丢信息。用倾角区分：斜材倾角
+    # 落在 [min_diag_incl, 90-min_diag_incl]（20°~70°，含反向 110°~160°），
+    # 近竖直主腿（>70°）与近水平横隔（<20°）不受影响。
+    # 默认关闭（min_diag_len_mm=0）：过滤有损，须在 overlay 显式启用
+    # （guowang_35A1 生产 overlay 配 500mm），避免误杀测试/其它调用方的合法短斜材。
+    min_diag_len_mm = float(spec.get("min_diag_len_mm", 0.0))
+    min_diag_incl = float(spec.get("min_diag_incl_deg", 20.0))
+    if min_diag_len_mm > 0:
+        kept_bars: List[dict] = []
+        dropped_short_diag = 0
+        for b in src_bars:
+            f, t = src_nodes.get(b["from"]), src_nodes.get(b["to"])
+            if f is None or t is None:
+                kept_bars.append(b)
+                continue
+            dx = t[0] - f[0]
+            dz = t[2] - f[2]
+            length = math.hypot(dx, dz)
+            if length < min_diag_len_mm and length > 1e-9:
+                # 倾角 = 与水平面夹角（单立面 z 为高、x 为宽）：竖直=90°、水平=0°。
+                incl = abs(math.degrees(math.atan2(abs(dz), abs(dx))))
+                if min_diag_incl <= incl <= 90.0 - min_diag_incl:
+                    dropped_short_diag += 1
+                    continue
+            kept_bars.append(b)
+        if dropped_short_diag:
+            src_bars = kept_bars
+
     if not src_bars:
         return model
 
