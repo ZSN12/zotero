@@ -14,6 +14,9 @@ from traceability.intake.mllm_backend import (
     NullBackend,
     RuleBasedBackend,
     choose_backend,
+    _cache_content_meta,
+    _cache_meta_matches,
+    CACHE_META_KEY,
 )
 from traceability.skill.contract import to_engineering_model
 from traceability.model import DimensionOrigin
@@ -79,6 +82,44 @@ class ContractTest(unittest.TestCase):
         model = to_engineering_model(cand)
         self.assertEqual(model.components["c1"].source.confidence, 0.0)
         self.assertEqual(model.components["c1"].source.source_type.value, "unknown")
+
+
+class CacheContentFingerprintTest(unittest.TestCase):
+    """阶段2.3：视觉缓存内容指纹——旧缓存（缺 _cache_meta / crop 内容变化）必须失效。"""
+
+    def _img(self, d: Path, name: str, content: bytes) -> str:
+        p = d / name
+        p.write_bytes(content)
+        return str(p)
+
+    def test_matching_meta_hits(self):
+        with tempfile.TemporaryDirectory() as d:
+            img = self._img(Path(d), "crop.png", b"png-bytes-v1")
+            meta = _cache_content_meta(img, "prompt-A")
+            parsed = {CACHE_META_KEY: meta, "bars": [{"x1": 1}]}
+            self.assertTrue(_cache_meta_matches(parsed, img, "prompt-A"))
+
+    def test_old_cache_without_meta_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            img = self._img(Path(d), "crop.png", b"png-bytes-v1")
+            parsed = {"bars": [{"x1": 1}]}  # 旧式缓存，无 _cache_meta
+            self.assertFalse(_cache_meta_matches(parsed, img, "prompt-A"))
+
+    def test_crop_content_change_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            img = self._img(Path(d), "crop.png", b"png-bytes-v1")
+            meta = _cache_content_meta(img, "prompt-A")
+            parsed = {CACHE_META_KEY: meta, "bars": [{"x1": 1}]}
+            # 同名文件内容变了（改 region/切片后重渲）→ crop_sha 不匹配
+            img2 = self._img(Path(d), "crop.png", b"png-bytes-v2-changed")
+            self.assertFalse(_cache_meta_matches(parsed, img2, "prompt-A"))
+
+    def test_prompt_change_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            img = self._img(Path(d), "crop.png", b"png-bytes-v1")
+            meta = _cache_content_meta(img, "prompt-A")
+            parsed = {CACHE_META_KEY: meta, "bars": [{"x1": 1}]}
+            self.assertFalse(_cache_meta_matches(parsed, img, "prompt-B-changed"))
 
 
 if __name__ == "__main__":

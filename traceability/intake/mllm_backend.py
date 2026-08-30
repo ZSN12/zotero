@@ -37,6 +37,45 @@ class DrawingInput:
     tower: bool = False          # 铁塔专用管线：影响 prompt 与后端选择
 
 
+# --------------------------------------------------------------------------
+# 阶段2.3 视觉缓存内容指纹
+# --------------------------------------------------------------------------
+# 「旧 MLLM 缓存」问题的根源：cache 命中只按图片文件名(stem)键控，改 region bbox、
+# 换面板切片、改 prompt 后重渲到同名文件，旧 JSON 仍被命中。这里给缓存加内容指纹：
+#   缓存 JSON 顶层须带 "_cache_meta" = {crop_sha, prompt_sha, cache_version}，
+#   三者任一不匹配即视为陈旧缓存（fallthrough 重新调用 MLLM）。
+# 旧式缓存（无 _cache_meta）一律判陈旧——强制禁止旧缓存。
+CACHE_META_KEY = "_cache_meta"
+AGENT_CACHE_VERSION = "agent-cache-v1"
+
+
+def _cache_content_meta(image_path: str, prompt: str) -> Dict[str, str]:
+    """计算当前图片+prompt 的内容指纹（crop_sha / prompt_sha / cache_version）。"""
+    import hashlib
+    img_bytes = Path(image_path).read_bytes()
+    return {
+        "crop_sha": hashlib.sha256(img_bytes).hexdigest()[:16],
+        "prompt_sha": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
+        "cache_version": AGENT_CACHE_VERSION,
+    }
+
+
+def _cache_meta_matches(parsed: Any, image_path: str, prompt: str) -> bool:
+    """缓存 JSON 是否与当前图片内容 + prompt 匹配（防旧缓存）。
+
+    parsed 须是 dict 且带 CACHE_META_KEY，且 crop_sha/prompt_sha/cache_version
+    与当前值完全一致才命中。缺 CACHE_META_KEY（旧式缓存）或任一字段不匹配
+    都返回 False。
+    """
+    if not isinstance(parsed, dict):
+        return False
+    meta = parsed.get(CACHE_META_KEY)
+    if not isinstance(meta, dict):
+        return False
+    want = _cache_content_meta(image_path, prompt)
+    return all(meta.get(k) == v for k, v in want.items())
+
+
 @dataclass
 class CandidateObject:
     """模型识别出的一个候选对象（未通过 Skill 契约）。"""
@@ -313,6 +352,15 @@ class MLLMBackend:
                 if cp.exists():
                     try:
                         parsed = json.loads(cp.read_text(encoding="utf-8"))
+                        # 阶段2.3：命中必须通过内容指纹校验（crop_sha/prompt_sha/
+                        # cache_version），否则判陈旧缓存并 fallthrough 重新调用，
+                        # 杜绝改 region/切片/prompt 后重渲到同名文件仍吃旧结果。
+                        if not _cache_meta_matches(parsed, image_path, prompt):
+                            meta.setdefault("warnings", []).append(
+                                f"cache {cp.name} 内容指纹不匹配(crop_sha/prompt_sha/"
+                                f"cache_version)，按陈旧缓存跳过"
+                            )
+                            continue
                         meta.update({
                             "source": "agent_vision_cache",
                             "cache_file": str(cp),
