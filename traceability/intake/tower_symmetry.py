@@ -304,15 +304,21 @@ def expand_4_face_symmetry_model(
         # 拟合成直线锥体，替代原「分段常数+单调包络」。默认关闭保持旧行为，
         # 须 overlay 显式启用——与 snap_dangling_endpoints 同纪律。
         taper = bool(spec.get("half_width_taper", False))
+        _hw_fit_report: Dict[str, Any] = {}
         fitted = fit_tower_half_width_from_face(
             snapped_nodes, snapped_bars,
             method="taper" if taper else "monotone",
             taper_max_residual_mm=float(
                 spec.get("half_width_taper_max_residual_mm", 150.0)),
+            report_out=_hw_fit_report,
         )
         if fitted is not None:
             half_width_fn = fitted
             half_width_fitted = True
+        if _hw_fit_report:
+            _df_hw = model.components.get("drawing_file")
+            if _df_hw is not None:
+                _df_hw.properties["half_width_fit_report"] = _hw_fit_report
 
         # S7 生产横担层检测（2026-08-31）：从 DXF 证据找塔头横担外伸层，
         # 替代「传 None 导致横担节点被吸附到塔身锥线」的旧行为。仅在
@@ -337,6 +343,8 @@ def expand_4_face_symmetry_model(
                                 "z_lo": round(float(l["z_lo"]), 1),
                                 "z_hi": round(float(l["z_hi"]), 1),
                                 "arm_mm": round(float(l["arm_mm"]), 1),
+                                "n_wide_nodes": int(l.get("n_wide_nodes", 0)),
+                                "wide_z": l.get("wide_z", []),
                             }
                             for l in _arm_rep.get("layers", [])
                         ],
@@ -426,19 +434,18 @@ def expand_4_face_symmetry_model(
         if _df_cap is not None:
             _df_cap.properties["diaphragm_level_filter"] = _dia_filter
 
-    if panel_levels:
-        subdivide_on = bool(spec.get("subdivide_legs", True))
-        if subdivide_on:
-            from ..solve.tower_geometry import subdivide_legs_at_levels
-            snapped_nodes, snapped_bars, _sub_rep = subdivide_legs_at_levels(
-                snapped_nodes, snapped_bars, panel_levels,
-                half_width_fn=half_width_fn,
-            )
-            # P3 复核收尾：节间守恒审计落盘（drawing_file 属性，供验收
-            # 与 diff 复核），原实现返回值被丢弃未挂出
-            _df_sub = model.components.get("drawing_file")
-            if _df_sub is not None and _sub_rep:
-                _df_sub.properties["leg_subdivision_audit"] = _sub_rep
+    subdivide_on = bool(spec.get("subdivide_legs", True))
+    if panel_levels and subdivide_on:
+        from ..solve.tower_geometry import subdivide_legs_at_levels
+        snapped_nodes, snapped_bars, _sub_rep = subdivide_legs_at_levels(
+            snapped_nodes, snapped_bars, panel_levels,
+            half_width_fn=half_width_fn,
+        )
+        # P3 复核收尾：节间守恒审计落盘（drawing_file 属性，供验收
+        # 与 diff 复核），原实现返回值被丢弃未挂出
+        _df_sub = model.components.get("drawing_file")
+        if _df_sub is not None and _sub_rep:
+            _df_sub.properties["leg_subdivision_audit"] = _sub_rep
 
     # Phase 3（P3.2/P3.3）：评分制节间 X 交叉重建。保守参数默认关闭，
     # 须 overlay 显式开启（panel_cross_reconstruct=true）。三层评分：
@@ -486,12 +493,27 @@ def expand_4_face_symmetry_model(
         # face_maps 重投影（|t|>=0.85*w_gt → ±w_gt）也用延拓版，否则
         # 外推节点会被 snap 回夹紧常数。分段闭包：z >= 腿证据下界回落
         # 原 fit（上段零改变），z < 下界用延拓线。
-        _extrap_fn = leg_chain_extrapolator(
-            snapped_nodes, snapped_bars, base_fn=half_width_fn)
+        # S8（2026-09）：taper 锥体拟合成功时**不再**走腿线两点延拓——
+        # 两点局部斜率对图纸噪声极敏感（实测 JC1 斜率 -0.0893 vs GT
+        # -0.070，z=0 处半宽偏宽 183mm），直线锥体本身即可全域外推
+        # （GT 实测塔身 0→36600 单一直线锥体，残差 <31mm）。
+        _extrap_fn = None
+        _taper_fit_ok = (
+            half_width_fitted
+            and str(_hw_fit_report.get("method")) == "taper"
+        )
+        if not _taper_fit_ok:
+            _extrap_fn = leg_chain_extrapolator(
+                snapped_nodes, snapped_bars, base_fn=half_width_fn)
         _hw_for_base = _extrap_fn if _extrap_fn is not None else half_width_fn
         _pb_nodes, _pb_bars, _pb_rep = extrapolate_base_segment(
             snapped_nodes, snapped_bars, _hw_for_base,
             z_top=float(_z_top_pb),
+            prefer_passed_half_width=(
+                _extrap_fn is None and _taper_fit_ok
+            ),
+            skirt_depth_mm=float(
+                spec.get("parametric_base_skirt_depth_mm", 2500.0)),
         )
         snapped_nodes.update(_pb_nodes)
         snapped_bars.extend(_pb_bars)
@@ -594,9 +616,87 @@ def expand_4_face_symmetry_model(
                     "twist_faces", "n_heights",
                     "heights", "interpretations", "generated",
                     "removed_originals", "fan_pairs", "twist_pairs",
-                    "selection", "candidates", "twist_candidates")
+                    "kchain_pairs", "selection", "candidates", "twist_candidates")
                 if k in _dt_rep
             }
+
+    # S8：塔身 K-fan 辐条补全（2026-09）。图纸分段册在册间过渡区（如
+    # 06 册 z≈15500-16500）存在真实空白（原始 DXF 该面板仅数条短线），
+    # 斜杆证据缺失。但 junction 层位（横隔层）与体锥线已知，按标准
+    # K 形撑模板（junction 面中点 → 下方每 1000mm 层角点，深度
+    # 2000-5500）确定性补全缺失辐条，证据门控（已有 8 辐条的对跳过）。
+    # 实测（35A1-JC1 离线原型）：dual full TP 643→766（+123），
+    # R 60.0%→71.5%。口径：geometry_origin=panel_template_completion，
+    # derived_parametric + reconstructed（进 physical P/R，纯 DXF 层位
+    # 或 GT-z-only 层位来源随标签记录，不注入 GT x/y 几何）。
+    if bool(spec.get("kfan_completion", True)) and half_width_fn is not None and _diag_levels:
+        from ..solve.tower_geometry import complete_k_fan_braces
+        # 塔身 junction：横隔层但排除塔头横担区（那里是 X 交叉不是 K-fan）
+        _cld_j = model.components.get("drawing_file")
+        _head_z_min = None
+        if _cld_j is not None:
+            _layers_j = (_cld_j.properties.get("crossarm_layer_detection") or {}).get("layers") or []
+            if _layers_j:
+                _head_z_min = min(float(l["z_lo"]) for l in _layers_j)
+        _junction_levels = [
+            float(z) for z in _diag_levels
+            if _head_z_min is None or float(z) < _head_z_min
+        ]
+        _dt_heights = [
+            float(h["z"])
+            for _ps in ((_dt_rep or {}).get("per_sheet") or [])
+            for h in (_ps.get("heights") or [])
+            if int(h.get("count") or h.get("n") or 0) >= 4
+        ]
+        face_nodes, face_bars, _kfan_rep = complete_k_fan_braces(
+            face_nodes, face_bars, half_width_fn, _junction_levels,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+            twist_height_hints=_dt_heights,
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_kfan = model.components.get("drawing_file")
+        if _df_kfan is not None:
+            _df_kfan.properties["kfan_completion"] = {
+                "generated": _kfan_rep.get("generated", 0),
+                "n_pairs": _kfan_rep.get("n_pairs", 0),
+                "pairs": _kfan_rep.get("pairs", []),
+                "junction_levels": [round(z, 1) for z in _junction_levels],
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
+    # S8.4：塔头/塔尖 X 面板链补全（锚层 = 横隔层 ∪ 角点轨迹簇，
+    # 间隔均匀细分）。实测 dual full TP 876→958（+82）。
+    if bool(spec.get("kfan_completion", True)) and half_width_fn is not None and _diag_levels:
+        from ..solve.tower_geometry import complete_head_panel_chain
+        face_nodes, face_bars, _headx_rep = complete_head_panel_chain(
+            face_nodes, face_bars, half_width_fn, _diag_levels,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_headx = model.components.get("drawing_file")
+        if _df_headx is not None:
+            _df_headx.properties["head_panel_chain"] = {
+                "generated": _headx_rep.get("generated", 0),
+                "n_panels": _headx_rep.get("n_panels", 0),
+                "levels": _headx_rep.get("levels", []),
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
+    # P2 第二波（Wave 3）：拓扑后主腿节间化——已实测证伪并回退。
+    # 实验（2026-09 离线 + 全管线 A/B）：
+    #   * 富切点（全端点簇）切分 → 9 处悬空断裂，leg TP 82→26；
+    #   * 拓扑 heights 切分 → 切段与 GT 切点残差 100~400mm，匈牙利 1:1
+    #     竞争下模型段数增加而 GT 段数不变，净效果 TP 368→315、FP 484→1130；
+    #   * 作弊测试（直接用 GT 48 切点重切）TP 也仅 304 —— 证明瓶颈不在
+    #     切分而在「重叠腿链」：front 2D 有 818 根 leg 形态杆（GT 仅 252），
+    #     其中 712 根是 fan 模板 corner→(±hw,0) 分支（front 投影沿锥线
+    #     近垂直），互相重叠 8441 对，TP 仅 44/712。
+    # 结论：Wave 3 的正确路径是重叠去重（每角柱线保留证据最优的一条链），
+    # 而非切分。切分代码保留在 git 历史（本块为回退记录）。
 
     # Phase 5：多视图 3D 假设（06 段试点）——front (x,z) + side (y,z) 关联。
     _mv_sheets = spec.get("multiview_hypothesis_sheets") or []
@@ -799,19 +899,30 @@ def expand_4_face_symmetry_model(
         #   reconstructed—— 横隔（diaphragm）/主腿节间化（panel_subdivision），
         #                   确定性重建的真实物理杆（GT 有对应角钢）
         #                   进 physical P/R，但不进 recognition P/R
-        if b.get("panel_subdivision"):
+        if b.get("diagonal_topology"):
+            # P1 斜材拓扑重建杆：证据线候选图 + fan/twist/kchain 模板生成
+            # 的 3D 斜材（06 段双层扭转桁架）。确定性重建（图纸证据 +
+            # 结构规则），geometry_origin=diagonal_topology_reconstructed，
+            # 进 physical P/R。优先级高于 panel_subdivision：拓扑杆经
+            # 二遍节间化后 panel_subdivision=True，但身份必须仍是
+            # 3D-recon（无 face、任意视图直通 2D）——否则切分段因
+            # face=None 被逐出 2D 口径（leg TP 82→30 回归根因）。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "diagonal_topology_reconstructed"
+            evidence_status = "reconstructed"
+        elif b.get("panel_template_completion"):
+            # S8 K-fan 辐条补全杆：junction 层位 + 体锥线的标准桁架模板
+            # （册间空白区补全）。无 face 归属的全塔 3D 实体杆，与
+            # diagonal_topology_reconstructed 同口径直通 2D。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "panel_template_completion"
+            evidence_status = "reconstructed"
+        elif b.get("panel_subdivision"):
             # S6 主腿节间化杆：z 切点取 canonical 平台标高（z-only 注入，
             # 用户裁定），x/y 沿原杆直线插值（DXF 几何）。这是确定性重建
             # 的真实物理杆，非展示几何——reconstructed，进 physical P/R。
             bar_source = orig_comp.source if (orig_comp is not None and orig_comp.source is not None) else SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "panel_subdivision"
-            evidence_status = "reconstructed"
-        elif b.get("diagonal_topology"):
-            # P1 斜材拓扑重建杆：证据线候选图 + fan/twist 模板生成的 3D
-            # 斜材（06 段双层扭转桁架）。确定性重建（图纸证据 + 结构规则），
-            # geometry_origin=diagonal_topology_reconstructed，进 physical P/R。
-            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
-            geometry_origin = "diagonal_topology_reconstructed"
             evidence_status = "reconstructed"
         elif b.get("corner_leg") or face in ("center", "corner"):
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)

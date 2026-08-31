@@ -259,8 +259,8 @@
         "scale_x": 20.0,
         "scale_y": 20.0,
         "z_flip": false,
-        "z_offset": 24143,
-        "z_span_mm": 6800.0,
+        "z_offset": 25036.0,
+        "z_span_mm": 5926.0,
         "z_invert": true
       }
     ],
@@ -1179,7 +1179,8 @@
   "diagonal_topology_sheets": [
     "35A1-JC1-05",
     "35A1-JC1-06",
-    "35A1-JC1-07"
+    "35A1-JC1-07",
+    "35A1-JC1-04"
   ],
   "diagonal_topology_sheet_config": {
     "35A1-JC1-06": {
@@ -1194,6 +1195,14 @@
     },
     "35A1-JC1-07": {
       "auto_z_window": true
+    },
+    "35A1-JC1-04": {
+      "z_window": [
+        23800.0,
+        31600.0
+      ],
+      "twist_span_lo": 800.0,
+      "fan_enabled": false
     }
   },
   "diagonal_topology_z_window": [

@@ -545,8 +545,14 @@ def bars_from_model_2d(
             # P1 斜材拓扑重建杆（diagonal_topology_reconstructed）同理：它是
             # 全塔 3D 实体杆（双层扭转桁架 fan/twist），无 face 归属，GT 侧
             # 对应杆同样无 face 直接投影——口径对称，任意 view 均纳入。
+            # S8（2026-09）K-fan 面板补全杆（panel_template_completion）同理：
+            # 节点层位（z-only）+ 锥线半宽推导的全塔 3D 实体杆，无 face 归属。
+            _origin = str(p.get("geometry_origin") or "")
             is_dia = str(face or "").lower() == "diaphragm"
-            is_3d_recon = str(p.get("geometry_origin") or "") == "diagonal_topology_reconstructed"
+            is_3d_recon = _origin in (
+                "diagonal_topology_reconstructed",
+                "panel_template_completion",
+            )
             if resolved is None and not (is_dia or is_3d_recon):
                 continue
             if resolved is not None and resolved != view and not (is_dia or is_3d_recon):

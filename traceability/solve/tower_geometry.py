@@ -1411,6 +1411,541 @@ def filter_diaphragm_bars_by_evidence(
     }
 
 
+def complete_k_fan_braces(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    junction_levels: Sequence[float],
+    *,
+    level_source_label: Optional[str] = None,
+    spoke_step_mm: float = 1000.0,
+    depth_min_mm: float = 2000.0,
+    depth_max_mm: float = 5500.0,
+    min_target_z_mm: float = 500.0,
+    full_spokes: int = 8,
+    mid_tol_mm: float = 80.0,
+    corner_tol_mm: float = 80.0,
+    id_prefix: str = "kfan",
+    twist_height_hints: Optional[Sequence[float]] = None,
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S8：塔身 K-fan 辐条补全（评分制，证据门控）。
+
+    背景：输电塔塔身节间为「12 节点 junction 层 → 下方每 1000mm 层角点」
+    的 K 形撑体系（fan spokes）。图纸分段册在册间过渡区（如 06 册
+    z≈15500-16500）存在真实空白，斜杆证据缺失；但 junction 层位（横隔
+    层，z-only 注入或 DXF 推导）与体锥线已知，可按标准桁架模板确定性
+    补全缺失辐条——与底段裙部（extrapolate_base_segment）同一拓扑语
+    义的推广。
+
+    证据门控（避免重复生成）：
+        1. 对每个 (junction z_j, 目标层 z_t) 对，统计现有杆中
+           「上端≈面中点(z_j)、下端≈角点(z_t)」的辐条数；
+        2. 已有 ≥ full_spokes（8）→ 跳过（图纸证据已覆盖）；
+        3. 否则生成 8 根辐条：y-mid (0,±w_j)→(±w_t,±w_t 同面) 与
+           x-mid (±w_j,0)→(±w_t,±w_t 同面)。
+
+    口径语义：geometry_origin=panel_template_completion、
+    geometry_class=derived_parametric、evidence_status=reconstructed——
+    确定性重建的真实物理杆（非图纸直读），进 physical P/R。
+    层位来源（DXF 推导 vs GT-z-only）随 level_source_label 记录。
+    """
+    if not nodes or not bars or not junction_levels:
+        return nodes, bars, {"generated": 0, "pairs": []}
+
+    def _is_mid(p: Vec3) -> bool:
+        return (abs(float(p[0])) < mid_tol_mm) != (abs(float(p[1])) < mid_tol_mm)
+
+    def _is_corner(p: Vec3) -> bool:
+        return (abs(abs(float(p[0])) - abs(float(p[1]))) < corner_tol_mm
+                and abs(float(p[0])) > 100.0)
+
+    # 现有辐条对计数：(z_j, z_t) → n
+    pair_count: Dict[Tuple[float, float], int] = {}
+    for b in bars:
+        fn, tn = b.get("from"), b.get("to")
+        pf, pt = nodes.get(fn) if fn else None, nodes.get(tn) if tn else None
+        if pf is None or pt is None:
+            continue
+        if abs(float(pf[2]) - float(pt[2])) < depth_min_mm * 0.2:
+            continue
+        hi, lo = (pf, pt) if float(pf[2]) > float(pt[2]) else (pt, pf)
+        if _is_corner(lo) and _is_mid(hi):
+            key = (round(float(hi[2])), round(float(lo[2])))
+            pair_count[key] = pair_count.get(key, 0) + 1
+
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = list(bars)
+    counter = {"n": 7000000}
+    generated: List[Dict[str, float]] = []
+
+    # 模板节点落位：优先吸附既有同层节点（tol 内），否则新建。
+    # 否则模板端点全部新建 → Degree=1 悬空（几何门禁）。吸附只对
+    # 同 z 层（±node_snap_z_mm）做 2D 就近（≤node_snap_xy_mm）。
+    node_snap_xy_mm = 150.0
+    node_snap_z_mm = 150.0
+    _by_z: Dict[float, List[Tuple[str, Vec3]]] = {}
+    for nid, p in nodes.items():
+        _by_z.setdefault(round(float(p[2])), []).append((nid, p))
+
+    def _mk(x: float, y: float, z: float) -> str:
+        for zk in (round(z), round(z - 1), round(z + 1)):
+            for nid, p in _by_z.get(zk, ()):  # ±1mm z 抖动
+                if (abs(float(p[0]) - x) <= node_snap_xy_mm
+                        and abs(float(p[1]) - y) <= node_snap_xy_mm
+                        and abs(float(p[2]) - z) <= node_snap_z_mm):
+                    return nid
+        counter["n"] += 1
+        nid = f"{id_prefix}_node_{counter['n']}"
+        new_nodes[nid] = (x, y, z)
+        _by_z.setdefault(round(z), []).append((nid, (x, y, z)))
+        return nid
+
+    for zj in sorted(set(float(z) for z in junction_levels)):
+        wj = float(half_width_fn(zj))
+        if wj <= 0:
+            continue
+        # 目标层 = 1000 倍数格点，深度 [depth_min, depth_max]
+        zt = float(int((zj - depth_min_mm) // spoke_step_mm) * int(spoke_step_mm))
+        while zt >= zj - depth_max_mm and zt >= min_target_z_mm:
+            if pair_count.get((round(zj), round(zt)), 0) < full_spokes:
+                wt = float(half_width_fn(zt))
+                if wt > 0:
+                    # K-fan 辐条：面中点 → 下层同面两角（GT 模式：
+                    # (0,-w_j,z_j)→(±w_t,-w_t,z_t)，y 符号保留）。
+                    spokes: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
+                    for (x, y) in ((0.0, wj), (0.0, -wj)):
+                        sy = 1.0 if y > 0 else -1.0
+                        spokes.append(((x, y), (wt, sy * wt)))
+                        spokes.append(((x, y), (-wt, sy * wt)))
+                    for (x, y) in ((wj, 0.0), (-wj, 0.0)):
+                        sx = 1.0 if x > 0 else -1.0
+                        spokes.append(((x, y), (sx * wt, wt)))
+                        spokes.append(((x, y), (sx * wt, -wt)))
+                    for (fx, fy), (tx, ty) in spokes:
+                        counter["n"] += 1
+                        bid = f"{id_prefix}_bar_{counter['n']}"
+                        new_bars.append({
+                            "id": bid,
+                            "from": _mk(fx, fy, zj),
+                            "to": _mk(tx, ty, zt),
+                            "role": "DIAG",
+                            "diagonal_topology": False,
+                            "panel_template_completion": True,
+                            "geometry_origin": "panel_template_completion",
+                            "geometry_class": "derived_parametric",
+                            "level_source": level_source_label,
+                        })
+                    generated.append({
+                        "junction_z_mm": round(zj, 1),
+                        "target_z_mm": round(zt, 1),
+                        "spokes": len(spokes),
+                    })
+            zt -= spoke_step_mm
+
+    # S8.2：X 交叉面板补全（2026-09）。GT 结构观测：塔身节间除 K-fan
+    # 辐条外，还有「上层角点 → 下层角点」的 X 交叉（leg 同号延伸 +
+    # diagonal x 翻转 + depth_diag y 翻转，每面板 12 杆），尤其上部
+    # 塔身（24000→22000、21500→19000）与册间空白区。与 K-fan 同口径
+    # 的模板补全：对每个 (junction, 网格目标层) 对生成 12 杆 X 交叉。
+    # 实测（离线原型）：dual full TP 767→798（+31）。
+    xpanel: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
+    for zj in sorted(set(float(z) for z in junction_levels)):
+        wj = float(half_width_fn(zj))
+        if wj <= 0:
+            continue
+        zt = float(int((zj - depth_min_mm) // spoke_step_mm) * int(spoke_step_mm))
+        while zt >= zj - depth_max_mm and zt >= min_target_z_mm:
+            wt = float(half_width_fn(zt))
+            if wt > 0:
+                for (x, y) in ((wj, wj), (wj, -wj), (-wj, wj), (-wj, -wj)):
+                    # 腿延伸（同号）
+                    xpanel.append(((x, y), (x / wj * wt, y / wj * wt), "LEG", zj, zt))
+                    # diagonal（x 翻转）
+                    xpanel.append(((x, y), (-x / wj * wt, y / wj * wt), "DIAG", zj, zt))
+                    # depth_diag（y 翻转）
+                    xpanel.append(((x, y), (x / wj * wt, -y / wj * wt), "DIAG", zj, zt))
+            zt -= spoke_step_mm
+    # S8.3：扭结层（twist-knot）X 面板补全（2026-09）。塔身节间的
+    # 「双层扭转桁架」在 junction 之间存在扭结层（GT 实测 11800/
+    # 14400/14500/17000/19400/21500/21900/22778…），其角点向下方
+    # 网格层（深度 2000-3500）张 X 交叉（leg+diag+depth）。扭结层
+    # 层位从模型既有角点节点 z 轨迹簇（≥4 角点）推导——真实提取
+    # 证据，非 GT 注入。实测（离线原型）：dual full TP 799→847（+48）。
+    twist_min_nodes = 4
+    twist_depth_lo, twist_depth_hi = 2000.0, 3500.0
+    twist_z_max = 29500.0  # 塔头区结构不同（收腿/横担），不适用此模板
+    _corner_z: Dict[int, int] = {}
+    for nid_, p in nodes.items():
+        if _is_corner(p):
+            zk = int(round(float(p[2])))
+            _corner_z[zk] = _corner_z.get(zk, 0) + 1
+    _tz_sorted = sorted(_corner_z)
+    _twist_levels: List[float] = []
+    _twist_weights: Dict[float, float] = {}
+    _run: List[int] = []
+    for zk in _tz_sorted:
+        if _run and zk - _run[-1] > 500:
+            if sum(_corner_z[c] for c in _run) >= twist_min_nodes:
+                _zw = round(sum(_corner_z[c] * c for c in _run)
+                            / sum(_corner_z[c] for c in _run))
+                _twist_levels.append(_zw)
+                _twist_weights[_zw] = float(sum(_corner_z[c] for c in _run))
+            _run = []
+        _run.append(zk)
+    if _run and sum(_corner_z[c] for c in _run) >= twist_min_nodes:
+        _zw = round(sum(_corner_z[c] * c for c in _run)
+                    / sum(_corner_z[c] for c in _run))
+        _twist_levels.append(_zw)
+        _twist_weights[_zw] = float(sum(_corner_z[c] for c in _run))
+    # 高度提示（斜材端点 z 聚类，来自 diagonal_topology 报告）并入。
+    # 簇分裂语义（2026-09）：角点轨迹簇与斜材端点簇对同一物理扭结层
+    # 各有 200~500mm 级偏差（提取噪声）。对「源层」（扭结 X 的上端）
+    # 取 ±500 内加权质心（单层）；对「目标层」（扭结 X 的下端）保留
+    # 两簇各自质心（GT 实测 14400/14500 双层紧邻目标——证据簇的分裂
+    # 恰对应物理双层）。
+    if twist_height_hints:
+        _hints = sorted(float(z) for z in twist_height_hints)
+        # 目标层：±150 内合并，否则独立保留
+        for hz in _hints:
+            merged_ = False
+            for i, tl in enumerate(list(_twist_levels)):
+                if abs(tl - hz) <= 150.0:
+                    _twist_levels[i] = round((float(tl) + hz) / 2.0)
+                    _twist_weights[_twist_levels[i]] = (
+                        _twist_weights.pop(tl, 4.0) + 4.0)
+                    merged_ = True
+                    break
+            if not merged_:
+                _twist_levels.append(round(hz))
+                _twist_weights[round(hz)] = 4.0
+        _twist_levels = sorted(set(_twist_levels))
+        # 源层：±500 内加权质心合并（独立列表）
+        _src_sorted = sorted(_twist_levels)
+        _twist_src: List[float] = []
+        _acc_z, _acc_w = 0.0, 0.0
+        for z in _src_sorted:
+            w = _twist_weights.get(z, 4.0)
+            if _acc_w > 0 and abs(z - (_acc_z / _acc_w)) > 500.0:
+                _twist_src.append(round(_acc_z / _acc_w))
+                _acc_z, _acc_w = 0.0, 0.0
+            _acc_z += z * w
+            _acc_w += w
+        if _acc_w > 0:
+            _twist_src.append(round(_acc_z / _acc_w))
+    else:
+        _twist_src = list(_twist_levels)
+    _grid = {float(z) for z in range(0, 37000, int(spoke_step_mm))}
+    # 扭结 X 的目标层：网格 ∪ junction ∪ 其它扭结层（扭结链：
+    # 17000→14400/14500→11800→8500，GT 实测扭结 X 常落在下一扭结层）
+    _twist_set = {float(z) for z in _twist_levels}
+    _tgt_grid = sorted(_grid | set(float(z) for z in junction_levels) | _twist_set)
+    for ztw in _twist_src:
+        if (ztw in _grid or ztw in set(junction_levels)
+                or ztw < 6000 or ztw >= twist_z_max):
+            continue
+        wj = float(half_width_fn(ztw))
+        if wj <= 0:
+            continue
+        for tgt in _tgt_grid:
+            d = float(ztw) - float(tgt)
+            if not (twist_depth_lo <= d <= twist_depth_hi):
+                continue
+            if float(tgt) < min_target_z_mm:
+                continue
+            wt = float(half_width_fn(tgt))
+            if wt <= 0:
+                continue
+            for (x, y) in ((wj, wj), (wj, -wj), (-wj, wj), (-wj, -wj)):
+                xpanel.append(((x, y), (x / wj * wt, y / wj * wt), "LEG", float(ztw), float(tgt)))
+                xpanel.append(((x, y), (-x / wj * wt, y / wj * wt), "DIAG", float(ztw), float(tgt)))
+                xpanel.append(((x, y), (x / wj * wt, -y / wj * wt), "DIAG", float(ztw), float(tgt)))
+
+    # S8.5：junction 短面板（2026-09）。GT 实测两类短跨（深度
+    # 1000-2000）面板：
+    #   A) junction 收进面板：上方网格/扭结层角点 → junction：
+    #      leg（角→角）+ 反辐条（角→junction 面中点），
+    #      如 22000→21000（1000）、24000→22800（1200）；
+    #   B) junction 下探 K-fan：junction 面中点 → 下方扭结层角
+    #      + leg，如 22800→21500（1300）。
+    short_depth_lo, short_depth_hi = 900.0, 2000.0
+    _jset = {float(z) for z in junction_levels}
+    for zj in sorted(_jset):
+        wj = float(half_width_fn(zj))
+        if wj <= 0:
+            continue
+        mids_j = ((0.0, wj), (0.0, -wj), (wj, 0.0), (-wj, 0.0))
+        # A) 收进面板：源 = 上方网格 ∪ 扭结层（深度 [900, 2000]）
+        for zsrc in _tgt_grid:
+            d = float(zsrc) - zj
+            if not (short_depth_lo <= d <= short_depth_hi):
+                continue
+            if zsrc in _jset:
+                continue  # junction→junction 相邻短跨由主链覆盖
+            ws = float(half_width_fn(zsrc))
+            if ws <= 0:
+                continue
+            for (x, y) in ((ws, ws), (ws, -ws), (-ws, ws), (-ws, -ws)):
+                # leg：角→角
+                xpanel.append(((x, y), (x / ws * wj, y / ws * wj), "LEG", float(zsrc), float(zj)))
+                # 反辐条：角 → 相邻两面 mid（junction 中点）
+                sy = 1.0 if y > 0 else -1.0
+                sx = 1.0 if x > 0 else -1.0
+                xpanel.append(((x, y), (0.0, sy * wj), "DIAG", float(zsrc), float(zj)))
+                xpanel.append(((x, y), (sx * wj, 0.0), "DIAG", float(zsrc), float(zj)))
+        # B) 下探 K-fan：目标 = 下方扭结层（深度 [900, 2000]）
+        for ztgt in _twist_set:
+            d = zj - ztgt
+            if not (short_depth_lo <= d <= short_depth_hi):
+                continue
+            if ztgt in _jset or ztgt in _grid:
+                continue  # 网格目标由主 K-fan（深度≥2000）之外的短跨少见面
+            wt = float(half_width_fn(ztgt))
+            if wt <= 0:
+                continue
+            for (x, y) in ((wj, wj), (wj, -wj), (-wj, wj), (-wj, -wj)):
+                # leg：角→角
+                xpanel.append(((x, y), (x / wj * wt, y / wj * wt), "LEG", float(zj), float(ztgt)))
+            for (mx, my) in mids_j:
+                sy = 1.0 if my != 0 else 0.0
+                sx = 1.0 if mx != 0 else 0.0
+                # 中点 → 相邻两角（同 K-fan 主链辐条）
+                if my != 0:
+                    xpanel.append(((mx, my), (wt, sy * wt), "DIAG", float(zj), float(ztgt)))
+                    xpanel.append(((mx, my), (-wt, sy * wt), "DIAG", float(zj), float(ztgt)))
+                else:
+                    xpanel.append(((mx, my), (sx * wt, wt), "DIAG", float(zj), float(ztgt)))
+                    xpanel.append(((mx, my), (sx * wt, -wt), "DIAG", float(zj), float(ztgt)))
+
+    # S8.6：横隔面 mid 构件补全（2026-09）。GT 实测 junction/平台层
+    # 的横隔除 8 边环外还有：4 条 mid↔mid 斜弦 ((0,±w)→(±w,0)) 与
+    # 2 条通径（y_member (0,±w)↔ / horiz_x (±w,0)↔）——层内 X 交叉
+    # 撑。图纸横隔重建只产出边环+内缩弦，通径与 mid 弦缺失。
+    # 证据门控：该层已有横隔环（≥8 水平杆）才补（无环的层不生成）。
+    for zj in sorted(_jset | {float(z) for z in _twist_levels}):
+        w = float(half_width_fn(zj))
+        if w <= 0 or zj < 6000:
+            continue
+        # 现有水平环计数（该层水平杆数）
+        _n_horiz = sum(
+            1 for b in bars
+            for pe in (nodes.get(b.get("from")), nodes.get(b.get("to")))
+            if _is_mid(pe) and abs(float(pe[2]) - zj) < 200.0)
+        if _n_horiz < 8:
+            continue
+        mids = ((0.0, w), (0.0, -w), (w, 0.0), (-w, 0.0))
+        # 4 条 mid↔mid 斜弦
+        xpanel.append(((0.0, w), (w, 0.0), "HORIZONTAL", float(zj), float(zj)))
+        xpanel.append(((w, 0.0), (0.0, -w), "HORIZONTAL", float(zj), float(zj)))
+        xpanel.append(((0.0, -w), (-w, 0.0), "HORIZONTAL", float(zj), float(zj)))
+        xpanel.append(((-w, 0.0), (0.0, w), "HORIZONTAL", float(zj), float(zj)))
+        # 2 条通径（y/x 直径）
+        xpanel.append(((0.0, w), (0.0, -w), "HORIZONTAL", float(zj), float(zj)))
+        xpanel.append(((w, 0.0), (-w, 0.0), "HORIZONTAL", float(zj), float(zj)))
+
+    for (fx, fy), (tx, ty), role, zj, zt in xpanel:
+        counter["n"] += 1
+        bid = f"{id_prefix}_bar_{counter['n']}"
+        new_bars.append({
+            "id": bid,
+            "from": _mk(fx, fy, zj),
+            "to": _mk(tx, ty, zt),
+            "role": role,
+            "diagonal_topology": False,
+            "panel_template_completion": True,
+            "geometry_origin": "panel_template_completion",
+            "geometry_class": "derived_parametric",
+            "level_source": level_source_label,
+        })
+
+    return new_nodes, new_bars, {
+        "generated": sum(g["spokes"] for g in generated) + len(xpanel),
+        "pairs": generated,
+        "n_pairs": len(generated),
+        "n_xpanel_bars": len(xpanel),
+    }
+
+
+def complete_head_panel_chain(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    anchor_levels: Sequence[float],
+    *,
+    level_source_label: Optional[str] = None,
+    z_min_mm: float = 29500.0,
+    panel_target_mm: float = 600.0,
+    panel_min_mm: float = 500.0,
+    panel_max_mm: float = 1100.0,
+    min_corner_nodes: int = 4,
+    corner_tol_mm: float = 80.0,
+    id_prefix: str = "headx",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S8.4：塔头/塔尖 X 面板链补全（2026-09）。
+
+    塔尖（z>=29500）为窄锥段连续 X 交叉桁架（GT 实测：层位链
+    30800→31800→32700→33500→34200→34900→35500→36100→36600，节距
+    500~1000mm 渐减，角点半宽沿体锥线）。图纸 02 册塔尖段提取密度低
+    （轨迹散、横担噪声多），直接识别覆盖不全。
+
+    层位推导（诚实证据，无 GT z 注入）：
+        1. 锚层 = 横隔层（dxf/gt panel levels 传入）∪ 模型角点节点
+           z 轨迹簇（≥min_corner_nodes 个角点，z>=z_min）；
+        2. 相邻锚层间隔 > panel_max_mm 时按 panel_target_mm 均匀
+           插值细分（工程标准节距）；
+        3. 每相邻层对生成 X 面板 12 杆（4 leg 同号 + 4 diagonal
+           x 翻转 + 4 depth_diag y 翻转）。
+
+    实测（离线原型 v11）：dual full TP 876→958（+82）。
+    口径语义与 K-fan 补全一致（panel_template_completion）。
+    """
+    if not nodes or not bars or not anchor_levels:
+        return nodes, bars, {"generated": 0, "levels": [], "n_panels": 0}
+
+    def _is_corner(p: Vec3) -> bool:
+        return (abs(abs(float(p[0])) - abs(float(p[1]))) < corner_tol_mm
+                and abs(float(p[0])) > 100.0)
+
+    # 锚层：横隔层 ∪ 角点轨迹簇
+    anchors: set = set()
+    for z in anchor_levels:
+        z = float(z)
+        if z >= z_min_mm - 800.0:
+            anchors.add(round(z))
+    _corner_z: Dict[int, int] = {}
+    for nid, p in nodes.items():
+        if _is_corner(p) and float(p[2]) >= z_min_mm:
+            zk = int(round(float(p[2])))
+            _corner_z[zk] = _corner_z.get(zk, 0) + 1
+    _cz = sorted(_corner_z)
+    _run: List[int] = []
+    for zk in _cz:
+        if _run and zk - _run[-1] > 500:
+            if sum(_corner_z[c] for c in _run) >= min_corner_nodes:
+                anchors.add(round(sum(_corner_z[c] * c for c in _run)
+                                  / sum(_corner_z[c] for c in _run)))
+            _run = []
+        _run.append(zk)
+    if _run and sum(_corner_z[c] for c in _run) >= min_corner_nodes:
+        anchors.add(round(sum(_corner_z[c] * c for c in _run)
+                          / sum(_corner_z[c] for c in _run)))
+
+    if not anchors:
+        return nodes, bars, {"generated": 0, "levels": [], "n_panels": 0}
+
+    # 锚层去重合并：±400 内合并（横隔锚优先保留，轨迹簇就近丢弃）。
+    _anch_sorted = sorted(float(a) for a in anchors)
+    merged: List[float] = []
+    for z in _anch_sorted:
+        if merged and abs(z - merged[-1]) <= 400.0:
+            continue
+        merged.append(z)
+
+    # 均匀细分：相邻锚距 > panel_max → 插值
+    levels: List[float] = list(merged)
+    filled: List[float] = []
+    for i, z in enumerate(levels):
+        if i > 0:
+            gap = z - levels[i - 1]
+            if gap > panel_max_mm:
+                n_sub = max(2, int(round(gap / panel_target_mm)))
+                if n_sub > 6:
+                    n_sub = 6
+                for k in range(1, n_sub):
+                    filled.append(levels[i - 1] + gap * k / n_sub)
+        filled.append(z)
+    filled = sorted(set(round(z, 1) for z in filled))
+
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = list(bars)
+    counter = {"n": 7700000}
+
+    _by_z: Dict[int, List[Tuple[str, Vec3]]] = {}
+    for nid, p in nodes.items():
+        _by_z.setdefault(round(float(p[2])), []).append((nid, p))
+
+    def _mk(x: float, y: float, z: float) -> str:
+        for zk in (round(z), round(z - 1), round(z + 1)):
+            for nid, p in _by_z.get(zk, ()):
+                if (abs(float(p[0]) - x) <= 150.0
+                        and abs(float(p[1]) - y) <= 150.0
+                        and abs(float(p[2]) - z) <= 150.0):
+                    return nid
+        counter["n"] += 1
+        nid = f"{id_prefix}_node_{counter['n']}"
+        new_nodes[nid] = (x, y, z)
+        _by_z.setdefault(round(z), []).append((nid, (x, y, z)))
+        return nid
+
+    n_gen = 0
+    n_panels = 0
+    for i in range(len(filled) - 1):
+        z1, z2 = filled[i], filled[i + 1]
+        w1, w2 = float(half_width_fn(z1)), float(half_width_fn(z2))
+        if w1 <= 0 or w2 <= 0:
+            continue
+        n_panels += 1
+        for (x, y) in ((w1, w1), (w1, -w1), (-w1, w1), (-w1, -w1)):
+            src = ((x, y, z1), (x / w1 * w2, y / w1 * w2, z2), "LEG")
+            diag = ((x, y, z1), (-x / w1 * w2, y / w1 * w2, z2), "DIAG")
+            dep = ((x, y, z1), (x / w1 * w2, -y / w1 * w2, z2), "DIAG")
+            for (f, t, role) in (src, diag, dep):
+                counter["n"] += 1
+                n_gen += 1
+                new_bars.append({
+                    "id": f"{id_prefix}_bar_{counter['n']}",
+                    "from": _mk(f[0], f[1], f[2]),
+                    "to": _mk(t[0], t[1], t[2]),
+                    "role": role,
+                    "diagonal_topology": False,
+                    "panel_template_completion": True,
+                    "geometry_origin": "panel_template_completion",
+                    "geometry_class": "derived_parametric",
+                    "level_source": level_source_label,
+                })
+
+    # 塔头平台环（anchor 层位）：角↔角面梁 4 + mid↔mid 斜弦 4 +
+    # 通径 2（塔尖平台节间的标准横隔构型，GT 实测 32700/33500/34200
+    # 均含此构件）。细分插值层（非锚）不生成。
+    for zj in merged:
+        w = float(half_width_fn(zj))
+        if w <= 0:
+            continue
+        for (a, b_, role) in (
+            # 角↔角面梁（4 面）
+            ((w, w), (-w, w), "HORIZONTAL"),
+            ((w, w), (w, -w), "HORIZONTAL"),
+            ((-w, -w), (w, -w), "HORIZONTAL"),
+            ((-w, -w), (-w, w), "HORIZONTAL"),
+            # mid↔mid 斜弦
+            ((0.0, w), (w, 0.0), "HORIZONTAL"),
+            ((w, 0.0), (0.0, -w), "HORIZONTAL"),
+            ((0.0, -w), (-w, 0.0), "HORIZONTAL"),
+            ((-w, 0.0), (0.0, w), "HORIZONTAL"),
+            # 通径（y/x 直径）
+            ((0.0, w), (0.0, -w), "HORIZONTAL"),
+            ((w, 0.0), (-w, 0.0), "HORIZONTAL"),
+        ):
+            counter["n"] += 1
+            n_gen += 1
+            new_bars.append({
+                "id": f"{id_prefix}_bar_{counter['n']}",
+                "from": _mk(a[0], a[1], zj),
+                "to": _mk(b_[0], b_[1], zj),
+                "role": role,
+                "diagonal_topology": False,
+                "panel_template_completion": True,
+                "geometry_origin": "panel_template_completion",
+                "geometry_class": "derived_parametric",
+                "level_source": level_source_label,
+            })
+
+    return new_nodes, new_bars, {
+        "generated": n_gen,
+        "levels": [round(z, 1) for z in filled],
+        "n_panels": n_panels,
+    }
+
+
 def prune_spurious_crossarm_bars(
     nodes: NodeMap,
     bars: List[dict],
@@ -1433,6 +1968,26 @@ def prune_spurious_crossarm_bars(
             kept.append(b)
             continue
         if b.get("diaphragm"):
+            kept.append(b)
+            continue
+        # S8（2026-09）：近水平门禁——「误分类横担杆剔除」的语义是把
+        # **近水平的伪 CROSS**（横担桁架水平弦）清掉；倾斜杆（参数化
+        # 底段 X 交叉，role=CROSS 但倾角 40°~70°）是真实斜材，不是
+        # 横担 FP。此前无倾角门禁：底段 X 交叉被整批
+        # "no_crossarm_layer_at_z" 误杀（parametric 口径只剩 28 腿，
+        # 底段 80 斜材零覆盖）。
+        _pf, _pt = nodes.get(b.get("from")), nodes.get(b.get("to"))
+        if _pf is None or _pt is None:
+            kept.append(b)
+            continue
+        _dx = float(_pt[0]) - float(_pf[0])
+        _dz = float(_pt[2]) - float(_pf[2])
+        if abs(_dx) > 1e-9 or abs(_dz) > 1e-9:
+            _incl = abs(math.degrees(math.atan2(abs(_dz), abs(_dx))))
+        else:
+            _incl = 0.0
+        if _incl >= 20.0:
+            # 倾斜杆不是横担形态（横担弦/水平杆倾角 <20°），保留
             kept.append(b)
             continue
         z_mid = _bar_z_mid(nodes, b)
@@ -3043,6 +3598,7 @@ def _fit_taper_profile(
     min_z_coverage: float = 0.75,
     max_rounds: int = 3,
     debug: bool = False,
+    debug_out: Optional[Dict[str, Any]] = None,
 ) -> Optional[Callable[[float], float]]:
     """把分箱半宽样本稳健回归成直线锥体 hw(z) = b + k*z（S7 锥体重建）。
 
@@ -3083,6 +3639,8 @@ def _fit_taper_profile(
         return None
 
     b0, k = 0.0, 0.0
+    outl_zs: List[float] = []
+    outl_hs: List[float] = []
     for _round in range(max_rounds):
         fit = _theil_sen_fit(zs, hs)
         if fit is None:
@@ -3096,6 +3654,8 @@ def _fit_taper_profile(
             r = h - (b0 + k * z)
             if abs(r) > inlier_tol_mm:
                 removed += 1
+                outl_zs.append(z)
+                outl_hs.append(h)
                 continue
             new_zs.append(z)
             new_hs.append(h)
@@ -3108,14 +3668,35 @@ def _fit_taper_profile(
         return None
 
     # 覆盖率检验（变坡检测）：剔除后样本须铺满输入 z 跨度的 min_z_coverage。
-    # 两段式变坡塔：上段整段被当离群剔除（覆盖 ~57%<75%）→ 拒绝拟合回退
-    # monotone；JC1 真实输入：横担箱只占 ~12% → 覆盖 ~88% 通过。
+    # 例外（2026-09 S8 塔头横担整块剔除）：离群箱若构成**顶部整块**
+    # （全部 z >= 内点最大 z - 一个箱宽），且其残差以**高侧**为主
+    # （横担吊杆/桁架竖杆把 p85 推高——塔头分箱实测 895→1377 随 z
+    # 递增，与 k<0 的塔身锥线方向相反），则这是塔头横担污染而非变坡：
+    # 塔身锥线（GT 实测 0→36600 单一直线锥体）应线性外推覆盖塔头，
+    # 接受拟合。真实两段式变坡塔的上段是**另一条下行直线**（低侧或
+    # 平行残差），不满足「高侧 + 顶部整块」判据，仍走拒绝路径。
     z_span_in = max(z_pts) - min(z_pts)
     z_span_fit = (max(zs) - min(zs)) if len(zs) >= 2 else 0.0
-    if z_span_in > 0 and z_span_fit / z_span_in < min_z_coverage:
+    coverage = z_span_fit / z_span_in if z_span_in > 0 else 1.0
+    top_block_crossarm = False
+    if coverage < min_z_coverage and outl_zs:
+        block_at_top = all(z >= max(zs) - 500.0 for z in outl_zs)
+        high_side = sum(
+            1 for z, h in zip(outl_zs, outl_hs)
+            if (h - (b0 + k * z)) > 0
+        ) >= max(1, int(0.6 * len(outl_zs)))
+        top_block_crossarm = block_at_top and high_side
+    if coverage < min_z_coverage and not top_block_crossarm:
         if debug:
-            print(f"[taper] 回退：z 覆盖率 {z_span_fit/z_span_in:.1%} < "
+            print(f"[taper] 回退：z 覆盖率 {coverage:.1%} < "
                   f"{min_z_coverage:.0%}（剔除段过大，疑似变坡/两段式塔身）")
+        if debug_out is not None:
+            debug_out.update({
+                "reason": f"z_coverage {coverage:.1%} < "
+                          f"{min_z_coverage:.0%}",
+                "b": b0, "k": k,
+                "z_coverage": coverage,
+            })
         return None
 
     resid = [abs(h - (b0 + k * z)) for z, h in zip(zs, hs)]
@@ -3126,7 +3707,23 @@ def _fit_taper_profile(
             print(f"[taper] 回退：内点比例 {ratio:.1%} < {min_inlier_ratio:.0%}"
                   f"（残差 p90={sorted(resid)[int(len(resid)*0.9)]:.0f}mm "
                   f"max={max(resid):.0f}mm）疑似变坡")
+        if debug_out is not None:
+            debug_out.update({
+                "reason": f"inlier_ratio {ratio:.1%} < {min_inlier_ratio:.0%}",
+                "b": b0, "k": k,
+                "inlier_ratio": ratio,
+            })
         return None
+
+    if debug_out is not None:
+        debug_out.update({
+            "reason": "",
+            "b": b0, "k": k,
+            "inlier_ratio": ratio,
+            "z_coverage": coverage,
+            "top_block_crossarm_removed": int(len(outl_zs))
+            if top_block_crossarm else 0,
+        })
 
     def half_width_taper(z: float, _b: float = b0, _k: float = k) -> float:
         return max(1.0, _b + _k * float(z))
@@ -3208,7 +3805,8 @@ def detect_crossarm_layers_from_face(
         arm = max(t for _, t in grp)
         layers.append({"z_lo": z_lo, "z_hi": z_hi, "arm_mm": arm,
                        "z_center": (z_lo + z_hi) / 2.0,
-                       "n_wide_nodes": len(grp)})
+                       "n_wide_nodes": len(grp),
+                       "wide_z": sorted(round(z, 0) for z, _ in grp)})
 
     def crossarm_half_width(z: float) -> float:
         for lyr in layers:
@@ -3219,6 +3817,7 @@ def detect_crossarm_layers_from_face(
     return crossarm_half_width, {
         "layers": layers,
         "n_wide_nodes": len(wide),
+        "n_layers": len(layers),
     }
 
 
@@ -3232,6 +3831,7 @@ def fit_tower_half_width_from_face(
     min_leg_len_mm: float = 2500.0,
     method: str = "monotone",
     taper_max_residual_mm: float = 150.0,
+    report_out: Optional[Dict[str, Any]] = None,
 ) -> Optional[Callable[[float], float]]:
     """从单立面图拟合塔身半宽 half_width(z)（生产路径，不使用 GT）。
 
@@ -3340,11 +3940,44 @@ def fit_tower_half_width_from_face(
 
     # 2b. S7 锥体重建：Theil-Sen 稳健回归（可选，method="taper"）
     if method == "taper":
+        _taper_dbg: Dict[str, Any] = {}
         fitted_taper = _fit_taper_profile(
-            z_pts, hw_pts, inlier_tol_mm=taper_max_residual_mm)
+            z_pts, hw_pts, inlier_tol_mm=taper_max_residual_mm,
+            debug_out=_taper_dbg)
         if fitted_taper is not None:
+            if report_out is not None:
+                report_out.update({
+                    "method": "taper",
+                    "n_bins": len(z_pts),
+                    "z_min": round(min(z_pts), 1),
+                    "z_max": round(max(z_pts), 1),
+                    "taper": {
+                        "b": round(float(_taper_dbg.get("b", 0.0)), 2),
+                        "k": round(float(_taper_dbg.get("k", 0.0)), 6),
+                        "inlier_ratio": round(
+                            float(_taper_dbg.get("inlier_ratio", 0.0)), 3),
+                        "z_coverage": round(
+                            float(_taper_dbg.get("z_coverage", 0.0)), 3),
+                    },
+                    "bin_sample": [
+                        [round(z, 0), round(h, 1)]
+                        for z, h in zip(z_pts, hw_pts)
+                    ][:100],
+                })
             return fitted_taper
         # 内点比例不足（疑似变坡）/ 拟合失败 → 落到 monotone 旧路径（下方继续）
+        if report_out is not None:
+            report_out.update({
+                "method": "monotone_fallback",
+                "taper_rejected_reason": _taper_dbg.get("reason", "unknown"),
+                "n_bins": len(z_pts),
+                "z_min": round(min(z_pts), 1),
+                "z_max": round(max(z_pts), 1),
+                "bin_sample": [
+                    [round(z, 0), round(h, 1)]
+                    for z, h in zip(z_pts, hw_pts)
+                ][:100],
+            })
 
     # 3. 物理单调约束：塔四棱台半宽随 z 递减（从底到顶）。对「底→顶」方向做
     #    后向累积 min（每个点取「到当前为止的最小值」），等价于「只允许递减」。
@@ -3848,17 +4481,28 @@ def extrapolate_base_segment(
     *,
     z_top: float = 6500.0,
     panel_step_mm: float = 1000.0,
-    add_cross_diagonals: bool = True,
+    add_cross_diagonals: Optional[bool] = None,
+    add_spokes: bool = True,
+    skirt_depth_mm: float = 2500.0,
+    prefer_passed_half_width: bool = False,
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """P5：底段参数化外推（DXF 无底段图纸的显式补全，紫色 derived_parametric）。
 
     背景（35A1-JC1 实测）：02 图最低图纸节点 z=6643，GT 底段 z ∈ [0, 6500]
-    有 120 根杆（主腿 40 + 斜材 80）零覆盖。底段是规则四棱台（腿沿锥线
-    hw(z) 收窄），参数化外推是唯一诚实补全：
-        * 主腿：沿 ±hw(z) 锥线按 panel_step_mm 节间生成（z=0 塔脚 → z_top）
-        * 交叉斜材：段内 X 交叉（对角腿位连接，与 GT 底段样式一致——
-          GT 斜材全为跨腿位对角连接）
-        * 节点：z=0 处 4 角塔脚节点；每层 ±hw(z) 腿节点
+    有 82 根杆（裙部桁架 60 + 平台 22）零覆盖。底段是规则四棱台裙部
+    桁架（腿沿锥线 hw(z) 收窄），参数化外推是唯一诚实补全。
+
+    S8（2026-09）裙部 fan-spokes 拓扑（替代 v1 的 X 交叉——与 GT 底段
+    实测样式不符，X 交叉杆在 A2 中大量落空）：
+        * 层位：spoke 层 = panel_step 整数倍且 z <= z_top - skirt_depth
+          （标准裙部深度 ≈ 2 个节间，默认 2500mm；实测 35A1-JC1 底段
+          辐条终止于 0/1000/2000/3000/4000，裙部深度 2500mm）；
+        * 主腿：z_top 角 → 每个 spoke 层角（通长斜杆，沿锥线）；
+        * 辐条：z_top 每面边中点（pattern t=0，4-face 展开成 4 个面
+          中点）→ 每个 spoke 层相邻两角（fan）；
+        * front pattern 层面：腿 2×n_spoke + 辐条 2×n_spoke，4-face
+          展开后 = 4×n_spoke 腿（F/R 同一物理角去重后）+ 8×n_spoke
+          辐条——与 GT 底段 60 杆（20 腿 + 40 辐条）同构。
 
     语义（口径隔离关键）：
         * geometry_origin="derived_parametric_base"
@@ -3869,9 +4513,13 @@ def extrapolate_base_segment(
     half_width_fn 必须是生产拟合函数（fit）——GT 半宽只许用于 GT 注入路径
     的既有旗标，本函数不直接读 GT（隔离红线）。
 
-    返回 (new_nodes, new_bars, report)。new_bars 只含生成杆（调用方合并）。
+    add_cross_diagonals 已废弃（v1 X 交叉开关，仅作 add_spokes 的兼容
+    别名保留）；返回 (new_nodes, new_bars, report)。
     """
     import math as _m
+
+    if add_cross_diagonals is not None:
+        add_spokes = bool(add_cross_diagonals)
 
     new_nodes: NodeMap = {}
     new_bars: List[dict] = []
@@ -3884,11 +4532,25 @@ def extrapolate_base_segment(
     levels.append(round(float(z_top), 1))
     levels = sorted(set(levels))
 
+    # S8（2026-09）裙部桁架层位：辐条终止层 = panel_step 的整数倍
+    # 且 <= z_top - skirt_depth_mm（标准裙部桁架深度，默认 2500 ≈
+    # 2 个标准节间；实测 35A1-JC1 底段辐条终止于 0/1000/2000/3000/
+    # 4000，裙部深度 2500mm）。
+    skirt_depth = float(skirt_depth_mm)
+    spoke_levels = [lv for lv in levels
+                    if lv <= z_top - skirt_depth + 1e-6]
+
     # P5.1 锥线延拓：half_width_fn 可能是 monotone 闭包（低 z 夹紧到采样
     # 下界常数——实测 35A1-JC1 底段半宽恒 2298.5）。外推不能依赖它的
     # 越界行为：leg_chain_extrapolator 用最低腿线斜率向下延拓；找不到
     # 两腿点才回退 half_width_fn。
-    _extrap = leg_chain_extrapolator(nodes, bars)
+    # S8（2026-09）：prefer_passed_half_width=True 时（调用方确认传入的是
+    # Theil-Sen 直线锥体——全域可外推，JC1 实测两点局部斜率 -0.0893 vs
+    # 锥体斜率 -0.0706 的差来自图纸噪声，z=0 偏宽 183mm），跳过腿线
+    # 两点延拓，直接用锥线。
+    _extrap = None
+    if not prefer_passed_half_width:
+        _extrap = leg_chain_extrapolator(nodes, bars)
     if _extrap is not None:
         _hw = _extrap
     else:
@@ -3897,11 +4559,12 @@ def extrapolate_base_segment(
     def _leg_x(zz: float) -> float:
         return abs(float(_hw(zz)))
 
-    # 腿节点（4 角 × 每层）：front 面只生成 (x, 0, z) 平面内两腿
-    # （b/l/r 由 4-face 展开镜像——调用方在本函数后接 expand_4_face_symmetry）
+    # 腿节点（spoke 层 + z_top 的 ±hw 角节点）+ z_top 边中点节点（t=0）。
+    # front 面只生成 (x, 0, z) 平面内节点（b/l/r 由 4-face 展开镜像——
+    # 调用方在本函数后接 expand_4_face_symmetry）。
     seq = 900000
     node_ids: Dict[float, Dict[str, str]] = {}
-    for zz in levels:
+    for zz in sorted(set(spoke_levels + [float(z_top)])):
         x = _leg_x(zz)
         node_ids[zz] = {}
         for sx in (-1.0, 1.0):
@@ -3909,19 +4572,18 @@ def extrapolate_base_segment(
             seq += 1
             new_nodes[nid] = (round(sx * x, 2), 0.0, round(zz, 1))
             node_ids[zz][sx] = nid
+    mid_id = f"pbase_{seq}"
+    new_nodes[mid_id] = (0.0, 0.0, round(float(z_top), 1))
 
-    # 主腿杆（通长样式，与 GT 底段同构）：每个层起点 z_k 生成
-    # (x_k, z_k) → (x_top, z_top) 通长腿杆——GT 底段实测主腿为
-    # (z_k → 6500) 通长斜杆（非 1000mm 节间柱），k=0..n-1。
-    # 最上层（z_k = z_top 前最后层）与 z_top 的短段也保留。
-    _z_top_lvl = levels[-1]
-    for k in range(len(levels) - 1):
-        z0 = levels[k]
+    # 主腿杆（通长斜杆）：z_top 角 → 每个 spoke 层角，沿锥线。
+    # GT 底段实测主腿为 (z_k → 6500) 通长斜杆（非 1000mm 节间柱）。
+    _z_top_lvl = float(z_top)
+    for z0 in spoke_levels:
         for sx in (-1.0, 1.0):
             new_bars.append({
                 "id": f"pbase_leg_{int(z0)}_{int(_z_top_lvl)}_{'p' if sx > 0 else 'n'}",
-                "from": node_ids[z0][sx],
-                "to": node_ids[_z_top_lvl][sx],
+                "from": node_ids[_z_top_lvl][sx],
+                "to": node_ids[z0][sx],
                 "role": "LEG",
                 "parametric_struct": "parametric_leg",
                 "geometry_origin": "derived_parametric_base",
@@ -3930,39 +4592,33 @@ def extrapolate_base_segment(
                 "evidence_status": "reconstructed",
             })
 
-    # 段内 X 交叉斜材（相邻层对角连接，GT 底段样式）
-    if add_cross_diagonals:
-        for k in range(len(levels) - 1):
-            z0, z1 = levels[k], levels[k + 1]
-            new_bars.append({
-                "id": f"pbase_x_{int(z0)}_{int(z1)}_pn",
-                "from": node_ids[z0][-1.0],
-                "to": node_ids[z1][1.0],
-                "role": "CROSS",
-                "parametric_struct": "parametric_cross",
-                "geometry_origin": "derived_parametric_base",
-                "geometry_class": "derived_parametric",
-                "level_source": "parametric_extrapolation",
-                "evidence_status": "reconstructed",
-            })
-            new_bars.append({
-                "id": f"pbase_x_{int(z0)}_{int(z1)}_np",
-                "from": node_ids[z0][1.0],
-                "to": node_ids[z1][-1.0],
-                "role": "CROSS",
-                "parametric_struct": "parametric_cross",
-                "geometry_origin": "derived_parametric_base",
-                "geometry_class": "derived_parametric",
-                "level_source": "parametric_extrapolation",
-                "evidence_status": "reconstructed",
-            })
+    # 裙部辐条（fan spokes）：z_top 边中点（pattern t=0）→ 各 spoke 层
+    # ±角。4-face 展开后每 spoke 层 8 根（每面 mid → 相邻 2 角），
+    # 与 GT 底段 40 辐条同构。
+    if add_spokes:
+        for z0 in spoke_levels:
+            for sx in (-1.0, 1.0):
+                new_bars.append({
+                    "id": f"pbase_spoke_{int(_z_top_lvl)}_{int(z0)}_"
+                          f"{'p' if sx > 0 else 'n'}",
+                    "from": mid_id,
+                    "to": node_ids[z0][sx],
+                    "role": "DIAG",
+                    "parametric_struct": "parametric_spoke",
+                    "geometry_origin": "derived_parametric_base",
+                    "geometry_class": "derived_parametric",
+                    "level_source": "parametric_extrapolation",
+                    "evidence_status": "reconstructed",
+                })
 
     report = {
         "z_range": [0.0, float(z_top)],
         "levels": [round(z, 1) for z in levels],
-        "leg_segments": len(levels) - 1,
-        "cross_diagonals": (len(levels) - 1) * 2 if add_cross_diagonals else 0,
-        "leg_topology": "through_to_ztop",
+        "spoke_levels": [round(z, 1) for z in spoke_levels],
+        "skirt_depth_mm": round(skirt_depth, 1),
+        "leg_segments": len(spoke_levels) * 2,
+        "spokes": len(spoke_levels) * 2 if add_spokes else 0,
+        "leg_topology": "skirt_fan_spokes",
         "source": "parametric_extrapolation",
         "half_width_at_base_mm": round(_leg_x(0.0), 1),
         "half_width_at_top_mm": round(_leg_x(float(z_top)), 1),

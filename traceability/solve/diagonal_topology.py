@@ -251,13 +251,17 @@ def build_interpretations(
     *,
     fan_span_lo: float = 1500.0,
     fan_span_hi: float = 5500.0,
-    twist_span_lo: float = 2100.0,
-    twist_span_hi: float = 3300.0,
+    twist_span_lo: Optional[float] = None,
+    twist_span_hi: Optional[float] = None,
     evidence_radius_mm: float = 900.0,
     selection_mode: str = "p11",
     twist_cands: Optional[List[Dict[str, Any]]] = None,
+    short_fan_span_lo: float = 900.0,
+    kchain_span_lo: float = 400.0,
+    kchain_span_hi: float = 1600.0,
+    fan_enabled: bool = True,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """证据线 → fan/twist 解释对（P1 2.2/2.3 的评分聚合）。
+    """证据线 → fan/twist/kchain 解释对（P1 2.2/2.3 的评分聚合）。
 
     设计要点（与 88% TP 离线验证一致）：
       * 证据线是**绘图惯例投影**（半交叉/中途截断/full-cross），其端点
@@ -266,10 +270,27 @@ def build_interpretations(
       * fan 对 = (螺旋高度 h, 平台层 P)：h 来自端点聚类，P 来自
         panel_levels；[h, P] 中点附近（±evidence_radius）有证据线才生成；
       * twist 对 = full-cross 线两端 snap 到高度集合（跨度放宽到
-        2100~3300 容忍 snap 位移），只信 full-cross 证据。
+        2100~3300 容忍 snap 位移），只信 full-cross 证据；
+      * kchain 对 = (层 h1, 层 h2)（2026-09 Phase1）：GT 05/06 段存在
+        「子层 K 撑」（mid@h1 → corner@h2，h1/h2 都不是平台）——fan 模板
+        （corner 底→mid 顶且 P∈平台）表达不了。kchain 用**方向性 HALF
+        证据**门控：HALF 线的 mid 端（|x|/hw≤0.35）在下、corner 端在上
+        才生成（rising K）；同理短 fan（900~1500）要求 corner 端在下。
+        方向判定让两种模板互不抢证据。
 
     评分（越小越好）：h/P 与证据线端点的 snap 距离之和。
+
+    twist_span_lo/hi（P2 Wave 2）：None 用默认门限（塔身口径）；
+    塔头分册面板跨度小（04 册实测 800~2100），per-sheet 传入更宽的
+    [lo, hi] 覆写（z 仿射校正后 04 X 端点 snap 到 GT 子层）。
+    fan_enabled（P2 Wave 2）：04 册 GT 实测全 X 交叉（twist）、无 fan
+    结构——per-sheet 关闭后不再生成 fan 对（score 389~3785 的 8 个
+    垃圾 fan 对不再进选择）。
     """
+    if twist_span_lo is None:
+        twist_span_lo = 2100.0
+    if twist_span_hi is None:
+        twist_span_hi = 3300.0
     by_pair: Dict[Tuple[str, float, float], Dict[str, Any]] = {}
 
     hz = [h["z"] for h in heights]
@@ -282,6 +303,73 @@ def build_interpretations(
             if d < bd:
                 best, bd = zt, d
         return best
+
+    # 方向性 HALF 证据索引（P1 Phase1）：按「mid 端 z」归类。
+    # HALF 线 = (corner 端 r≥0.6, mid 端 r≤0.35)；mid 在下 → kchain 证据，
+    # mid 在上（corner 在下）→ 短 fan 证据。
+    half_mid_lo: List[Tuple[float, float, float]] = []  # (z_mid, z_mid端, z_corner端)
+    half_mid_hi: List[Tuple[float, float, float]] = []
+    if hw_fn is not None:
+        for c in cands:
+            (x1, z1), (x2, z2) = c["endpoints"]
+            r1 = abs(x1) / max(hw_fn(z1), 1e-9)
+            r2 = abs(x2) / max(hw_fn(z2), 1e-9)
+            if not (min(r1, r2) <= 0.35 and max(r1, r2) >= 0.6):
+                continue  # 非 HALF
+            if r1 <= 0.35:
+                z_mid_end, z_corner_end = z1, z2
+            else:
+                z_mid_end, z_corner_end = z2, z1
+            rec = (c["z_mid"], z_mid_end, z_corner_end)
+            if z_mid_end < z_corner_end:
+                half_mid_lo.append(rec)   # mid 在下 → kchain（rising K）
+            else:
+                half_mid_hi.append(rec)   # mid 在上 → 短 fan（falling K）
+
+    # HALF 证据直接 snap 投票（紧门控）：每条 HALF 线为它 snap 到的
+    # (h, P) 层对投票——比 z_mid 面板门控严得多，避免弱证据 FP 泛滥。
+    level_set = sorted(set(hz) | {float(z) for z in panel_levels})
+
+    def _snap_tol(z: float, tol: float) -> Optional[float]:
+        best, bd = None, tol
+        for zt in level_set:
+            d = abs(zt - z)
+            if d < bd:
+                best, bd = zt, d
+        return best
+
+    shortfan_votes: Dict[Tuple[float, float], List[float]] = {}
+    platform_set = {float(z) for z in panel_levels}
+    for _, z_mid_end, z_corner_end in half_mid_hi:
+        h = _snap_tol(z_corner_end, 350.0)
+        P = _snap_tol(z_mid_end, 350.0)
+        # fan 的 P 端锚平台：mid 端 snap 到的高度若紧邻某平台（≤350），
+        # 把票投给平台（GT falling K 的 mid 都落在平台/横隔层上）。
+        if P is not None and P not in platform_set:
+            near_plat = min(
+                (p for p in platform_set if abs(p - P) <= 350.0),
+                key=lambda p: abs(p - P), default=None)
+            if near_plat is not None:
+                P = near_plat
+        if h is None or P is None or P <= h:
+            continue
+        if not (short_fan_span_lo <= P - h < fan_span_lo):
+            continue
+        shortfan_votes.setdefault(
+            (round(h, 1), round(P, 1)), []
+        ).append(abs(h - z_corner_end) + abs(P - z_mid_end))
+
+    kchain_votes: Dict[Tuple[float, float], List[float]] = {}
+    for _, z_mid_end, z_corner_end in half_mid_lo:
+        h1 = _snap_tol(z_mid_end, 350.0)
+        h2 = _snap_tol(z_corner_end, 350.0)
+        if h1 is None or h2 is None or h2 <= h1:
+            continue
+        if not (kchain_span_lo <= h2 - h1 <= kchain_span_hi):
+            continue
+        kchain_votes.setdefault(
+            (round(h1, 1), round(h2, 1)), []
+        ).append(abs(h1 - z_mid_end) + abs(h2 - z_corner_end))
 
     # ---- twist：多面 full-cross / 截断对角（异号端点）----
     if twist_cands is None:
@@ -300,7 +388,9 @@ def build_interpretations(
         if ht is None or hb is None or ht <= hb:
             continue
         span = ht - hb
-        if not (twist_span_lo <= span <= twist_span_hi):
+        # 短 X（1900~2100）：GT 05 段 (22000↔24000) 面板 X 被 2100 硬门
+        # 挡掉——放宽到 1900（TWIST_TRUNC 截断证据自带 snap 位移）。
+        if not (min(twist_span_lo, 1900.0) <= span <= twist_span_hi):
             continue
         score = abs(ht - zt) + abs(hb - zb)
         key = ("twist", round(hb, 1), round(ht, 1))
@@ -319,7 +409,16 @@ def build_interpretations(
             if P <= h:
                 continue
             span = P - h
+            # 短 fan（900~1500）：仅当有 HALF 证据直接 snap 投票到该
+            # (h, P) 对（corner 在下）——GT 05 段 falling K 真实形态。
+            is_short = (round(h, 1), round(P, 1)) in shortfan_votes
             if not (fan_span_lo <= span <= fan_span_hi):
+                if not is_short:
+                    continue
+            elif not fan_enabled and not is_short:
+                # per-sheet 常规 fan 关闭（04 册 GT 全 X 交叉）：span 在
+                # 常规区间 [1500, 5500] 且无短 fan 紧投票 → 弱 z_mid 门控
+                # 证据不可信，跳过（shortfan 有 ±350 snap 投票，豁免）。
                 continue
             mid = (h + P) / 2.0
             ev = [c for c in cands
@@ -340,6 +439,23 @@ def build_interpretations(
             rec["n"] += len(ev)
             rec["score"] = min(rec["score"], score)
             rec["evidence"].extend(c["bar_id"] for c in ev[:4])
+
+    # ---- kchain：HALF 证据 snap 投票的 (h1, h2) 对（P1 Phase1）----
+    # rising K = mid@h1(下) → corner@h2(上)；h1/h2 ∈ heights ∪ platforms。
+    # 紧门控：每条 HALF 线（mid 端在下）两端直接 snap（±350）到层集，
+    # 为其 (h1, h2) 对投票；≥2 票才生成（单线证据不足以排除噪声）。
+    for (h1, h2), dists in kchain_votes.items():
+        if len(dists) < 2:
+            continue
+        best = min(dists)
+        key = ("kchain", h1, h2)
+        rec = by_pair.setdefault(key, {
+            "kind": "kchain", "z_lo": h1, "z_hi": h2,
+            "score": 1e18, "evidence": [], "n": 0,
+        })
+        rec["n"] += len(dists)
+        rec["score"] = min(rec["score"], best)
+        rec["evidence"].append(f"half_votes:{len(dists)}")
 
     out = [rec for rec in by_pair.values() if rec["score"] < 4000.0]
     out.sort(key=lambda r: r["score"])
@@ -498,7 +614,7 @@ def generate_topology_bars(
     hw_fn,
     level_source_label: Optional[str],
 ) -> List[Dict[str, Any]]:
-    """单个解释（fan/twist 对）→ 8 根 3D 斜材。"""
+    """单个解释（fan/twist/kchain 对）→ 8 根 3D 斜材。"""
     bars: List[Dict[str, Any]] = []
     ev = ",".join(interp["evidence"][:4])
     if interp["kind"] == "fan":
@@ -519,6 +635,41 @@ def generate_topology_bars(
                         "pair": (round(h, 1), round(P, 1)),
                         "kind": "fan",
                     })
+    elif interp["kind"] == "kchain":
+        # rising K：mid 边中点@z_lo → 角点@z_hi（fan 的倒向）。
+        # 4 个 mid 节点 ((0,±hw), (±hw,0)) 各连 2 个相邻角点 → 8 杆。
+        h1, h2 = interp["z_lo"], interp["z_hi"]
+        hw_1, hw_2 = hw_fn(h1), hw_fn(h2)
+        for sy in (1, -1):
+            mid = (0.0, sy * hw_1, h1)
+            for sx in (1, -1):
+                corner = (sx * hw_2, sy * hw_2, h2)
+                bars.append({
+                    "from_pos": mid,
+                    "to_pos": corner,
+                    "role": "DIAG",
+                    "geometry_class": "reconstructed",
+                    "geometry_origin": "diagonal_topology_reconstructed",
+                    "level_source": level_source_label,
+                    "source_handles": ev,
+                    "pair": (round(h1, 1), round(h2, 1)),
+                    "kind": "kchain",
+                })
+        for sx in (1, -1):
+            mid = (sx * hw_1, 0.0, h1)
+            for sy in (1, -1):
+                corner = (sx * hw_2, sy * hw_2, h2)
+                bars.append({
+                    "from_pos": mid,
+                    "to_pos": corner,
+                    "role": "DIAG",
+                    "geometry_class": "reconstructed",
+                    "geometry_origin": "diagonal_topology_reconstructed",
+                    "level_source": level_source_label,
+                    "source_handles": ev,
+                    "pair": (round(h1, 1), round(h2, 1)),
+                    "kind": "kchain",
+                })
     else:  # twist
         zb, zt = interp["z_lo"], interp["z_hi"]
         hw_b, hw_t = hw_fn(zb), hw_fn(zt)
@@ -600,9 +751,15 @@ def resolve_diagonal_sheet_configs(spec: Dict[str, Any]) -> List[Dict[str, Any]]
 
     键：
       diagonal_topology_sheets — 分册列表（顺序即执行顺序）
-      diagonal_topology_sheet_config — {stem: {z_window, auto_z_window, twist_faces}}
+      diagonal_topology_sheet_config — {stem: {z_window, auto_z_window,
+          twist_faces, twist_span_lo, twist_span_hi}}
       diagonal_topology_z_window — 全局默认窗口
       diagonal_topology_twist_faces — 全局默认 twist 面
+
+    P2 Wave 2（04 册接入）：塔头分册的 X 面板跨度（实测 800~2100mm）
+    显著小于塔身门禁 [1900, 3300]，故 twist 跨度门限支持 per-sheet 覆写
+    （twist_span_lo/hi）；塔头分册（04 册 GT 实测全 X 交叉、无 fan 结构）
+    可用 fan_enabled=false 关闭 fan 解释。
     """
     sheets = list(spec.get("diagonal_topology_sheets") or ["35A1-JC1-06"])
     per = dict(spec.get("diagonal_topology_sheet_config") or {})
@@ -618,6 +775,11 @@ def resolve_diagonal_sheet_configs(spec: Dict[str, Any]) -> List[Dict[str, Any]]
             "z_window": tuple(z_window) if z_window else None,
             "auto_z_window": auto,
             "twist_faces": list(cfg.get("twist_faces") or default_twist),
+            "twist_span_lo": (float(cfg["twist_span_lo"])
+                              if cfg.get("twist_span_lo") is not None else None),
+            "twist_span_hi": (float(cfg["twist_span_hi"])
+                              if cfg.get("twist_span_hi") is not None else None),
+            "fan_enabled": bool(cfg.get("fan_enabled", True)),
         })
     return out
 
@@ -642,7 +804,7 @@ def reconstruct_diagonal_sheets(
     cur_bars = list(bars)
     per_sheet: List[Dict[str, Any]] = []
     totals = {"generated": 0, "fan_pairs": 0, "twist_pairs": 0,
-              "removed_originals": 0}
+              "kchain_pairs": 0, "removed_originals": 0}
 
     for idx, cfg in enumerate(configs):
         sheet = cfg["sheet"]
@@ -664,6 +826,9 @@ def reconstruct_diagonal_sheets(
             selection_mode=selection_mode,
             twist_faces=cfg["twist_faces"],
             id_prefix=id_prefix,
+            twist_span_lo=cfg["twist_span_lo"],
+            twist_span_hi=cfg["twist_span_hi"],
+            fan_enabled=cfg.get("fan_enabled", True),
         )
         rep["sheet"] = sheet
         rep["auto_z_window"] = cfg["auto_z_window"]
@@ -671,6 +836,7 @@ def reconstruct_diagonal_sheets(
         totals["generated"] += rep.get("generated", 0)
         totals["fan_pairs"] += rep.get("fan_pairs", 0)
         totals["twist_pairs"] += rep.get("twist_pairs", 0)
+        totals["kchain_pairs"] += rep.get("kchain_pairs", 0)
         totals["removed_originals"] += len(rep.get("removed_originals") or [])
 
     merged = {
@@ -682,6 +848,7 @@ def reconstruct_diagonal_sheets(
         "generated": totals["generated"],
         "fan_pairs": totals["fan_pairs"],
         "twist_pairs": totals["twist_pairs"],
+        "kchain_pairs": totals["kchain_pairs"],
         "selection": {r["sheet"]: r.get("selection") for r in per_sheet},
     }
     return cur_nodes, cur_bars, merged
@@ -706,12 +873,20 @@ def reconstruct_diagonal_topology(
     selection_mode: str = "p11",
     twist_faces: Sequence[str] = ("f", "l", "r"),
     id_prefix: str = "dtd",
+    twist_span_lo: Optional[float] = None,
+    twist_span_hi: Optional[float] = None,
+    fan_enabled: bool = True,
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """斜材拓扑闭环主入口。
 
     返回 (new_nodes, new_bars, report)：
       * new_bars 已移除被替代的原始投影斜材（keep_originals=False）；
       * report 含候选图记录、解释对、生成/撤除统计（audit 用）。
+
+    twist_span_lo/hi：per-sheet 跨度门限覆写（P2 Wave 2 塔头分册用，
+    None 时用 build_interpretations 默认 [1900, 3300]）。
+    fan_enabled：per-sheet fan 解释开关（04 册 GT 实测全 X 交叉、无 fan
+    结构，关掉可消除 64 根 fan 杆中 56 根 FP）。
     """
     # 1. 候选收集（front 面 fan + 多面 twist）
     cands = collect_diagonal_candidates(
@@ -724,7 +899,9 @@ def reconstruct_diagonal_topology(
     # 3. 解释评分（fan/twist 对）+ P1.1 冲突图择优
     interps, sel_audit = build_interpretations(
         cands, heights, panel_levels, hw_fn,
-        selection_mode=selection_mode, twist_cands=twist_cands)
+        selection_mode=selection_mode, twist_cands=twist_cands,
+        twist_span_lo=twist_span_lo, twist_span_hi=twist_span_hi,
+        fan_enabled=fan_enabled)
     # 4. 生成 3D 斜材（去重 + Degree=1 守门）
     gen_raw: List[dict] = []
     for interp in interps:
@@ -824,6 +1001,7 @@ def reconstruct_diagonal_topology(
         _frag_ids = {
             str(b.get("id")) for b in final_bars
             if not b.get("diagonal_topology")          # 只清原始杆
+            and not b.get("panel_template_completion")   # S8 K-fan 补全杆保留
             and not b.get("diaphragm")
             and _in_window(b)
             and _deg.get(b.get("from"), 0) == 1
@@ -833,6 +1011,7 @@ def reconstruct_diagonal_topology(
             _frag_fams = {_family(i) for i in _frag_ids}
             for b in final_bars:
                 if (not b.get("diagonal_topology")
+                        and not b.get("panel_template_completion")
                         and not b.get("diaphragm")
                         and _family(str(b.get("id"))) in _frag_fams):
                     superseded.add(str(b.get("id")))
@@ -861,6 +1040,7 @@ def reconstruct_diagonal_topology(
         "superseded_fragments": sorted(superseded),
         "fan_pairs": sum(1 for r in interps if r["kind"] == "fan"),
         "twist_pairs": sum(1 for r in interps if r["kind"] == "twist"),
+        "kchain_pairs": sum(1 for r in interps if r["kind"] == "kchain"),
         "selection": sel_audit,
         "candidates": [
             {k: c[k] for k in

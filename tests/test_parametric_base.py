@@ -62,20 +62,39 @@ class LegChainExtrapolatorTest(unittest.TestCase):
 
 
 class ExtrapolateBaseSegmentTest(unittest.TestCase):
-    def test_through_leg_topology(self):
-        """通长腿样式：每层起点 → z_top 通长杆（与 GT 底段同构）。"""
+    def test_skirt_fan_spokes_topology(self):
+        """S8 裙部 fan-spokes：spoke 层腿 + z_top 中点辐条（GT 底段同构）。"""
         from traceability.solve.tower_geometry import extrapolate_base_segment
         nodes, bars = _fixture()
-        fn = lambda z: 2300.0 - 0.0667 * max(z - 6700, 0) if z < 6700 else 2300.0 - 0.0667 * (z - 6700)
-        nn, nb, rep = extrapolate_base_segment(nodes, bars, lambda z: 2300.0 - 0.0667 * (z - 6700),
-                                               z_top=6500.0)
+        nn, nb, rep = extrapolate_base_segment(
+            nodes, bars, lambda z: 2300.0 - 0.0667 * (z - 6700),
+            z_top=6500.0)
         legs = [b for b in nb if b["role"] == "LEG"]
-        # levels [0..6000, 6500]：0~6000 起点各 2 根（左右）通长到 6500
-        self.assertEqual(len(legs), 14)
-        self.assertEqual(rep["leg_topology"], "through_to_ztop")
+        spokes = [b for b in nb if b["parametric_struct"] == "parametric_spoke"]
+        # skirt 2500 → spoke 层 [0,1000,2000,3000,4000]：
+        # 腿 5×2=10 pattern 杆 + 辐条 5×2=10 pattern 杆
+        self.assertEqual(len(legs), 10)
+        self.assertEqual(len(spokes), 10)
+        self.assertEqual(rep["leg_topology"], "skirt_fan_spokes")
+        self.assertEqual(rep["spoke_levels"], [0.0, 1000.0, 2000.0, 3000.0, 4000.0])
         # 全部 derived_parametric 语义
         self.assertTrue(all(b["geometry_class"] == "derived_parametric" for b in nb))
         self.assertTrue(all(b["geometry_origin"] == "derived_parametric_base" for b in nb))
+        # 辐条从 z_top 中点 (0,0,6500) 出发
+        mid = [n for n, p in nn.items() if abs(p[0]) < 1e-9 and abs(p[1]) < 1e-9]
+        self.assertEqual(len(mid), 1)
+        for sp in spokes:
+            self.assertEqual(sp["from"], mid[0])
+
+    def test_no_spokes(self):
+        """add_spokes=False：只生成腿杆。"""
+        from traceability.solve.tower_geometry import extrapolate_base_segment
+        nodes, bars = _fixture()
+        nn, nb, rep = extrapolate_base_segment(
+            nodes, bars, lambda z: 2300.0 - 0.0667 * (z - 6700),
+            z_top=6500.0, add_spokes=False)
+        self.assertTrue(all(b["parametric_struct"] == "parametric_leg" for b in nb))
+        self.assertEqual(rep["spokes"], 0)
 
     def test_caliber_isolation(self):
         """口径隔离：外推杆只进 parametric/full，不进 pure。"""
