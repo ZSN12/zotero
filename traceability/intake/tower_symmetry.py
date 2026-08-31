@@ -381,9 +381,25 @@ def expand_4_face_symmetry_model(
             _df_pl.properties["panel_level_evidence"] = _pl_records
 
     _diag_levels = list(panel_levels) if panel_levels else []
-    _dmax = spec.get("diaphragm_max_z_mm")
-    if _dmax is not None and _diag_levels:
-        _diag_levels = [z for z in _diag_levels if float(z) <= float(_dmax)]
+    _cld_layers: List[dict] = []
+    _df_cap = model.components.get("drawing_file")
+    if _df_cap is not None:
+        _cld_layers = list(
+            (_df_cap.properties.get("crossarm_layer_detection") or {}).get("layers") or [])
+    from ..solve.tower_geometry import (
+        filter_panel_levels_for_diaphragms,
+        resolve_diaphragm_z_cap,
+    )
+    _z_cap = resolve_diaphragm_z_cap(
+        diaphragm_max_z_mm=spec.get("diaphragm_max_z_mm"),
+        crossarm_layers=_cld_layers or None,
+        crossarm_margin_mm=float(spec.get("diaphragm_crossarm_margin_mm", 200.0)),
+    )
+    if _diag_levels and _z_cap is not None:
+        _diag_levels, _dia_filter = filter_panel_levels_for_diaphragms(
+            _diag_levels, z_cap=_z_cap, exclusive=True)
+        if _df_cap is not None:
+            _df_cap.properties["diaphragm_level_filter"] = _dia_filter
 
     if panel_levels:
         subdivide_on = bool(spec.get("subdivide_legs", True))
@@ -567,6 +583,22 @@ def expand_4_face_symmetry_model(
                 "per_sheet": _mv_reports,
                 "n_generated": sum(r.get("n_generated", 0) for r in _mv_reports),
             }
+
+    # P3.3：误分类横担杆剔除（CROSS 但无横担区/外伸证据 → FP 源）
+    if bool(spec.get("crossarm_fp_prune", True)):
+        from ..solve.tower_geometry import prune_spurious_crossarm_bars
+        face_bars, _ca_prune = prune_spurious_crossarm_bars(
+            face_nodes, face_bars, roles,
+            half_width_fn=half_width_fn,
+            crossarm_half_width_fn=crossarm_half_width_fn,
+            crossarm_zone_z_min_mm=float(spec.get("crossarm_zone_z_min_mm", 29000.0)),
+            crossarm_radial_ratio=float(spec.get("crossarm_radial_ratio", 1.3)),
+        )
+        if _ca_prune.get("n_removed"):
+            roles = classify_members(face_nodes, face_bars)
+        _df_ca = model.components.get("drawing_file")
+        if _df_ca is not None:
+            _df_ca.properties["crossarm_fp_prune"] = _ca_prune
 
     # S4 贪心共线拼接（Phase 2）：把断裂碎片杆拼回整杆。
     # 关键教训（2026-08-31 实测，三轮复核）：

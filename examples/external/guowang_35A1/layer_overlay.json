@@ -1198,6 +1198,10 @@
   ],
   "diagonal_topology_twist_faces": ["f", "l", "r"],
   "diaphragm_max_z_mm": 30000.0,
+  "diaphragm_crossarm_margin_mm": 200.0,
+  "crossarm_fp_prune": true,
+  "crossarm_zone_z_min_mm": 29000.0,
+  "crossarm_radial_ratio": 1.3,
   "multiview_hypothesis_sheets": ["35A1-JC1-06"],
   "mllm_confidence_gate_block_inject": false,
   "mllm_keep_drop_sheets": [

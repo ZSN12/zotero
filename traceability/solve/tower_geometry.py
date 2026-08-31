@@ -1188,6 +1188,125 @@ def generate_diaphragms(
     return new_nodes, new_bars
 
 
+def resolve_diaphragm_z_cap(
+    *,
+    diaphragm_max_z_mm: Optional[float] = None,
+    crossarm_layers: Optional[Sequence[dict]] = None,
+    crossarm_margin_mm: float = 200.0,
+) -> Optional[float]:
+    """P3.2：横隔层 z 上界——塔头横担区不再生成标准横隔面。
+
+    取 min(diaphragm_max_z_mm, 首层横担 z_lo - margin)；无横担证据时仅用
+    diaphragm_max_z_mm。返回 None 表示不设 cap。
+    """
+    cap: Optional[float] = float(diaphragm_max_z_mm) if diaphragm_max_z_mm is not None else None
+    if crossarm_layers:
+        z_lo = min(float(l["z_lo"]) for l in crossarm_layers)
+        arm_cap = z_lo - float(crossarm_margin_mm)
+        cap = min(cap, arm_cap) if cap is not None else arm_cap
+    return cap
+
+
+def filter_panel_levels_for_diaphragms(
+    levels: Sequence[float],
+    *,
+    z_cap: Optional[float] = None,
+    exclusive: bool = True,
+) -> Tuple[List[float], Dict[str, object]]:
+    """P3.2：剔除塔头/横担区 platform level（exclusive=True 时 z >= cap 剔除）。"""
+    if z_cap is None:
+        return list(levels), {"z_cap": None, "removed_high": []}
+    kept: List[float] = []
+    removed: List[float] = []
+    for z in levels:
+        zf = float(z)
+        if exclusive and zf >= float(z_cap):
+            removed.append(zf)
+        elif not exclusive and zf > float(z_cap):
+            removed.append(zf)
+        else:
+            kept.append(zf)
+    return kept, {"z_cap": float(z_cap), "exclusive": exclusive, "removed_high": removed}
+
+
+def _bar_z_mid(nodes: NodeMap, b: dict) -> Optional[float]:
+    a, c = nodes.get(b.get("from")), nodes.get(b.get("to"))
+    if a is None or c is None:
+        return None
+    return (float(a[2]) + float(c[2])) / 2.0
+
+
+def _bar_max_radial(nodes: NodeMap, b: dict) -> float:
+    vals: List[float] = []
+    for nid in (b.get("from"), b.get("to")):
+        p = nodes.get(nid)
+        if p is None:
+            continue
+        vals.append(math.hypot(float(p[0]), float(p[1])))
+    return max(vals) if vals else 0.0
+
+
+def prune_spurious_crossarm_bars(
+    nodes: NodeMap,
+    bars: List[dict],
+    roles: Dict[str, str],
+    *,
+    half_width_fn: Optional[Callable[[float], float]] = None,
+    crossarm_half_width_fn: Optional[Callable[[float], float]] = None,
+    crossarm_zone_z_min_mm: float = 29000.0,
+    crossarm_radial_ratio: float = 1.3,
+) -> Tuple[List[dict], Dict[str, object]]:
+    """P3.3：剔除误分类横担杆（CROSS 但无横担区/外伸证据）。
+
+    被剔除杆记入证据报告；这些杆在 A2 中多为 FP。
+    """
+    kept: List[dict] = []
+    removed: List[Dict[str, object]] = []
+    for b in bars:
+        bid = str(b.get("id"))
+        if roles.get(bid) != "CROSS" and str(b.get("role") or "").upper() != "CROSS":
+            kept.append(b)
+            continue
+        if b.get("diaphragm"):
+            kept.append(b)
+            continue
+        z_mid = _bar_z_mid(nodes, b)
+        if z_mid is None:
+            kept.append(b)
+            continue
+        max_r = _bar_max_radial(nodes, b)
+        hw = float(half_width_fn(z_mid)) if half_width_fn is not None else 0.0
+        arm_hw = float(crossarm_half_width_fn(z_mid)) if crossarm_half_width_fn else 0.0
+
+        reason: Optional[str] = None
+        if crossarm_half_width_fn is not None:
+            if arm_hw <= 0.0:
+                reason = "no_crossarm_layer_at_z"
+        elif z_mid < float(crossarm_zone_z_min_mm):
+            reason = "below_crossarm_zone"
+
+        if reason is None and hw > 0 and max_r < hw * float(crossarm_radial_ratio):
+            reason = "insufficient_radial_extension"
+
+        if reason:
+            removed.append({
+                "bar_id": bid,
+                "z_mid_mm": round(z_mid, 1),
+                "max_radial_mm": round(max_r, 1),
+                "body_half_width_mm": round(hw, 1) if hw else None,
+                "reason": reason,
+            })
+            continue
+        kept.append(b)
+
+    return kept, {
+        "n_in": len(bars),
+        "n_out": len(kept),
+        "n_removed": len(removed),
+        "removed": removed,
+    }
+
+
 def derive_panel_levels(
     nodes: NodeMap,
     bars: List[dict],
