@@ -12,6 +12,7 @@ import math
 import unittest
 
 from traceability.solve.diagonal_topology import (
+    select_interpretations,
     build_interpretations,
     cluster_endpoint_heights,
     collect_diagonal_candidates,
@@ -108,7 +109,7 @@ class TestInterpretations(unittest.TestCase):
         cands = collect_diagonal_candidates(
             nodes, bars, sheets=["35A1-JC1-06"])
         heights = cluster_endpoint_heights(cands)
-        interps = build_interpretations(
+        interps, sel_audit = build_interpretations(
             cands, heights, [14000.0, 16000.0], hw)
         kinds = sorted(r["kind"] for r in interps)
         # FULL 线 → twist；HALF 线 → fan（snap 到平台 16000 附近）
@@ -117,6 +118,9 @@ class TestInterpretations(unittest.TestCase):
         for r in interps:
             self.assertLess(r["score"], 4000.0)
             self.assertTrue(r["evidence"])
+        # P1.1：择优审计必然存在且记录 kept 数
+        self.assertIn("kept", sel_audit)
+        self.assertGreaterEqual(sel_audit["kept"], len(interps))
 
 
 class TestMainEntry(unittest.TestCase):
@@ -187,6 +191,64 @@ class TestMainEntry(unittest.TestCase):
             panel_levels=[14000.0], keep_originals=True)
         ids = {str(b.get("id")) for b in new_bars}
         self.assertIn("35A1-JC1-06__bar_A_front_F", ids)
+
+
+class TestSelectionP11(unittest.TestCase):
+    """P1.1：fan 候选冲突图择优——节拍筛选/同 h 冗余/交叉保险。"""
+
+    def _fan(self, h, P, score=100.0):
+        return {"kind": "fan", "z_lo": h, "z_hi": P, "score": score,
+                "evidence": ["e"], "n": 1}
+
+    def test_span_off_grid_rejected(self):
+        # JC1 节拍 d=1000：span 应落 {2000,3000,4000}±450。
+        good = [self._fan(12000, 14000), self._fan(13000, 16000),
+                self._fan(12000, 16000)]
+        bad = [self._fan(14349, 19000),   # span 4651 → beat_err 651 拒
+               self._fan(16488, 19000)]   # span 2511 → beat_err 489 拒
+        kept, audit = select_interpretations(
+            good + bad, [11000, 12000, 13000, 14000, 16000, 17000, 19000])
+        kept_pairs = {(round(r["z_lo"], 1), round(r["z_hi"], 1)) for r in kept}
+        for r in good:
+            self.assertIn((round(r["z_lo"], 1), round(r["z_hi"], 1)), kept_pairs)
+        for r in bad:
+            self.assertNotIn((round(r["z_lo"], 1), round(r["z_hi"], 1)), kept_pairs)
+        reasons = {x["reason"] for x in audit["rejected"]}
+        self.assertEqual(reasons, {"span_off_grid"})
+        self.assertEqual(audit["beat_unit"], 1000.0)
+
+    def test_duplicate_h_capped(self):
+        # 同一 h 三个 fan（真结构最多 2 个目标平台）
+        interps = [self._fan(12000, 14000, 900),
+                   self._fan(12000, 16000, 1500),
+                   self._fan(12000, 19000, 3000)]  # span 7000 也 off-grid
+        kept, audit = select_interpretations(
+            interps, [11000, 12000, 13000, 14000, 16000, 17000, 19000])
+        self.assertEqual(len([r for r in kept if r["kind"] == "fan"]), 2)
+
+    def test_panel_crossing_rejected(self):
+        # h 更大却扇向更低平台 → 区域交叉
+        interps = [self._fan(12000, 16000, 100), self._fan(13000, 14000, 200)]
+        kept, audit = select_interpretations(
+            interps, [11000, 12000, 13000, 14000, 16000, 17000, 19000])
+        pairs = {(round(r["z_lo"]), round(r["z_hi"])) for r in kept if r["kind"] == "fan"}
+        self.assertIn((13000.0, 14000.0), pairs)  # h 序靠前保留
+        reasons = [x["reason"] for x in audit["rejected"]]
+        self.assertIn("panel_crossing", reasons)
+
+    def test_no_panel_levels_passthrough(self):
+        interps = [self._fan(12000, 19000)]
+        kept, audit = select_interpretations(interps, [])
+        self.assertEqual(len(kept), 1)
+        self.assertIn("note", audit)
+
+    def test_twist_untouched_by_beat(self):
+        twist = {"kind": "twist", "z_lo": 14500.0, "z_hi": 17000.0,
+                 "score": 100.0, "evidence": ["e"], "n": 1}
+        kept, audit = select_interpretations(
+            [twist], [11000, 12000, 13000, 14000, 16000, 17000, 19000])
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]["kind"], "twist")
 
 
 if __name__ == "__main__":

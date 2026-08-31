@@ -511,7 +511,7 @@ def expand_4_face_symmetry_model(
                     "sheets", "z_window", "n_candidates", "n_heights",
                     "heights", "interpretations", "generated",
                     "removed_originals", "fan_pairs", "twist_pairs",
-                    "candidates")
+                    "selection", "candidates")
             }
 
     # S4 贪心共线拼接（Phase 2）：把断裂碎片杆拼回整杆。

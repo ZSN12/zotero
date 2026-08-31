@@ -237,7 +237,123 @@ def build_interpretations(
 
     out = [rec for rec in by_pair.values() if rec["score"] < 4000.0]
     out.sort(key=lambda r: r["score"])
-    return out
+    # P1.1（2026-08-31）：冲突图全局择优——此前「score<4000 全生成」，
+    # 11 个 fan 候选无竞争（5 高度扇到同一平台），实测 28 FP/88 杆。
+    # 择优规则见 select_interpretations docstring；审计进 report。
+    out, sel_audit = select_interpretations(out, panel_levels)
+    return out, sel_audit
+
+
+# --------------------------------------------------------------------------- #
+# 解释筛选（P1.1：候选冲突图全局择优，2026-08-31 审查闭环后落地）
+# --------------------------------------------------------------------------- #
+
+def _panel_grid_unit(panel_levels: Sequence[float]) -> Optional[float]:
+    """平台层列表 → 结构节拍单位（相邻层差的中位数）。
+
+    JC1 canonical 层：11000/12000/13000/14000/16000/17000/19000…差值
+    [1000,1000,1000,2000,1000,2000] → 中位数 1000。用中位数而非最小值，
+    避免单个密集层（DXF 推导口径偶发）把节拍压得过细。
+    """
+    lv = sorted({float(z) for z in panel_levels})
+    if len(lv) < 2:
+        return None
+    diffs = [b - a for a, b in zip(lv, lv[1:]) if b - a > 50.0]
+    if not diffs:
+        return None
+    diffs.sort()
+    return diffs[len(diffs) // 2]
+
+
+def select_interpretations(
+    interps: List[Dict[str, Any]],
+    panel_levels: Sequence[float],
+    *,
+    beat_multipliers: Sequence[float] = (2.0, 3.0, 4.0),
+    beat_tol_mm: float = 450.0,
+    max_fans_per_h: int = 2,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """P1.1：fan 候选冲突图择优。
+
+    背景（2026-08-31 GT 结构解析）：11 个 fan 候选中 5 个高度全部扇到
+    P=16000、5 个扇到 P=19000——「score<4000 全生成」无竞争择优，实测
+    88 杆中 28 FP。GT 真实结构：每个平台最多 3 个跨层 fan，fan 跨度
+    按「平台栅格节拍」取 k×d（k∈{2,3,4}，d=层距中位数，JC1 d=1000）。
+    跨度无节拍的解释（如 4650 = 465×10，落在 4d+450 之外）是螺旋
+    高度假象，生成杆无 GT 对应（实测 0/8）。
+
+    筛选规则（全部无 GT 信息，只用 panel_levels + 候选自身）：
+      1. 跨度节拍：|span − k·d| ≤ beat_tol_mm（k∈beat_multipliers），
+         否则拒（reason=span_off_grid）。
+      2. 同 h 冗余：同一螺旋高度最多 max_fans_per_h 个 fan
+         （真实结构 h=12000 同时扇 14000/16000 两个平台，上限 2 保留
+         该形态；超出按 score 择优，reason=duplicate_h）。
+      3. 面板交叉：h1<h2 而 P1>P2 的扇形对（区域交叉，物理不合理；
+         本数据集全部单调，规则作鲁棒性保险），reason=panel_crossing。
+
+    返回 (选中解释, 筛选审计)——审计含每个被拒候选的原因，供 report
+    落盘（P0.5 语义：拒绝必须显式记录，不许静默吞）。
+    """
+    audit: Dict[str, Any] = {"rejected": [], "kept": 0,
+                             "beat_unit": None, "rules": {
+                                 "span_beat": list(beat_multipliers),
+                                 "beat_tol_mm": beat_tol_mm,
+                                 "max_fans_per_h": max_fans_per_h}}
+    d = _panel_grid_unit(panel_levels)
+    audit["beat_unit"] = d
+    if d is None:
+        # 无平台层信息（生产兜底）：退化为仅去交叉/同 h 冗余，不做节拍筛。
+        audit["note"] = "no panel grid; beat filter skipped"
+        kept = list(interps)
+    else:
+        kept = []
+        for r in sorted(interps, key=lambda x: x["score"]):
+            if r["kind"] != "fan":
+                kept.append(r)
+                continue
+            span = r["z_hi"] - r["z_lo"]
+            beat_err = min(abs(span - k * d) for k in beat_multipliers)
+            if beat_err > beat_tol_mm:
+                audit["rejected"].append({
+                    "kind": r["kind"], "z_lo": round(r["z_lo"], 1),
+                    "z_hi": round(r["z_hi"], 1), "score": round(r["score"], 1),
+                    "reason": "span_off_grid",
+                    "span": round(span, 1), "beat_err": round(beat_err, 1)})
+                continue
+            kept.append(r)
+
+    # 同 h 冗余（fan）：按 score 升序保留前 max_fans_per_h 个
+    by_h: Dict[float, List[Dict[str, Any]]] = {}
+    for r in kept:
+        if r["kind"] == "fan":
+            by_h.setdefault(round(r["z_lo"], 1), []).append(r)
+    for h, group in by_h.items():
+        group.sort(key=lambda x: x["score"])
+        for r in group[max_fans_per_h:]:
+            kept.remove(r)
+            audit["rejected"].append({
+                "kind": r["kind"], "z_lo": round(r["z_lo"], 1),
+                "z_hi": round(r["z_hi"], 1), "score": round(r["score"], 1),
+                "reason": "duplicate_h", "h": h})
+
+    # 面板交叉（保险规则）：fan 的 (h→P) 应保持单调（h 升 P 不降），
+    # 出现区域交叉时按 h 序拒后者。
+    max_P = -1e18
+    survivors: List[Dict[str, Any]] = []
+    for r in kept:
+        if r["kind"] == "fan":
+            if r["z_hi"] < max_P - 1e-6:
+                audit["rejected"].append({
+                    "kind": "fan", "z_lo": round(r["z_lo"], 1),
+                    "z_hi": round(r["z_hi"], 1),
+                    "score": round(r["score"], 1),
+                    "reason": "panel_crossing"})
+                continue
+            max_P = max(max_P, r["z_hi"])
+        survivors.append(r)
+    audit["kept"] = len(survivors)
+    survivors.sort(key=lambda x: x["score"])
+    return survivors, audit
 
 
 # --------------------------------------------------------------------------- #
@@ -366,8 +482,8 @@ def reconstruct_diagonal_topology(
         nodes, bars, sheets=sheets, z_window=z_window, hw_fn=hw_fn)
     # 2. 端点 z 聚类 → 螺旋高度
     heights = cluster_endpoint_heights(cands, tol_mm=cluster_tol_mm)
-    # 3. 解释评分（fan/twist 对）
-    interps = build_interpretations(cands, heights, panel_levels, hw_fn)
+    # 3. 解释评分（fan/twist 对）+ P1.1 冲突图择优
+    interps, sel_audit = build_interpretations(cands, heights, panel_levels, hw_fn)
     # 4. 生成 3D 斜材（去重 + Degree=1 守门）
     gen_raw: List[dict] = []
     for interp in interps:
@@ -455,6 +571,7 @@ def reconstruct_diagonal_topology(
         "removed_originals": sorted(removed_ids),
         "fan_pairs": sum(1 for r in interps if r["kind"] == "fan"),
         "twist_pairs": sum(1 for r in interps if r["kind"] == "twist"),
+        "selection": sel_audit,
         "candidates": [
             {k: c[k] for k in
              ("bar_id", "source_handles", "source_region", "endpoints",
