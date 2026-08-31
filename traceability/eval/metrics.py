@@ -547,7 +547,13 @@ def bars_from_model_2d(
         if nf is None or nt is None:
             continue
         pf, pt = nf.get("properties", {}), nt.get("properties", {})
-        if pf.get("view_x") is not None and pt.get("view_x") is not None:
+        # 2026-08-31 双视图修复：view='side' 投影到 (y, z) 平面——此前
+        # side 只按 face 过滤、坐标仍取 (x, z)，l/r 面杆件的侧立形状被
+        # 错投成 x-z 平面（front 坐标口径）。3D 合并模型节点无 view_x。
+        if view == "side":
+            x1, y1 = pf.get("y"), pf.get("z")
+            x2, y2 = pt.get("y"), pt.get("z")
+        elif pf.get("view_x") is not None and pt.get("view_x") is not None:
             x1, y1 = pf["view_x"], pf.get("view_y", pf.get("y"))
             x2, y2 = pt["view_x"], pt.get("view_y", pt.get("y"))
         elif pf.get("z") is not None and pt.get("z") is not None:
@@ -798,12 +804,21 @@ def eval_a2_dual_caliber(
     g = gt_bars_2d(gt, view)
     gt_segs = [s for s, _, _ in g]
 
-    m_rec = bars_from_model_2d(model, view=view, mode="recognition",
-                               allow_legacy=allow_legacy)
     m_phys = bars_from_model_2d(model, view=view, mode="physical",
                                 allow_legacy=allow_legacy)
 
-    pure = eval_segment_pr(gt_segs, [s for s, _ in m_rec], segment_cost, tols)
+    # P0.1（2026-08-31 口径统一）：pure_dxf 与 eval_a2_multi_caliber 的
+    # pure 层完全同源——统一走 _bar_caliber_class 判定（唯一判定函数）。
+    # 此前用 mode="recognition" 提取，混入了 25 根 collinear_stitch /
+    # panel_cross_reconstructed@gt_levels 杆（TP 64 vs 54，同名不同数）。
+    # mode="recognition" 保留为兼容回退（无物理层信息时）。
+    m_pure_items = [it for it in m_phys
+                    if _bar_caliber_class(it[1]) == "recognized"]
+    if not m_pure_items:
+        m_pure_items = bars_from_model_2d(
+            model, view=view, mode="recognition", allow_legacy=allow_legacy)
+
+    pure = eval_segment_pr(gt_segs, [s for s, _ in m_pure_items], segment_cost, tols)
     full = eval_segment_pr(gt_segs, [s for s, _ in m_phys], segment_cost, tols)
     pure["metric_scope"] = "pure_dxf_recognition"
     full["metric_scope"] = "full_physical_incl_gt_assisted"
@@ -831,7 +846,7 @@ def eval_a2_dual_caliber(
         "full": full,
         "assisted": dict(assisted),
         "assisted_gain": assisted_gain,
-        "n_model_pure": len(m_rec),
+        "n_model_pure": len(m_pure_items),
         "n_model_full": len(m_phys),
         "ceiling": front_view_ceiling(gt),
     }
@@ -1142,6 +1157,124 @@ def eval_m3_physical_3d(
         for f in by_face
     }
     return result
+
+
+def eval_a2_dual_view(
+    gt: Dict[str, Any],
+    model: Dict[str, Any],
+    tols: Sequence[float] = DEFAULT_TOLS,
+    allow_legacy: bool = False,
+) -> Dict[str, Any]:
+    """A2 双视图联合口径（2026-08-31 突破：front ∪ side，杆粒度）。
+
+    动机（实测诊断）：单 front 视图的模型侧只有 f 面 + 横隔 + 斜材拓扑
+    重建杆，而 GT 是全塔四面投影——b/l/r 面的 GT 杆在 front 视图结构性
+    不可召回（diagonal FN 220 的主因）。side 视图的模型侧恰好是 b/l/r
+    面（face→view 映射），l/r 面斜材在 side 视图投影为真实斜线，与 GT
+    l/r 面投影直接对上。
+
+    语义（杆粒度，与单视图投影粒度并列、不替代）：
+        * GT 侧：物理杆 id 在任一视图匹配成功即召回（TP），分母 = GT
+          物理杆总数（与单视图分母同源：gt.bars）；
+        * 模型侧：组件 id 在其参与投影的全部视图均未匹配 → FP；
+        * P = TP / (TP + FP)，R = TP / n_gt。
+
+    每层口径（pure/reconstructed/level_assisted/parametric/full）独立
+    sweep，tol 语义与单视图一致（端点误差 mm，硬门禁角度/长度比同
+    segment_gates）。
+
+    实测（35A1-JC1，full 口径 tol=500）：
+        front 单视图: TP 279 / P 39.4% / R 26.1%
+        双视图联合:   TP 477 / P 39.4% / R 44.5%（+198 TP，P 不降）
+    """
+    from collections import defaultdict
+
+    views = ("front", "side")
+    n_gt = len([b for b in gt.get("bars", []) if b.get("id")])
+
+    # 每视图的（段, props）与口径层。
+    # side 视图取 l/r 面（标准侧立面对）——b 面（背立面）在 y-z 投影上
+    # 是 y=-w 的竖线，与腿/深度斜材投影重合，纳入会使模型侧竖线 3 源
+    # vs GT 2 源（1:1 匹配失衡，实测 P 39.4%→30.4%）。b 面的斜线证据
+    # 由 front 视图的对称塔身覆盖（GT 旋转对称），不损失有效信息。
+    per_view: Dict[str, List[Tuple[Seg2D, Dict[str, Any]]]] = {}
+    for v in views:
+        items = bars_from_model_2d(
+            model, view=v, mode="physical", allow_legacy=allow_legacy)
+        if v == "side":
+            items = [
+                (s, p) for s, p in items
+                if str((p.get("face") or "")).lower() != "b"
+            ]
+        per_view[v] = items
+
+    # 组件 id →（投影视图集合, 口径层）。横隔/dtd 投影进两个视图，杆
+    # 粒度按 cid 去重。
+    cid_views: Dict[str, set] = defaultdict(set)
+    cid_caliber: Dict[str, str] = {}
+    for v, items in per_view.items():
+        for _seg, p in items:
+            cid = str(p.get("id") or p.get("component_id") or "")
+            cid_views[cid].add(v)
+            if cid not in cid_caliber:
+                cid_caliber[cid] = _bar_caliber_class(p)
+
+    out: Dict[str, Any] = {
+        "metric_scope": "a2_dual_view_union",
+        "views": list(views),
+        "n_gt": n_gt,
+        "semantics": {
+            "tp": "GT 物理杆在任一视图匹配（杆粒度并集）",
+            "fp": "模型组件在其参与投影的全部视图均未匹配（cid 去重）",
+        },
+        # 审计面：每视图参与投影的段数与 face 构成（b 面排除策略可
+        # 从外部验证，不需要读内部状态）
+        "per_view": {
+            v: {
+                "n_segments": len(items),
+                "faces": dict(Counter(
+                    str((p.get("face") or "")).lower() for _s, p in items)),
+            }
+            for v, items in per_view.items()
+        },
+        "calibers": {},
+    }
+
+    for name, classes in _CALIBER_SETS.items():
+        cal_cids = {c for c, cl in cid_caliber.items() if cl in classes}
+        sweep: List[Dict[str, Any]] = []
+        for tol in tols:
+            # 每视图独立 Hungarian（口径层内），tol 语义与单视图一致
+            matched_gt_ids: set = set()
+            matched_cids: set = set()
+            for v in views:
+                g = gt_bars_2d(gt, v)
+                items = per_view[v]
+                mf = [it for it in items
+                      if _bar_caliber_class(it[1]) in classes]
+                matched, _un_gt, _un_m = hungarian_match(
+                    [s for s, _, _ in g], [s for s, _ in mf],
+                    segment_cost, max_cost=tol)
+                for gi, mj in matched:
+                    matched_gt_ids.add(g[gi][1])
+                    p = mf[mj][1]
+                    matched_cids.add(str(p.get("id") or p.get("component_id") or ""))
+            tp = len(matched_gt_ids)
+            fp = len([c for c in cal_cids if c not in matched_cids])
+            precision = tp / (tp + fp) if (tp + fp) else 0.0
+            recall = tp / n_gt if n_gt else 0.0
+            f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+            sweep.append({
+                "tol": tol, "tp": tp, "fp": fp, "fn": n_gt - tp,
+                "precision": round(precision, 4), "recall": round(recall, 4),
+                "f1": round(f1, 4),
+            })
+        out["calibers"][name] = {
+            "n_model": len(cal_cids),
+            "sweep": sweep,
+            "metric_scope": f"a2_dual_view_{name}",
+        }
+    return out
 
 
 def _classify_3d(seg: Seg3D) -> str:
