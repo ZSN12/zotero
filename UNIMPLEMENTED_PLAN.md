@@ -1,129 +1,265 @@
 # 35A1-JC1 未实现与待优化任务清单 (UNIMPLEMENTED PLAN)
 
-本文档记录 **35A1-JC1 铁塔三维重建与评测体系** 中已完成的里程碑、当前实测基线以及所有**尚未实现 / 待优化**的任务清单、技术方案与优先级。
+本文档记录 **35A1-JC1 铁塔三维重建与评测体系** 的正式能力基线、已完成里程碑、以及所有**尚未实现 / 待优化**的任务清单、技术方案与优先级。
+
+> 更新时间：2026-08-31（审查闭环后定稿）。历史版本（A2 188 时代及更早）见
+> `docs/UNIMPLEMENTED_PLAN.md` 归档。本文档是唯一权威行动清单。
 
 ---
 
-## 一、当前最新实测基线与已完成里程碑
+## 一、正式能力基线（2026-08-31 审查闭环锁定）
 
-### 0. 口径审计（2026-08-31，四口径 × 角色分解，风险2/3 复核）
+### 0. 官方口径与数字（不可再变更语义）
 
-**归因链（A2 TP@500，Hungarian 一对一，同正式评测内核 `scripts/a2_caliber_audit.py`）**：
+```text
+数据集：35A1-JC1（development set，非 blind test）
+口径：  multi-caliber pure
+视图：  front 2D 投影
+匹配：  Hungarian 一对一
+代价：  d1 + d2（两端点误差之和）
+门限：  cost < 500mm（严格小于）
 
-| 配置 | TP@500 | R(full) | R(eff) | leg | depth_diag | diagonal | horiz_x | FP | 说明 |
-|---|---|---|---|---|---|---|---|---|---|
-| **A. S2a 基线**（无平台标高，2000mm 粗分桶横隔 + 通长腿） | 113 | 10.6% | 11.4% | 15 | 2 | 19 | 77 | 485 | 旧行为对照 |
-| **B. +S2b**（横隔 GT canonical 层 Z 对齐，不细分腿） | 180 | 16.8% | 18.2% | 16 | 1 | 19 | 144 | 440 | 横隔单独归因 |
-| **C. +S6**（+ 主腿节间化，**当前生产配置**） | **188** | **17.6%** | **19.1%** | **21** | 4 | 19 | 144 | 444 | `use_gt_platform_levels=true` |
-| **D. 纯 DXF 口径**（`panel_level_source="dxf"` 推导层 + 细分） | 114 | 10.6% | 11.6% | 15 | 0 | 19 | 80 | **733** | 无 GT 辅助 |
+TP=54   FP=173   FN=1017
+Precision=23.8%   Recall=5.0%
+```
 
-**审计结论**：
-1. **S2b 是本轮召回提升的主力**（+67 TP，全部来自 horiz_x 77→144，GT canonical 层 Z 精确对齐使横隔 15 层 9→15 层命中）。
-2. **S6 主腿节间化贡献 +8 TP**（leg 16→21）——有效但幅度有限；07 段主腿此前已被 CAD 打断为 ~1m 短段（任务 1 关闭的根因），S6 增量集中在 05/06/02 段。
-3. **GT canonical 层注入（z-only）与纯 DXF 推导层差距巨大**（188 vs 114）：DXF 推导层膨胀到 25 层（vs GT 15 层），横隔 FP 733 vs 444，horiz_x 只有 80 TP。**当前 188 的口径是「level-assisted」（z-only GT 辅助）**，纯 DXF 口径实际是 114（10.6%）。两套口径已通过 `level_source` 杆件标记（`gt_canonical` / `dxf_derived`）与 `metric_scope`（`full_tower` / `known_source_range`）在产物中永久可分（风险2/3 修复）。
-4. **剩余缺口的大头不是横隔**：horiz_x 已 144/208 (69.2%)，剩余 FN 大头是 diagonal 19/272 (7.0%)、depth_diag 4/252 (1.6%)、leg 21/252 (8.3%)——斜材拓扑（任务 2/3）与腿部精度是下一阶段主战场。
+**口径纪律**：
+- `full = 279 TP / 39.4% P / 26.1% R` **必须** 标注为「含 GT canonical 标高辅助
+  （level-assisted 223 TP，占 full 80%）+ 参数化补全」的内部归因结果，
+  **不得** 作为纯图纸重建能力对外汇报。
+- front 投影结构性不可测：y_member 87 根（投影退化为点）、depth_diag 与 leg
+  投影重合损失 126 根（1:1 匹配下最多召回一半），合计 213 根进分母但不可达
+  （front 理论上限 858/1071 = 80.1%）。
+- JC1 是 development 集：所有数字存在对该塔型调参的过拟合风险，泛化结论
+  必须等 ZC1 盲测（P4 批次）。
 
-### 1. 最新评测数据（Run C 生产配置）
-- **A2 几何检测 (Front 2D 投影，Hungarian 1:1 匹配)**：
-  - **TP@500mm**：从初始的 **46 (4.3%)** 跃升至 **188 (17.6%)**；A2-effective (z≥6500) **19.1%**
-  - **Precision@500mm**：**29.8%**（模型物理杆件 632 根）
-  - **GT 评测分母**：1071 根（真腿 252 + 深度向斜撑 252 + 面内斜材 272 + 水平杆 208 + Y向构件 87）
-- **A1 件号识别**：Exact Match **85**（P=19.4%, R=43.1%）
-- **Pytest 回归测试**：**310 passed**（100% 通过）
-- **验证命令**：`python3 scripts/run_35A1_jc1_full.py`（全管线）；`python3 scripts/a2_caliber_audit.py`（口径审计）
+### 1. 五层口径归因（A2 TP@500，front，d1+d2<500）
 
-### 2. 已完成的关键技术闭环
-1. **分段 Z 轴锥度反转根因修复 (Commit `58d3af7`)**：
-   - 修复 DXF 图框上下颠倒假设，增加 `z_invert` 独立局部坐标翻转逻辑。
-   - 解决 `07`, `06`, `05`, `04` 分段上下颠倒问题，主腿半宽中位数误差降至 25mm。
-2. **P0-3 GT 权威口径与角色分解钉死**：
-   - 3D GT 1071 根：真主腿 `leg` 252 根 + 深度向内撑 `depth_diag` 252 根 + 面内斜材 `diagonal` 272 根 + 水平横隔 `horiz_x` 208 根 + 侧向 `y_member` 87 根。
-   - 确认 GT 最短斜材为 554mm（非 200mm），水平杆最短 200mm。
-3. **P0-1 短悬臂残根剪除 A/B 实测**：
-   - 确认 400mm 剪除对斜材 TP 零伤害（19=19），同时消除了 120 个虚假悬空节点（172→52）并将 A1 提升 +8（残根件号转入 orphan_label_ids）。已以实测数据正式关闭。
-4. **S2b 横隔层平台标高 Z 对齐**：
-   - 在 `generate_diaphragms` 中支持 canonical 平台标高列表（15 个标准平台标高），层 Z 误差归零。
-   - 生成 330 根横隔杆（15 层 × 22 杆），水平杆匹配 TP 从 77 大幅跃升至 155+（翻倍）。
-5. **S6 主腿节间化 (初步完成)**：
-   - 实现 `subdivide_legs_at_levels` 与 `derive_panel_levels`，基于几何判据将通长主腿沿自身直线在平台标高处切分为物理节间杆。
-   - 生成 88 根 `panel_subdivision` 节间杆（每面 22 根），将 A2 TP 推升至 188。
+| 口径 | 模型杆 | TP | FP | P | R | 说明 |
+|---|---|---|---|---|---|---|
+| pure | 227 | 54 | 173 | 23.8% | 5.0% | 纯 DXF 直接识别（正式主口径） |
+| reconstructed | 238 | 58 | 180 | 24.4% | 5.4% | + 证据驱动重建（dtd/collinear_stitch） |
+| level_assisted | 688 | 274 | 414 | 39.8% | 25.6% | + GT canonical 标高辅助（横隔/节间细分） |
+| parametric | 21 | 5 | 16 | 23.8% | 0.5% | 参数化底段外推 |
+| full | 709 | 279 | 430 | 39.4% | 26.1% | 物理全量（内部归因口径） |
 
----
+- A2-effective（z≥6500mm，剔除底段无源区）：TP 274 / P 39.8% / R 27.8%。
+- **full TP 来源拆解**：level-assisted 223（80%）+ DXF 直接 47 + 证据驱动 4
+  + 参数化 5。主要能力结构 = canonical 层高辅助，非纯识别。
 
-## 二、未实现任务与待优化清单 (Pending Tasks)
+### 2. 分角色缺口（full 口径）
 
-### 任务 1：S6 主腿节间化下半段 (07/06 分段) 适配与放量 ✅ 已关闭（前提过时，2026-08-30 诊断）
-- **关闭结论**：
-  - 逐杆诊断显示 07 段（z 6643~12143mm）主腿**已被切成 ~1m 短段**（切点位于 z ≈ 7582 / 8444 / 9542 / 10656 等处），距 GT 标高（8500 / 11500 等）仅 42~200mm。
-  - 任务 1 描述的「07 段通长主腿未切分」现状已不成立；原方案 8500 / 11500 / 14000 切分点的预期收益已由现有 `subdivide_legs_at_levels` 输出覆盖，无增量空间。
-  - 07 段腿 TP 未达标的主因已转移为：切点标高与 GT 标高存在 42~200mm 偏移 + 斜材碎片化（见任务 3），而非「未切分」。
-- **移交**：遗留观察并入任务 3——z 12000~14000mm 区间 GT 72 根 0 命中（模型 front 杆端点 z 在 12573 / 13215 / 13799 等非整标高，偏差 200~573mm 超 500mm 容差；模型斜材 ~555mm 之字碎段 vs GT 2000mm 整跨）。
-
-### 任务 2：S3 斜材分类器与受控节点拓扑吸附
-- **现状与问题**：
-  - GT 面内斜材 272 根，当前 front 投影中斜材 TP 仅 ~34 根（召回率 12.5%），存在 238 根 FN。
-  - 原因：DXF 提取的斜材端点在交点处未严格闭合，存在 20~80mm 离散缝隙，导致双端点误差累加超过 500mm 门禁。
-- **待执行方案**：
-  1. 开发受控斜材端点吸附（`selective_diagonal_snapping`）：严禁全量全局 snap（避免破坏连通性）。
-  2. 仅对端点距离主腿工作线或横隔节点 ≤ 80mm 的斜材端点进行单向吸附。
-  3. 保证被吸附端点转移至共享的节间/横隔节点，消除悬空断裂。
-  4. 预期收益：斜材 TP 预计从 34 提升至 80+。
-
-### 任务 3：S4 共线断裂斜材拼接 (Collinear Diagonal Stitching)
-- **现状与问题**：
-  - X 撑（交叉斜材）在中间交叉点被 CAD 或解析器打断为 2~4 段短杆，或者大跨度斜材在分段接缝处断裂。
-  - GT 包含全长斜材与分段斜材，短碎片在长度比门禁（≤ 3.0）中被过滤。
-  - **新增实证（2026-08-30 诊断）**：z 12000~14000mm 区间 GT 72 根 0 命中——模型 front 杆端点 z 在 12573 / 13215 / 13799 等非整标高（GT 为 12000 / 13000 / 14000），偏差 200~573mm 超 500mm 容差；模型斜材呈 ~555mm 之字碎段 vs GT 2000mm 整跨。另 z 26000~28000 也是盲区（12 根 0 命中）。本任务是这两个盲区的核心根因。
-- **待执行方案**：
-  1. 识别共线、同图层、夹角 ≤ 5° 且端点间隙 ≤ 50mm 的断裂斜材对。
-  2. 在保持交点拓扑的同时，生成跨越全节间的合成斜材（标注 `geometry_origin=collinear_stitch`）。
-  3. 预期收益：消除斜材碎片，提升长斜材匹配率。
-
-### 任务 4：P0-2 `baseline_report.py` 悬空节点现算逻辑重构 ✅ 已完成（commit `99a290e`）
-- **完成内容**：
-  - `baseline_report.py` 弃用 `drawing_file` 旧静态字段，改为调用 `inspect_model_topology(node_map, bar_list)` 实时计算 degree1 / genuine_dangling / crossarm_tips。
-  - 输出双口径并标注来源：`live_no_halfwidth`（现算，genuine 为上界）+ `pipeline_recorded`（管线生产阶段记录）。
-  - 口径差异原因：生产阶段半宽拟合发生在腿切分之前（tower_symmetry 阶段 3.2 顺序为 stitch→fit→subdivide→expand），事后无法在最终模型上复现拟合半宽，故 live 口径不带 half_width_fn。
-  - 实测：live degree1=92 / genuine=88 / tips=4；pipeline_recorded=92/52/40。
-
-### 任务 5：P3 底段 (z ∈ [0, 5500mm]) 独立报告与缺失源隔离 ✅ 已完成（commit `99a290e`）
-- **完成内容**：
-  - `metrics.py` `eval_a2_geometry_2d` 新增 `effective_z_min` 参数：过滤 `z_mid ≥ z_min` 的 GT/模型杆件后重跑 `eval_segment_pr`，结果存入 `result["effective"]`（含 sweep / n_gt / n_model），主结果不变。
-  - `evaluate_ground_truth.py` 输出 A2-effective（z ≥ 6500mm）指标。
-  - 实测：A2-effective @500 = **19.1%**（剔除 84 根无源 GT）vs 全高 17.5%，不可达区间的系统性低估已隔离。
-
-### 任务 6：A3 件号关联与图纸标注实体对齐
-- **现状与问题**：
-  - A1 BOM 件号识别为 85/197 (43.1%)，但 A3（几何匹配对中的件号正确关联）仅 3 根 (5.4%)。
-  - 原因：几何杆件拆分/镜像/重构后，`bar_id` 标注关联未随几何拓扑完整向下游映射。
-- **待执行方案**：
-  1. 在节间化与展开过程中，建立 `original_bar_id -> subdivided_bars` 的双向件号证据继承池。
-  2. 将 BOM 关联从单杆严格对应扩展为图纸标注几何邻近映射。
-
-### 任务 7：物理门禁阈值体系校准 ✅ 基本完成（2026-08-31，Phase 3 + 假 bolt_group 修复）
-- **完成内容**：
-  - 悬空节点门禁：`inspect_model_topology` 扣除横担合法悬臂端头（crossarm_tips 单列）+
-    T 形接头判定 + 物理去重口径（Phase 3，commit 37ffe45），实测 2 物理 ≤ 4 通过。
-  - 假 bolt_group 清零（2026-08-31）：04-07 立面图被文件名规则（-04 序号）判为
-    node_detail，旧 fallback `or list(regions)` 把 front 区域（含材料表）当大样提取——
-    BOM 螺栓条目（'9M16X40'）被当孔位标注、表格符号圆被抓为孔，产生 113 个必然失败的
-    假验算规则（孔间距 2.5mm、孔在轮廓外）。修复：仅 kind="detail" 区域参与提取，
-    无 detail 区域返回空报告（tests/test_no_fake_bolt_groups.py 锁定回归）。
-    harness 失败 114 → 1。
-  - `glb_gate_min_4face_bars` 硬编码问题：当前全册模型门禁实测通过（gate ok=True），
-    未触发报警，暂无需动态校准；若后续多塔型扩展再按分册数比例绑定。
-- **遗留**：`r_bom_length_match` 失败（去重后 55 个 bar_id 长度对不上 BOM）是任务 6
-  A3 件号错配的体表症状（如 620：几何 1093 vs BOM 194，差 5.6 倍），保留诚实 FAILED。
-
----
-
-## 三、推荐后续迭代优先级与排期（2026-08-31 更新）
-
-| 阶段 | 任务编号 | 状态 | 核心工作内容 | 预期 A2 TP 目标 | 预计召回率 |
+| GT 角色 | n_gt | TP | FN | R | 判断 |
 |---|---|---|---|---|---|
-| ~~Phase 1~~ | ~~任务 1 (S6 下半段)~~ | ✅ 关闭（前提过时） | 07 段主腿已被 ~1m 切分，无增量空间，遗留观察并入任务 3 | — | — |
-| **Phase 1'** | ~~任务 3 (S4 斜材缝合)~~ | ✅ 已完成（`e12d163`，Phase 2） | 共线拼接生产化：TP@500 208→211、P@500 33.1%→34.3%，短残段保护门防误拼 | 211 | 21.4% |
-| ~~Phase 2'~~ | ~~任务 2 (S3 斜材吸附)~~ | ✅ 已完成（`efd0a32`，Phase 2.3） | 受控局部端点吸附 `snap_dangling_endpoints_local`（300mm）已上线；Phase 3 悬空修复（`37ffe45`）叠加残段删除+端点焊接后物理悬空 17→2 | — | — |
-| ~~Phase 4~~ | ~~任务 4 & 5~~ | ✅ 已完成（`99a290e`） | baseline_report live 双口径现算 + A2-effective 有效高度评测 | 指标口径严密化（effective 19.1%） | — |
-| ~~Phase 5~~ | **任务 7 (门禁)** | ✅ 已完成（2026-08-31） | 悬空门禁物理口径 + 假 bolt_group 清零（harness 114→1 失败）；glb_gate 实测通过 | — | 交付 harness 4 passed / 1 failed / 1 pending |
-| **Phase 5'** | **任务 6 (A3 件号关联)** | 🔲 待实施 | 件号证据链继承（bar_id↔几何错配是 `r_bom_length_match` 失败根因：去重后 55 个 bar_id 长度对不上 BOM，A3 关联率 5.0%） | A3 5.0% → >30% | 消除最后一个 harness FAILED |
+| horiz_x | 208 | 162 | 46 | 77.9% | ✅ 已做好，不是主问题 |
+| diagonal | 272 | 52 | 220 | 19.1% | 🔴 最大可操作缺口之一 |
+| leg | 252 | 48 | 204 | 19.1% | 🔴 最大可操作缺口之二 |
+| depth_diag | 252 | 17 | 235 | 6.8% | ⚠️ 与 leg 投影重合，front 1:1 下结构性损失 126 |
+| y_member | 87 | 0 | 87 | 0% | ⚠️ front 投影退化为点，几何不可测 |
+
+### 3. 关键模块效率（full 口径来源）
+
+| 模块 | 生成 | TP | FP | 命中率 | 判断 |
+|---|---|---|---|---|---|
+| 06 段斜材拓扑（diagonal_topology） | 88 | 58 | 30 | 65.9% | ★ 当前最有效的非横隔算法 |
+| 横隔（diaphragm_reconstructed） | 330 | 150 | 180 | 45.5% | 最大 TP 也是最大 FP 来源（层位重复/塔头过生成） |
+| DXF 直接识别（dxf_geom） | 227 | 47 | 180 | 20.7% | FP 高：05 分册 76 根为最大污染源 |
+| 共线拼接（collinear_stitch） | 12 | 4 | 8 | 33.3% | 效果一般，需按角色重构 |
+
+- 06 段拓扑当前 fan_pairs=11 / twist_pairs=0——twist 路径在真实生产输入
+  上尚未触发；且 11 个 fan 解释**全部生成**（候选竞争未择优）。
+- DXF FP 分册分布：05=76 / 07=35 / 04=28 / 02=28 / 06=13（06 已被拓扑解释
+  替换掉大部分错误投影杆，05 尚未）。
+
+---
+
+## 二、已完成里程碑（提交链）
+
+| 提交 | 内容 | 效果 |
+|---|---|---|
+| `9777f22`/`459c6cf` | GLB 法线烘焙 + viewer 法线补算 | 节点板发黑修复 |
+| `5d14b71` | P2 diff 溯源可视化四件套 | 待复核橙/GT 叠加/高度切片/图纸下拉 |
+| `f4ccbe8` | P5/P6 LOD2 角钢实体 + LOD3 节点板螺栓样板 | 独立目录产物 |
+| `257c69d` | P3 横隔几何去重 + 主腿节间守恒审计 | 审计 9 腿/23 段/max_rel_err=0.0 |
+| `98444d6` | P0 版本钉扎 + P1 06 段斜材拓扑闭环 | **A2@500 221→279（+58），P 35.4→39.4%，R 20.6→26.1%**；diagonal R 10.3→19.1% |
+| `2ca4456` | P4 底段参数化透明化 | 80/80 杆带 parametric_struct + viewer 免责声明 |
+| `c45b7fd` | LOD 阶段 1+2：L 截面参数化挤出 + 确定性朝向解算 | solid_angle_tower.glb（任务 E/F） |
+| `5c0ecaa` | LOD 阶段 3：节点板薄壳全塔锚定 | gusset_attached.glb（任务 G） |
+| `c2fa710` | LOD 阶段 4：六角螺栓群 + 热镀锌 PBR + 汇总装配 | assembly.glb（任务 H） |
+
+早期里程碑（z 偏移修复 58d3af7、横隔 physical 化、S1 系列节点 ID 碰撞修复、
+S2b canonical 层对齐、S6 主腿节间化、悬空门禁、假 bolt_group 清零等）见
+`docs/UNIMPLEMENTED_PLAN.md` 归档与 `PHASE_PROGRESS.md`。
+
+**历史累计**：A2 full 召回从 1.9% → 4.8% → 17.6% → 20.6%（P1 前）→ **26.1%**。
+
+### 双视图联合口径（已实现，待提交）
+
+`eval_a2_dual_view`（front ∪ side，杆粒度并集语义）：
+**full TP 477 / P 39.4% / R 44.5%**（vs front 单视图 279/39.4/26.1）——
++198 TP、P 不降、R +18.4pp。含 side 视图 (y,z) 投影轴修复与 b 面排除
+（1:1 失衡防护）。**未提交**（metrics.py + tests/test_a2_dual_view.py，
+6 用例全绿）。该口径是诚实扩展（l/r 面杆件在 side 视图投影为真实形状，
+与 GT 全塔投影对称），可作为并列报告口径，**不替代** front 主口径。
+
+---
+
+## 三、未实现任务清单（五批次，审查定稿后优先级不再变更）
+
+### 批次 1：评测可信度（P0，绝对前置，不提分但保证后续提升是真的）
+
+- [x] **P0.1 dual/multi pure 统一** ✅ 已实现待提交：`eval_a2_dual_caliber`
+      的 pure_dxf 改走 `_bar_caliber_class` 唯一判定（此前 mode="recognition"
+      混入 25 根 collinear_stitch/panel_cross@gt 杆，TP 64 vs 54 同名不同数）。
+      修复后实测两端完全一致：227 杆 / TP 54 / FP 173。
+- [ ] **P0.2 修复 --tol**：`evaluate_ground_truth.py` 的 CLI `--tol` 实际
+      未生效（内部固定 DEFAULT_TOLS sweep）。改为 `--tol 500` 单档 /
+      `--tols 50,100,200,500` sweep，报告写入实际容差。
+- [ ] **P0.3 固化代价语义命名**：`segment_cost` 返回 d1+d2（两端点误差和），
+      docstring「每端点最大允许误差」不准确。主指标名称固化为
+      `endpoint_sum_cost_lt_tol`，docstring 修正，输出附带 cost_semantics
+      字段；可选 A/B 诊断（sum vs max）不改变主指标。
+- [ ] **P0.4 拆分 production_dxf / canonical_assisted 两套 profile**：
+      当前 overlay 默认 `use_gt_platform_levels=true`（223 个 assisted TP
+      来源）且传播到主腿细分/panel-cross/06 拓扑/横隔层位。生产 profile
+      必须 `use_gt_platform_levels=false`（`use_gt_half_width=false` 同理）。
+- [ ] **P0.5 unscorable / 生成失败统计**：缺 from_node/to_node/坐标/
+      semantics 的杆件目前被评测静默跳过（生成失败混入 FN）。新增
+      `unscorable_report.json`（unscorable_missing_node/coordinate/
+      semantics 分类）+ `generation_status.json`（分册候选数/通过/拒绝/
+      pending/failed）；pending 不再算成功、0 候选不再保存空壳成功退出。
+- [ ] **P0.6 版本绑定**：报告绑定 commit SHA / model SHA / GT SHA /
+      overlay SHA / agent_mode / dataset_split（development|blind）/
+      caliber / view / cost_semantics / tolerance。versioning.py 已有部分
+      基础，补 GT/overlay SHA。
+- [ ] 附带修正：GT 投影日志「去重后」改为「物理杆件 front 投影」；
+      assisted_gain 标注为净增益（非严格因果归因，严格归因用联合匹配
+      的 by_origin）；effective_z_min=6500 标注为 JC1 profile 专用。
+
+**验收**：同一运行 dual pure == multi pure；连续两次运行 TP/FP/FN 与
+matched pairs 完全一致（确定性）。
+
+### 批次 2：斜材拓扑能力（P1，TP 增益最大方向）
+
+- [ ] **P1.1 06 fan 候选冲突图**：当前「所有 score<4000 的解释全部生成」
+      （h=14349/13797/13229/12683/12143 → 同一平台 P=16000 全部产出）。
+      改为解释图（候选=节点，共享平台/高度/证据线=冲突边），全局最优
+      组合（最大证据覆盖/最小总分/最少杆件/无高度交叉，可用加权独立集
+      或小规模 ILP）。目标：TP≥55 且 FP 30→≤15；停止条件：TP 降超 3
+      或 F1 不升。
+- [ ] **P1.2 twist 真实触发**：twist_pairs=0（真实输入的 FULL 候选未
+      通过门禁）。诊断 snapped FULL 线缺失根因并修复。
+- [ ] **P1.3 推广 05 分册**（76 DXF FP 最大污染源）：自动 z_window 检测
+      （不写死）、图纸端点聚类得螺旋高度、DXF 水平材证据得平台层、
+      fan/twist 识别、替换原 2D 投影杆、保留完整 source_handles。
+      保守目标：05 DXF FP -25~40，reconstructed TP +20~50。
+- [ ] **P1.4 推广 07 → 04 → 02**（02 是横担/塔头，拓扑类型不同最后做）。
+      每分册独立 A/B（baseline / 只开该分册 / 全塔），不许一次全开。
+- 注：拓扑重建杆属 **reconstructed 口径**（非 pure），代表真实图纸证据
+  驱动的空间恢复能力，应作为产品主能力单独报告。
+
+### 批次 3：主腿粒度与纯识别（P2）
+
+- [ ] **P2.1 主腿链**：按四角柱分组 → z 排序 → 母杆链 → 可信平台层切分
+      → parent/child 关系（长度守恒审计已有基础 `subdivide_legs_at_levels`）。
+- [ ] **P2.2 DXF 平台证据切分**：切分依据只准用 DXF 平台证据/水平材
+      交点/节点板标记，**严禁 GT 层位进 pure/reconstructed**。
+- [ ] **P2.3 角色专用共线拼接**：当前 collinear_stitch 12 根/TP4（gap=400/
+      angle=10°/maxLen=4500/maxSeg=2）。改为分角色：主腿沿锥线多段拼接
+      且平台层必断；斜材同 source region+同向+同证据链；水平材严格同层
+      同面不跨中心。目标 pure TP +10~25。
+- [ ] **P2.4 MLLM keep/drop**：多模态只做结构杆/尺寸线/重复双线/节点板
+      轮廓/碎片判别，坐标仍 DXF。优先 05(76FP)/07(35)/04(28)/02(28)。
+      目标 recognized FP -30~-60，pure TP 损失 ≤5。
+- [ ] **P2.5 hybrid confidence gate 真正阻断**：当前 rejected 候选可能
+      仍进入杆件注入（只记账不过滤）。改为 accepted→模型 /
+      rejected→review_queue。附阈值曲线（0.3/0.5/0.7/0.85 的 TP/FP/FN/
+      Review），重点观察 FP→FN 迁移。
+- 瓶颈事实：GT 杆长中位 2005mm vs DXF 模型杆中位 888mm（图纸杆更碎）。
+
+### 批次 4：Precision 清理（P3，不提 pure 但 full P 39.4→43%+）
+
+- [ ] **P3.1 横隔去冗余**（330 根/150TP/180FP）：删除候选=同 z 重复层、
+      四面投影重复、端点不落主腿、半宽不符锥线、<2 个不同 source handle。
+      目标 FP -60~-100，TP 损失 ≤10。
+- [ ] **P3.2 塔头伪横隔**：30m 以上（22/30/32/33/34/36m 层）横担区误生成。
+- [ ] **P3.3 清理 24 根全 FP crossarm**。
+- [ ] **P3.4 05 分册 76 DXF FP 重点清洗**（与 P2.4 MLLM 联动）。
+
+### 批次 5：泛化盲测（P4）
+
+- [ ] **P4.1 冻结 JC1 参数**（角色阈值/硬编码 z_window/门禁全部不动）。
+- [ ] **P4.2 ZC1 盲测**：选结构明显不同的 ZC1（**不要** JC2——骨架几乎
+      相同）。直接运行，不改参数。报告 A2-pure / A2-reconstructed /
+      FP by sheet / unscorable / 拓扑门禁。
+- [ ] **P4.3 盲测纪律**：不允许根据 ZC1 结果重新调参后仍称 blind。
+
+---
+
+## 四、LOD 3 装配 correctness 问题（与 A2 无关，另一线程领域，待修）
+
+> 当前 generate_assembly.py 输出 `degraded=true`（missing
+> solid_angle_tower.glb），只能称「节点装配样板」，非完整全塔 LOD 3。
+
+- [ ] **H1 螺栓群世界原点堆叠风险**：`generate_assembly.py` 传
+      `plate_center=[0,0,0]`，`bolt_assembly_meshes()` 用节点大样局部孔位
+      ——16 组/56 颗可能全叠在原点。必须改为 detail local holes → gusset
+      local transform → tower node world transform。验收：螺栓 bbox 与
+      对应节点板 bbox 相交；不同组不重叠；螺杆轴与板法向一致。
+- [ ] **H2 无证据锚点回退**：`gusset_anchor.py` 无有效 node_id/anchor/z
+      selector 时选字典序第一个塔节点（无证据硬挂载）。改为
+      failed / review_required。
+- [ ] **H3 截面解析静默回退**：`∠100*8`/`100x8`/`L100*8`/`L100X100X10`
+      等历史格式解析失败后按角色静默猜（LEG→L100×7）。拆
+      recognized/normalized/fallback_section + section_confidence；
+      strict 模式解析失败进 review。
+- [ ] **H4 凹多边形三角化**：`make_gusset_shell()` 扇形三角化只对凸可靠，
+      凹节点板可能三角穿出轮廓/自交。改 ear clipping + 凹多边形测试。
+
+---
+
+## 五、两轮目标（全部以不增容差/不放宽门禁/不用 GT 数值进 pure/reconstructed
+/不换评测定义/实验绑定 SHA 为前提）
+
+| 指标 | 现值 | 第一轮 | 第二轮 |
+|---|---|---|---|
+| pure TP | 54 | 65~80 | 80~110 |
+| pure FP | 173 | 120~150 | — |
+| reconstructed TP | 58 | 100~140 | 150~220 |
+| full TP | 279 | 310~340 | 350~430 |
+| full Precision | 39.4% | 43%+ | — |
+| full Recall | 26.1% | — | 32%~40% |
+
+（双视图联合口径若采纳为并列报告：现值 477 TP / 44.5% R，同等约束下提升。）
+
+---
+
+## 六、关键代码位置（改错会翻车）
+
+| 事项 | 文件 | 函数 |
+|---|---|---|
+| 五层口径唯一判定 | `traceability/eval/metrics.py` | `_bar_caliber_class` |
+| 2D 投影（front x-z / side y-z） | 同上 | `bars_from_model_2d` |
+| 双视图联合口径 | 同上 | `eval_a2_dual_view`（待提交） |
+| 代价（d1+d2）与门禁 | 同上 | `segment_cost` / `segment_gates` |
+| 06 段斜材拓扑 | `traceability/solve/diagonal_topology.py` | `reconstruct_diagonal_topology` |
+| 横隔生成 | `traceability/solve/tower_geometry.py` | `generate_diaphragms` |
+| 主腿节间细分 | 同上 | `subdivide_legs_at_levels` |
+| GT 平台层开关 | `examples/external/guowang_35A1/layer_overlay.json` | `use_gt_platform_levels` |
+| 评测 CLI | `scripts/evaluate_ground_truth.py` | `--tol`（待修 P0.2） |
+| 版本钉扎 | `traceability/project/versioning.py` | run manifest |
+| LOD 装配 | `scripts/generate_assembly.py` + `traceability/connection/*` | H1~H4 待修 |
+
+---
+
+## 七、历史结论修正记录（防再错乱，摘最新）
+
+| 旧认知 | 修正后 |
+|---|---|
+| dual-caliber pure = 64 TP | mode="recognition" 混入 25 根非 pure 杆；统一后 54/227 ✅（P0.1） |
+| side 视图 = face 过滤即可 | 必须投影到 (y,z)；此前错用 (x,z)（已修，待提交） |
+| full 279 可对外汇报 | 含 80% GT 标高辅助，只能内部归因；正式口径 multi.pure 54 |
+| 容差=每端点 500mm | 实为 d1+d2<500（和语义），命名需固化（P0.3） |
+| A2 提升靠端点吸附/全局拼接 | 06 拓扑解释（投影线→空间拓扑模板）才是有效方向 |
+
+（更早的修正记录见 `docs/UNIMPLEMENTED_PLAN.md` §7 归档。）
