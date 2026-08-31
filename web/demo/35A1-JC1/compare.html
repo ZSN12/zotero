@@ -2,13 +2,13 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<title>35A1-JC1 三维模型 · diff / 分层 / 统计（Phase 6）</title>
+<title>35A1-JC1 三维模型 · diff / 分层 / 截面 / 详图（Phase 6.1–6.6）</title>
 <style>
   html, body { margin: 0; height: 100%; background: #0e1116; color: #e8eaed; font-family: system-ui, sans-serif; overflow: hidden; }
   #viewer { width: 100%; height: 100%; }
 
   /* 顶部：模式切换 */
-  #topbar { position: fixed; left: 12px; top: 12px; z-index: 3; background: rgba(0,0,0,.75); padding: 10px 14px; border-radius: 8px; font-size: 13px; max-width: 620px; line-height: 1.6; }
+  #topbar { position: fixed; left: 12px; top: 12px; z-index: 3; background: rgba(0,0,0,.75); padding: 10px 14px; border-radius: 8px; font-size: 13px; max-width: 680px; line-height: 1.6; }
   button { margin: 2px 4px 2px 0; padding: 6px 12px; cursor: pointer; border-radius: 4px; border: 1px solid #555; background: #1a1d24; color: #e8eaed; font-size: 12px; }
   button.active { background: #3b6ef5; border-color: #3b6ef5; }
   button:disabled { opacity: .4; cursor: not-allowed; }
@@ -26,10 +26,21 @@
   #layers.disabled { opacity: .35; pointer-events: none; }
 
   /* 左下：统计面板 */
-  #stats { position: fixed; left: 12px; bottom: 12px; z-index: 3; background: rgba(0,0,0,.78); border-radius: 8px; padding: 10px 14px; font-size: 12px; line-height: 1.7; max-width: 560px; font-variant-numeric: tabular-nums; }
+  #stats { position: fixed; left: 12px; bottom: 12px; z-index: 3; background: rgba(0,0,0,.78); border-radius: 8px; padding: 10px 14px; font-size: 12px; line-height: 1.7; max-width: 620px; font-variant-numeric: tabular-nums; }
   #stats b { color: #fff; }
   #stats .dim { color: #9aa4b2; }
   #stats .warn { color: #f0b429; }
+  #stats .ok { color: #6ddb7b; }
+
+  /* 左上（顶栏下）：点击信息卡 */
+  #infocard { position: fixed; left: 12px; top: 118px; z-index: 4; width: 268px; background: rgba(10,13,18,.92); border: 1px solid #3b6ef5; border-radius: 8px; padding: 12px 14px; font-size: 12px; line-height: 1.65; display: none; }
+  #infocard h3 { margin: 0 0 6px; font-size: 13px; color: #8ab4f8; }
+  #infocard .row { display: flex; justify-content: space-between; gap: 8px; }
+  #infocard .k { color: #9aa4b2; }
+  #infocard .v { text-align: right; word-break: break-all; }
+  #infocard .close { position: absolute; right: 8px; top: 6px; cursor: pointer; color: #9aa4b2; border: none; background: none; font-size: 14px; padding: 0 4px; }
+  #infocard svg { display: block; margin: 8px auto 2px; }
+  #infocard .note { color: #9aa4b2; font-size: 11px; margin-top: 6px; }
 
   /* 右下：图例 */
   #legend { position: fixed; right: 240px; bottom: 12px; z-index: 3; background: rgba(0,0,0,.75); border-radius: 8px; padding: 8px 12px; font-size: 12px; }
@@ -52,8 +63,9 @@
   <b>35A1-JC1 三维模型</b>
   <button id="btn-model" class="active">当前模型</button>
   <button id="btn-diff">新旧 diff</button>
+  <button id="btn-detail">节点详图</button>
   <button id="btn-gt">GT 官方</button><br>
-  <span id="desc">DXF 管线重建骨架（provenance 五色）</span>
+  <span id="desc">DXF 管线重建骨架（点击杆件看截面）</span>
   <a href="/" style="margin-left:8px">返回主控制台</a>
 </div>
 
@@ -70,6 +82,7 @@
 </div>
 
 <div id="viewer"></div>
+<div id="infocard"></div>
 <div id="stats">统计加载中…</div>
 <div id="legend"></div>
 <div id="loading">加载中…</div>
@@ -78,35 +91,87 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 // ---------------------------------------------------------------- 渲染骨架
+// Phase 6.6：渐变天空背景 + 金属材质 + 阴影 + 抗锯齿 + 地面网格
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1b2028);
+scene.background = (() => {
+  const c = document.createElement('canvas'); c.width = 2; c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, '#33415a'); grad.addColorStop(0.55, '#1c242f'); grad.addColorStop(1, '#0d1015');
+  g.fillStyle = grad; g.fillRect(0, 0, 2, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+})();
 const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 10, 500000);
 camera.up.set(0, 0, 1);
 camera.position.set(15000, 10000, 20000);
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setPixelRatio(window.devicePixelRatio || 1);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));   // 6.6 性能红线
 renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.getElementById('viewer').appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.6));
-const dir1 = new THREE.DirectionalLight(0xffffff, 1.8); dir1.position.set(2, 4, 3); scene.add(dir1);
-const dir2 = new THREE.DirectionalLight(0xffffff, 1.2); dir2.position.set(-2, -3, -2); scene.add(dir2);
+// 6.6 关键：高 metalness 的 PBR 金属没有环境反射就只剩高光（发黑）——
+// 用 RoomEnvironment 生成中性棚拍环境贴图，金属质感才立得住。
+{
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+}
+
+const hemi = new THREE.HemisphereLight(0xdfe8ff, 0x30363f, 1.15);
+scene.add(hemi);
+const dir1 = new THREE.DirectionalLight(0xfff4e0, 2.2);   // 主光（带阴影）
+dir1.castShadow = true;
+dir1.shadow.mapSize.set(2048, 2048);
+dir1.shadow.bias = -0.0002;
+scene.add(dir1); scene.add(dir1.target);
+const dir2 = new THREE.DirectionalLight(0x9ab4ff, 0.55);  // 冷色补光
+dir2.position.set(-2, -3, -2); scene.add(dir2);
 const controls = new OrbitControls(camera, renderer.domElement);
+
+// 地面：参考网格 + 阴影承接面（可开关）
+const ground = new THREE.Group();
+ground.name = 'ground';
+let gridHelper = null, shadowPlane = null;
+function buildGround(zMin, radius) {
+  if (gridHelper) { ground.remove(gridHelper); gridHelper.geometry.dispose(); }
+  if (shadowPlane) { ground.remove(shadowPlane); shadowPlane.geometry.dispose(); }
+  const size = Math.max(4, Math.ceil(radius * 2.6 / 1000) * 1000);
+  gridHelper = new THREE.GridHelper(size, 30, 0x3d485a, 0x232a35);
+  gridHelper.rotation.x = Math.PI / 2;              // three 默认 XZ，camera.up=Z → 转到 XY
+  gridHelper.position.set(0, 0, zMin - 600);
+  shadowPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(size * 2, size * 2),
+    new THREE.ShadowMaterial({ opacity: 0.28 }));
+  shadowPlane.position.set(0, 0, zMin - 590);
+  shadowPlane.receiveShadow = true;
+  ground.add(gridHelper); ground.add(shadowPlane);
+}
+scene.add(ground);
 
 const loader = new GLTFLoader();
 const BASE = 'latest_deliver/';
 
 // ---------------------------------------------------------------- 数据资产
-const DATA = {};   // barMap / model / multi / byRole / byOrigin / review / diffReport
-const MESHES = {}; // skeleton | diff | gt → THREE.Group
+const DATA = {};   // barMap / model / multi / byRole / byOrigin / review / diffReport / detailMap
+const MESHES = {}; // skeleton | diff | gt | detail → THREE.Group
 let currentKey = null;
-let reviewGroupObj = null;   // 复核红球组（常驻场景，不随模式移除）
+let reviewGroupObj = null;
+let BARINFO = {};  // component_id → bar_map 记录（含 section，点击信息卡用）
 
 async function fetchJSON(name) {
   const r = await fetch(BASE + name);
   if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
+  return r.json();
+}
+async function fetchJSONRel(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
   return r.json();
 }
 function loadGLB(url) {
@@ -116,18 +181,37 @@ const $ = id => document.getElementById(id);
 function setLoading(on, text) { $('loading').style.display = on ? 'block' : 'none'; if (text) $('loading').textContent = text; }
 
 // ------------------------------------------------- component_id → 属性映射
-// 来源分组（与 skeleton.glb provenance 五色一致）
+// Phase 6.6：来源分组配色改为金属质感口径（银/蓝/黄/暗灰），图例同步
 const ORIGIN_GROUPS = {
-  recognized: { label: '识别',   color: '#28b428', origins: ['dxf_geom'] },
-  assisted:   { label: '辅助重建', color: '#2878e6', origins: ['diaphragm_reconstructed', 'panel_subdivision'] },
-  stitch:     { label: '拼接',   color: '#e6c828', origins: ['collinear_stitch'] },
-  derived:    { label: '派生',   color: '#969696', origins: ['derived_4face'] },
+  recognized: { label: '识别',   color: '#cdd3da', origins: ['dxf_geom'] },
+  assisted:   { label: '辅助重建', color: '#3f6fd8', origins: ['diaphragm_reconstructed', 'panel_subdivision'] },
+  stitch:     { label: '拼接',   color: '#d8b62a', origins: ['collinear_stitch'] },
+  derived:    { label: '派生',   color: '#5a6068', origins: ['derived_4face'] },
 };
 const originToGroup = {};
 for (const [g, def] of Object.entries(ORIGIN_GROUPS))
   for (const o of def.origins) originToGroup[o] = g;
 
+// 6.6 材质：金属度/粗糙度区分来源
+const MATS = {
+  recognized: new THREE.MeshStandardMaterial({ color: 0xcdd3da, metalness: 0.85, roughness: 0.30 }),
+  assisted:   new THREE.MeshStandardMaterial({ color: 0x3f6fd8, metalness: 0.55, roughness: 0.45 }),
+  stitch:     new THREE.MeshStandardMaterial({ color: 0xd8b62a, metalness: 0.70, roughness: 0.35 }),
+  derived:    new THREE.MeshStandardMaterial({ color: 0x5a6068, metalness: 0.15, roughness: 0.85 }),
+  galvanized: new THREE.MeshStandardMaterial({ color: 0xb0b6c0, metalness: 0.85, roughness: 0.40,
+    emissive: 0x333a45, envMapIntensity: 1.8 }),   // 任务书钉死 0.85/0.4；emissive 兜底大平面反射暗区发黑
+  darksteel:  new THREE.MeshStandardMaterial({ color: 0x262a31, metalness: 0.60, roughness: 0.55 }),
+  stubblue:   new THREE.MeshStandardMaterial({ color: 0x7aa0d8, metalness: 0.65, roughness: 0.45,
+    emissive: 0x1a2028 }),
+};
+const GHOST = new THREE.MeshStandardMaterial({
+  color: 0x8a9099, transparent: true, opacity: 0.10, roughness: 0.9, metalness: 0, depthWrite: false });
+
 const ROLE_LABELS = { LEG: '主腿', DIAG: '斜材', HORIZ: '水平材', CROSS: '横担', DIA: '横隔' };
+const ORIGIN_LABELS = {
+  dxf_geom: 'DXF 直接识别', diaphragm_reconstructed: '横隔重建（标高辅助）',
+  panel_subdivision: '主腿节间化', collinear_stitch: '共线拼接', derived_4face: '四面派生展示',
+};
 
 function sheetOf(cid) {
   const m = String(cid).match(/35A1-JC1-(\d{2})/);
@@ -140,13 +224,12 @@ function roleKeyOf(attrs, cid) {
   return attrs && attrs.role ? attrs.role : null;
 }
 
-// bar_map.json 是权威映射：component_id → {role, origin, group, sheet, isReview}
 function buildAttrs(barMap) {
   const attrs = {};
   for (const e of barMap) {
     const cid = String(e.component_id);
     attrs[cid] = {
-      role: e.role, origin: e.geometry_origin,
+      role: e.role, origin: e.geometry_origin, section: e.section ?? null,
       group: originToGroup[e.geometry_origin] || null,
       sheet: sheetOf(cid),
       isReview: cid.startsWith('review_'),
@@ -155,17 +238,31 @@ function buildAttrs(barMap) {
   return attrs;
 }
 
+// 给骨架 mesh 按来源组换金属材质（缓存原材质供选中/还原）
+function applyProvenanceMaterials(group) {
+  group.traverse(obj => {
+    if (!obj.isMesh) return;
+    const name = meshNameOf(obj);
+    const a = ATTRS[name];
+    obj.userData.origMat = obj.material;
+    obj.castShadow = true;
+    if (a && a.group && MATS[a.group]) obj.material = MATS[a.group];
+  });
+}
+
 // ---------------------------------------------------------------- 过滤状态
 const state = {
-  mode: 'model',           // model | diff | gt
+  mode: 'model',           // model | diff | detail | gt
   origins: new Set(Object.keys(ORIGIN_GROUPS)),
-  sheets: new Set(),       // 数据加载后填充
+  sheets: new Set(),
   roles: new Set(Object.keys(ROLE_LABELS)),
   review: true,
+  grid: true,
   diffGroups: new Set(['added', 'removed', 'unchanged']),
 };
 let ATTRS = {};
-let SHEETS = [];           // 排序后的分册键
+let SHEETS = [];
+let selected = null;       // 当前选中 mesh
 
 function meshNameOf(obj) {
   // GLTFLoader 的 sanitizeNodeName 会剥掉点号等保留字符（横隔 id "…06500.0_00" 被改坏），
@@ -192,9 +289,7 @@ function applyModelFilters() {
     if (a.isReview) { obj.visible = false; return; }   // 红球由 reviewGroup 统一画
     let v = true;
     if (a.group) v = v && state.origins.has(a.group);
-    if (a.sheet === 'other') v = v && state.sheets.has('other');
-    else if (a.sheet !== 'dia') v = v && state.sheets.has(a.sheet);
-    else v = v && state.sheets.has('dia');
+    v = v && state.sheets.has(a.sheet);
     const rk = roleKeyOf(a, name);
     if (rk) v = v && state.roles.has(rk);
     obj.visible = v;
@@ -204,7 +299,6 @@ function applyModelFilters() {
 }
 function countReviewAttrs() { return Object.values(ATTRS).filter(a => a.isReview).length; }
 
-const DIFF_LABELS = { added: '新增', removed: '删除', unchanged: '未变' };
 function applyDiffFilters() {
   const grp = MESHES.diff;
   if (!grp || !DATA.diffReport) return;
@@ -230,12 +324,144 @@ function applyDiffFilters() {
 function applyFilters() {
   if (state.mode === 'model') applyModelFilters();
   else if (state.mode === 'diff') applyDiffFilters();
-  if (reviewGroupObj) reviewGroupObj.visible = state.review && state.mode !== 'gt';
+  if (reviewGroupObj) reviewGroupObj.visible = state.review && (state.mode === 'model' || state.mode === 'diff');
+  ground.visible = state.grid && state.mode !== 'detail';
   renderLegend();
 }
 
+// ---------------------------------------------------------------- 点击拾取（6.4b / 6.5b）
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let downAt = null;
+
+renderer.domElement.addEventListener('pointerdown', e => {
+  downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
+});
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!downAt) return;
+  const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
+  const dt = performance.now() - downAt.t;
+  downAt = null;
+  if (moved > 5 || dt > 500) return;                 // 拖拽/长按不算点击
+  pickAt(e.clientX, e.clientY);
+});
+
+function pickAt(cx, cy) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((cx - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((cy - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  let target = null;
+  if (state.mode === 'model' && MESHES.skeleton) target = MESHES.skeleton;
+  else if (state.mode === 'detail' && MESHES.detail) target = MESHES.detail;
+  if (!target) { clearSelection(); hideInfoCard(); return; }
+  const hits = raycaster.intersectObject(target, true).filter(h => h.object.isMesh && h.object.visible);
+  if (!hits.length) { clearSelection(); hideInfoCard(); return; }
+  const obj = hits[0].object;
+  if (state.mode === 'model') selectBar(obj);
+  else showDetailCard(obj);
+}
+
+function selectBar(obj) {
+  clearSelection();
+  selected = obj;
+  const grp = MESHES.skeleton;
+  grp.traverse(o => {
+    if (!o.isMesh) return;
+    if (o === obj) {
+      const m = (o.userData.origMat || o.material).clone();
+      m.emissive = new THREE.Color(0x4a7bff);
+      m.emissiveIntensity = 0.85;
+      o.material = m;
+    } else {
+      o.material = GHOST;
+    }
+  });
+  const name = meshNameOf(obj);
+  showBarCard(name, obj);
+}
+function clearSelection() {
+  if (!selected) return;
+  const grp = MESHES.skeleton;
+  if (grp) grp.traverse(o => {
+    if (o.isMesh && o.userData.origMat) o.material = o.userData.origMat;
+  });
+  selected = null;
+}
+
+// ---- 截面解析与 SVG（L40X3 → 肢40×厚3；Q345L100X7 去材质前缀） ----
+function parseSection(raw) {
+  if (!raw) return null;
+  const m = String(raw).match(/^(?:Q(\d+))?L(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  return { material: m[1] ? 'Q' + m[1] : null, leg: parseFloat(m[2]), thick: parseFloat(m[3]) };
+}
+function sectionSvg(sec) {
+  // L 形：leg×leg 外框挖掉 (leg-t)×(leg-t) 右上角，缩放到 92px
+  const S = 92, k = S / sec.leg, t = Math.max(2.5, sec.thick * k), L = S;
+  const inner = L - t;
+  const path = `M0 0 H${L} V${t} H${inner} V${L} H0 Z`;
+  return `<svg width="${S + 46}" height="${S + 30}" viewBox="-4 -4 ${S + 50} ${S + 34}">
+    <path d="${path}" fill="#9fb6d8" stroke="#dbe6f5" stroke-width="1"/>
+    <text x="${L / 2}" y="${S + 18}" fill="#9aa4b2" font-size="11" text-anchor="middle">肢宽 ${sec.leg}mm</text>
+    <text x="${L + 8}" y="${t / 2 + 4}" fill="#9aa4b2" font-size="11">厚 ${sec.thick}mm</text>
+  </svg>`;
+}
+
+function showBarCard(cid) {
+  const a = ATTRS[cid];
+  const info = BARINFO[cid] || {};
+  if (!a) { hideInfoCard(); return; }
+  const sec = parseSection(a.section);
+  const secHtml = sec
+    ? `<div class="row"><span class="k">截面规格</span><span class="v"><b>${a.section}</b></span></div>
+       <div class="row"><span class="k">肢宽 × 厚</span><span class="v">${sec.leg} × ${sec.thick} mm${sec.material ? '（' + sec.material + '）' : ''}</span></div>
+       ${sectionSvg(sec)}`
+    : `<div class="row"><span class="k">截面规格</span><span class="v warn" style="color:#f0b429">未关联（BOM 件号未对上）</span></div>`;
+  $('infocard').innerHTML = `
+    <button class="close" onclick="this.parentElement.style.display='none'">✕</button>
+    <h3>杆件 ${esc(info.bar_id || cid)}</h3>
+    <div class="row"><span class="k">角色</span><span class="v">${ROLE_LABELS[roleKeyOf(a, cid)] || '—'}</span></div>
+    <div class="row"><span class="k">来源</span><span class="v">${ORIGIN_LABELS[a.origin] || a.origin || '—'}</span></div>
+    <div class="row"><span class="k">分册</span><span class="v">${a.sheet === 'dia' ? '横隔（无分册）' : a.sheet === 'other' ? '—' : a.sheet + ' 分册'}</span></div>
+    ${secHtml}
+    <div class="note">component_id: ${esc(cid)}</div>`;
+  $('infocard').style.display = 'block';
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function hideInfoCard() { $('infocard').style.display = 'none'; }
+
+// ---- Detail 模式信息卡 ----
+function showDetailCard(obj) {
+  const name = (obj.userData && obj.userData.name) || obj.name || '';
+  const e = (DATA.detailMap || []).find(x => String(x.component_id) === name);
+  if (!e) { hideInfoCard(); return; }
+  let body = '';
+  if (e.kind === 'gusset_plate') {
+    body = `<h3>节点板 ${esc(e.detail_id)}</h3>
+      <div class="row"><span class="k">螺栓孔</span><span class="v"><b>${e.n_holes}</b> 孔 / ${e.n_groups} 组</span></div>
+      <div class="row"><span class="k">孔径</span><span class="v">17.5 mm（M16）</span></div>
+      <div class="row"><span class="k">板厚</span><span class="v">${e.plate_thickness_mm} mm${e.thickness_assumed ? '（假定）' : ''}</span></div>
+      <div class="row"><span class="k">材质</span><span class="v">${esc(e.material || '未知')}</span></div>
+      <div class="row"><span class="k">轮廓</span><span class="v">${esc(e.outline_method)}</span></div>
+      <div class="note">${esc(e.note)}</div>`;
+  } else if (e.kind === 'bolt_holes') {
+    body = `<h3>螺栓组 ${esc(e.group_id)}</h3>
+      <div class="row"><span class="k">孔数</span><span class="v"><b>${e.count}</b></span></div>
+      <div class="row"><span class="k">孔径</span><span class="v">${e.hole_diameter_mm} mm</span></div>
+      <div class="row"><span class="k">螺栓</span><span class="v">M${e.bolt_diameter_mm}×${e.bolt_length_mm}</span></div>
+      <div class="row"><span class="k">所属节点</span><span class="v">${esc(e.detail_id)}</span></div>`;
+  } else {
+    body = `<h3>示意杆件</h3>
+      <div class="row"><span class="k">截面</span><span class="v"><b>${esc(e.section)}</b></span></div>
+      <div class="row"><span class="k">关联螺栓组</span><span class="v">${esc(e.group_id)}</span></div>
+      <div class="note">${esc(e.note)}</div>`;
+  }
+  $('infocard').innerHTML = `<button class="close" onclick="this.parentElement.style.display='none'">✕</button>${body}`;
+  $('infocard').style.display = 'block';
+}
+
 // ---------------------------------------------------------------- 复核红球
-// review_queue.json 残留节点：r=80mm 红球 + 屏幕恒定大小提示点（远看也可见）
 function buildReviewSpheres(review) {
   const grp = new THREE.Group();
   grp.name = 'reviewGroup';
@@ -263,7 +489,7 @@ function buildReviewSpheres(review) {
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
         map: dotTex, sizeAttenuation: false, depthTest: false, transparent: true }));
       sprite.position.copy(pos);
-      sprite.scale.set(0.02, 0.02, 1);   // 屏幕恒定大小
+      sprite.scale.set(0.02, 0.02, 1);
       grp.add(ball); grp.add(sprite);
     }
   }
@@ -288,33 +514,38 @@ function checkbox(parentId, key, label, checked, onChange, swColor) {
 }
 
 function buildLayerPanel() {
-  const of = $('originFilters'); of.innerHTML = '';
+  $('originFilters').innerHTML = '';
   for (const [g, def] of Object.entries(ORIGIN_GROUPS))
     checkbox('originFilters', g, def.label, true, (k, v) => {
       v ? state.origins.add(k) : state.origins.delete(k); applyFilters();
     }, def.color);
 
-  const sf = $('sheetFilters'); sf.innerHTML = '';
+  $('sheetFilters').innerHTML = '';
   for (const s of SHEETS)
     checkbox('sheetFilters', s, s === 'dia' ? '横隔（无分册）' : (s === 'other' ? '其它' : `${s} 分册`), true, (k, v) => {
       v ? state.sheets.add(k) : state.sheets.delete(k); applyFilters();
     });
 
-  const rf = $('roleFilters'); rf.innerHTML = '';
+  $('roleFilters').innerHTML = '';
   for (const [r, label] of Object.entries(ROLE_LABELS))
     checkbox('roleFilters', r, label, true, (k, v) => {
       v ? state.roles.add(k) : state.roles.delete(k); applyFilters();
     });
 
+  $('markFilters').innerHTML = '';
   checkbox('markFilters', 'review', '复核红球', true, (k, v) => {
     state.review = v; applyFilters();
   }, '#ff2828');
+  checkbox('markFilters', 'grid', '地面网格', true, (k, v) => {
+    state.grid = v; applyFilters();
+  });
 
   $('btn-reset').onclick = () => {
     state.origins = new Set(Object.keys(ORIGIN_GROUPS));
     state.sheets = new Set(SHEETS);
     state.roles = new Set(Object.keys(ROLE_LABELS));
     state.review = true;
+    state.grid = true;
     state.diffGroups = new Set(['added', 'removed', 'unchanged']);
     document.querySelectorAll('#layers input').forEach(cb => cb.checked = true);
     applyFilters();
@@ -347,6 +578,8 @@ function renderLegend() {
     item('删除', '#e63c3c', state.diffGroups.has('removed'), () => toggleDiff('removed'));
     item('未变', '#969696', state.diffGroups.has('unchanged'), () => toggleDiff('unchanged'));
     item('复核', '#ff2828', state.review, () => { state.review = !state.review; applyFilters(); });
+  } else if (state.mode === 'detail') {
+    el.innerHTML = '<span class="note">节点板样例（凸包修复轮廓 + 孔位标记 + 示意杆）· 点击查看数据</span>';
   } else {
     el.innerHTML = '<span class="note">GT 官方塔（575 杆）· 无分层数据</span>';
   }
@@ -357,8 +590,9 @@ function toggleDiff(g) {
 }
 function syncCheckboxes() {
   document.querySelectorAll('#originFilters input').forEach(cb => cb.checked = state.origins.has(cb.dataset.key));
-  const rv = document.querySelector('#markFilters input');
-  if (rv) rv.checked = state.review;
+  const cbs = document.querySelectorAll('#markFilters input');
+  if (cbs[0]) cbs[0].checked = state.review;
+  if (cbs[1]) cbs[1].checked = state.grid;
 }
 
 // ---------------------------------------------------------------- 统计面板
@@ -370,7 +604,6 @@ function sweepAt(cal, tol) {
 }
 function renderStats() {
   const lines = [];
-  // 模型规模：model.json 现算
   if (DATA.model) {
     let bars = 0, nodes = 0, zmin = Infinity, zmax = -Infinity;
     for (const c of Object.values(DATA.model.components)) {
@@ -383,7 +616,6 @@ function renderStats() {
     }
     lines.push(`<b>杆件 ${bars}</b> | 节点 ${nodes} | Z [${Math.round(zmin)}, ${Math.round(zmax)}]`);
   }
-  // 来源计数：bar_map.json 现算
   if (DATA.barMap) {
     const cnt = { recognized: 0, assisted: 0, stitch: 0, derived: 0 };
     for (const e of DATA.barMap) {
@@ -393,8 +625,18 @@ function renderStats() {
     const reviewN = DATA.review?.gate?.genuine_dangling_physical
       ?? (DATA.review?.groups || []).length ?? 0;
     lines.push(`识别 ${cnt.recognized} | 辅助 ${cnt.assisted} | 拼接 ${cnt.stitch} | 派生 ${cnt.derived} | 复核 ${reviewN}`);
+    // 6.4：截面规格分布（bar_map.section 现算，null 归未关联）
+    const secs = {};
+    let unlinked = 0;
+    for (const e of DATA.barMap) {
+      if (String(e.component_id).startsWith('review_')) continue;
+      if (e.section) secs[e.section] = (secs[e.section] || 0) + 1;
+      else unlinked++;
+    }
+    const top = Object.entries(secs).sort((a, b) => b[1] - a[1]).slice(0, 6)
+      .map(([s, n]) => `${s} ×${n}`);
+    lines.push(`<span class="dim">截面: ${top.join(' · ')}${Object.keys(secs).length > 6 ? ` · +${Object.keys(secs).length - 6} 种` : ''} · 未关联 ${unlinked}</span>`);
   }
-  // A2 指标：metrics_multi_caliber.json 现算
   if (DATA.multi) {
     const pure = sweepAt('pure', 500), full = sweepAt('full', 500);
     const seg = [];
@@ -403,33 +645,38 @@ function renderStats() {
     const ceil = DATA.multi.ceiling;
     if (ceil?.ceiling_rate != null) seg.push(`front 上限 ${fmtPct(ceil.ceiling_rate)}`);
     if (seg.length) lines.push(seg.join(' | '));
-    lines.push(`<span class="dim">A1 件号：交付 JSON 无该指标（—）</span>`);
     const zmin = DATA.multi.effective?.z_min_mm;
     if (zmin != null) lines.push(`<span class="warn">缺失区间: z &lt; ${zmin}（底段无图源，A2-effective 已剔除）</span>`);
   }
-  // 分角色召回：metrics_by_role.json 现算
   if (DATA.byRole) {
     const parts = Object.entries(DATA.byRole)
       .map(([r, v]) => `${r} ${fmtPct(v.recall, 1)}`);
     if (parts.length) lines.push(`<span class="dim">分角色召回: ${parts.join(' · ')}</span>`);
   }
-  // diff 摘要
   if (state.mode === 'diff' && DATA.diffReport) {
     const s = DATA.diffReport.summary || {};
     lines.push(`<b>diff（tol=${DATA.diffReport.tol_mm}mm）</b>：新增 ${s.added ?? 0} · 删除 ${s.removed ?? 0} · 未变 ${s.unchanged ?? 0}`);
   }
+  if (state.mode === 'detail' && DATA.detailMap && DATA.detailMap.length) {
+    const plate = DATA.detailMap.find(e => e.kind === 'gusset_plate');
+    if (plate) lines.push(`<b>节点详图 ${esc(plate.detail_id)}</b>：${plate.n_holes} 孔 · ${plate.n_groups} 螺栓组 · 板厚 ${plate.plate_thickness_mm}mm${plate.thickness_assumed ? '（假定）' : ''}`);
+  }
+  lines.push(fpsLine());
   $('stats').innerHTML = lines.join('<br>') || '无数据';
 }
 
 // ---------------------------------------------------------------- 模式切换
 function setMode(mode) {
+  if (state.mode === 'model' && mode !== 'model') { clearSelection(); }
+  hideInfoCard();
   state.mode = mode;
-  for (const [id, m] of [['btn-model', 'model'], ['btn-diff', 'diff'], ['btn-gt', 'gt']])
+  for (const [id, m] of [['btn-model', 'model'], ['btn-diff', 'diff'], ['btn-detail', 'detail'], ['btn-gt', 'gt']])
     $(id).classList.toggle('active', m === mode);
-  $('layers').classList.toggle('disabled', mode === 'gt');
+  $('layers').classList.toggle('disabled', mode === 'gt' || mode === 'detail');
   const descs = {
-    model: 'DXF 管线重建骨架（provenance 五色：绿识别/蓝辅助/黄拼接/灰派生）',
+    model: 'DXF 管线重建骨架（银识别/蓝辅助/黄拼接/灰派生 · 点击杆件看截面）',
     diff: '基线 vs 当前模型几何 diff（绿=新增 / 红=删除 / 灰半透=未变或微调）',
+    detail: '节点板 D1 样例（详图页 polygon_local + 56 孔 + 示意杆，非塔上 3D 位置）',
     gt: '国网官方 35A1 完整铁塔（GT 参考）',
   };
   $('desc').textContent = descs[mode];
@@ -443,32 +690,50 @@ function attach(key, group) {
 }
 function showMode(mode) {
   if (currentKey) scene.remove(MESHES[currentKey]);
-  if (mode === 'gt') {
-    if (!MESHES.gt) {
-      setLoading(true, '加载 GT 官方塔…');
-      loadGLB('gt_reference.glb').then(g => { attach('gt', g); finishShow(mode); })
-        .catch(e => { $('desc').textContent = 'GT 加载失败：' + e.message; setLoading(false); });
-      return;
-    }
-    finishShow(mode); return;
-  }
-  if (mode === 'diff') {
-    if (!MESHES.diff) {
-      setLoading(true, '加载 diff.glb…');
-      Promise.all([loadGLB(BASE + 'diff.glb'),
-                   fetchJSON('diff_report.json').catch(() => null)])
-        .then(([g, rep]) => {
-          DATA.diffReport = rep; attach('diff', g); finishShow(mode);
-        })
-        .catch(() => { $('desc').textContent = 'diff.glb 缺失：先跑 scripts/generate_diff_glb.py + sync'; setLoading(false); });
-      return;
-    }
-    finishShow(mode); return;
+  const lazy = {
+    gt: () => loadGLB('gt_reference.glb').then(g => attach('gt', g)),
+    diff: () => Promise.all([loadGLB(BASE + 'diff.glb'),
+                             fetchJSON('diff_report.json').catch(() => null)])
+      .then(([g, rep]) => { DATA.diffReport = rep; attach('diff', g); }),
+    detail: () => Promise.all([loadGLB('detail_sample.glb'),
+                               fetchJSONRel('detail_sample.bar_map.json').catch(() => [])])
+      .then(([g, map]) => {
+        DATA.detailMap = map;
+        applyDetailMaterials(g, map);
+        attach('detail', g);
+      }),
+  };
+  if (lazy[mode] && !MESHES[mode]) {
+    setLoading(true, `加载${mode === 'gt' ? ' GT 官方塔' : mode === 'diff' ? ' diff.glb' : '节点板样例'}…`);
+    lazy[mode]()
+      .then(() => finishShow(mode))
+      .catch(() => {
+        $('desc').textContent = mode === 'diff'
+          ? 'diff.glb 缺失：先跑 scripts/generate_diff_glb.py + sync'
+          : mode === 'detail'
+            ? 'detail_sample.glb 缺失：先跑 scripts/build_detail_sample.py'
+            : 'GT 加载失败';
+        setLoading(false);
+      });
+    return;
   }
   finishShow(mode);
 }
+function applyDetailMaterials(group, map) {
+  const kindOf = {};
+  for (const e of (map || [])) kindOf[String(e.component_id)] = e.kind;
+  group.traverse(obj => {
+    if (!obj.isMesh) return;
+    const name = (obj.userData && obj.userData.name) || obj.name || '';
+    const kind = kindOf[name];
+    obj.castShadow = true;
+    if (kind === 'gusset_plate') obj.material = MATS.galvanized;
+    else if (kind === 'bolt_holes') obj.material = MATS.darksteel;
+    else if (kind === 'bar_stub_schematic') obj.material = MATS.stubblue;
+  });
+}
 function finishShow(mode) {
-  const key = mode === 'gt' ? 'gt' : mode === 'diff' ? 'diff' : 'skeleton';
+  const key = { gt: 'gt', diff: 'diff', detail: 'detail' }[mode] || 'skeleton';
   const grp = MESHES[key];
   if (grp) {
     scene.add(grp);
@@ -476,12 +741,57 @@ function finishShow(mode) {
     const box = new THREE.Box3().setFromObject(grp);
     const c = box.getCenter(new THREE.Vector3());
     const s = box.getSize(new THREE.Vector3()).length() / 2 || 1;
-    camera.position.copy(c).add(new THREE.Vector3(s * 1.0, s * 0.25, s * 0.7));
-    controls.target.copy(c);
+    if (mode === 'detail') {
+      // 样例场景：俯视对准板中心（bbox 中心被高示意杆拉偏）
+      const plateC = new THREE.Vector3(0, 0, 4);
+      camera.position.copy(plateC).add(new THREE.Vector3(s * 0.9, -s * 0.9, s * 1.15));
+      controls.target.copy(plateC);
+    } else {
+      camera.position.copy(c).add(new THREE.Vector3(s * 1.0, s * 0.25, s * 0.7));
+      controls.target.copy(c);
+    }
+    // 主光阴影相机贴合当前模型包围盒
+    dir1.position.copy(c).add(new THREE.Vector3(s * 1.5, s * 1.2, s * 2.2));
+    dir1.target.position.copy(c);
+    const sc = dir1.shadow.camera;
+    sc.left = sc.bottom = -s * 1.3; sc.right = sc.top = s * 1.3;
+    sc.near = 1; sc.far = s * 8;
+    sc.updateProjectionMatrix();
+    if (mode !== 'detail') buildGround(box.min.z, Math.max(box.getSize(new THREE.Vector3()).x, box.getSize(new THREE.Vector3()).y) / 2);
   }
   setLoading(false);
   applyFilters();
   renderStats();
+}
+
+// ---------------------------------------------------------------- FPS 与自动降级（6.6 性能红线）
+let frames = 0, lastSec = performance.now(), fps = 60, lowSecs = 0;
+const degrade = { shadows: false, ratio: false };
+function fpsLine() {
+  const q = degrade.shadows || degrade.ratio
+    ? ` <span class="warn">已自动降级(${degrade.shadows ? '关阴影' : ''}${degrade.shadows && degrade.ratio ? '+' : ''}${degrade.ratio ? '降分辨率' : ''})</span>` : '';
+  return `<span class="${fps >= 30 ? 'ok' : 'warn'}">FPS ${fps.toFixed(0)}</span>${q}`;
+}
+function tickFps(now) {
+  frames++;
+  if (now - lastSec >= 1000) {
+    fps = frames * 1000 / (now - lastSec);
+    frames = 0; lastSec = now;
+    if (fps < 30 && currentKey) {
+      lowSecs++;
+      if (lowSecs >= 3 && !degrade.shadows) {
+        degrade.shadows = true;
+        renderer.shadowMap.enabled = false;
+        scene.traverse(o => { if (o.isMesh && o.material && o.material.needsUpdate !== undefined) o.material.needsUpdate = true; });
+        renderStats();
+      } else if (lowSecs >= 6 && !degrade.ratio) {
+        degrade.ratio = true;
+        renderer.setPixelRatio(1);
+        renderStats();
+      }
+    } else if (fps >= 30) lowSecs = 0;
+    if (currentKey) renderStats();
+  }
 }
 
 // ---------------------------------------------------------------- 启动
@@ -498,18 +808,22 @@ function finishShow(mode) {
     ]);
     Object.assign(DATA, { barMap, model, multi, byRole, byOrigin, review });
     ATTRS = buildAttrs(barMap);
+    BARINFO = {};
+    for (const e of barMap) BARINFO[String(e.component_id)] = e;
     SHEETS = [...new Set(Object.values(ATTRS).filter(a => !a.isReview).map(a => a.sheet))]
       .sort((a, b) => (a === 'dia' || a === 'other') - (b === 'dia' || b === 'other') || String(a).localeCompare(String(b)));
     state.sheets = new Set(SHEETS);
     buildLayerPanel();
 
     const skel = await loadGLB(BASE + 'skeleton.glb');
+    applyProvenanceMaterials(skel);
     attach('skeleton', skel);
     reviewGroupObj = buildReviewSpheres(review || { groups: [] });
     scene.add(reviewGroupObj);
 
     $('btn-model').onclick = () => setMode('model');
     $('btn-diff').onclick = () => setMode('diff');
+    $('btn-detail').onclick = () => setMode('detail');
     $('btn-gt').onclick = () => setMode('gt');
 
     finishShow('model');
@@ -519,12 +833,14 @@ function finishShow(mode) {
   }
 })();
 
-function animate() {
+function animate(now) {
   requestAnimationFrame(animate);
   controls.update();
   renderer.render(scene, camera);
+  tickFps(now || performance.now());
 }
 animate();
+window.__dbg = { scene, renderer, camera, controls, MATS, MESHES, DATA };
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();

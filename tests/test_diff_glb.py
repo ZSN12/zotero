@@ -155,16 +155,18 @@ class TestSyncDemoAssets(unittest.TestCase):
         for src_name, _, _ in sync_mod.ASSET_MANIFEST:
             if src_name in skip:
                 continue
-            (src / src_name).write_text(f'{{"fixture": "{src_name}"}}', encoding="utf-8")
+            f = src / src_name
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(f'{{"fixture": "{src_name}"}}', encoding="utf-8")
         return src
 
     def test_manifest_complete_copy(self):
-        """全清单同步：10 个文件全部落位，bar_map 按目标名重命名。"""
+        """全清单同步：11 个文件全部落位，bar_map 按目标名重命名。"""
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
             src = self._make_src(tmp)
             result = sync_mod.sync_assets(src, tmp / "dst")
-            self.assertEqual(len(result["copied"]), 10)
+            self.assertEqual(len(result["copied"]), 11)
             self.assertEqual(result["skipped_optional"], [])
             for _, dst_name, _ in sync_mod.ASSET_MANIFEST:
                 self.assertTrue((tmp / "dst" / dst_name).exists(), dst_name)
@@ -186,7 +188,7 @@ class TestSyncDemoAssets(unittest.TestCase):
             tmp = Path(td)
             src = self._make_src(tmp, skip={"diff.glb", "diff_report.json"})
             result = sync_mod.sync_assets(src, tmp / "dst")
-            self.assertEqual(len(result["copied"]), 8)
+            self.assertEqual(len(result["copied"]), 9)
             self.assertEqual(set(result["skipped_optional"]), {"diff.glb", "diff_report.json"})
 
 
