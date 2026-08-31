@@ -914,9 +914,11 @@ def export_tower_glb(
     mesh_meta: List[Dict[str, str]] = []
     node_ids = list(nodes)
     skipped: List[str] = []
+    section_fallback_count = 0
+    section_fallback_by_role: Dict[str, int] = {}
 
     # P1-8 语义分类：按几何倾角 + 位置分 LEG/DIAG/HORIZ/CROSS，用于着色 + 法向定向。
-    from .tower_geometry import classify_members, _align_matrix
+    from .tower_geometry import classify_members, angle_steel_orientation
 
     all_bar_list = [(cid, c) for cid, c in model.components.items() if c.kind == "tower_bar"]
     # 阶段 9：physical 模式排除 derived 派生展示几何（与 eval.metrics.is_physical_bar
@@ -960,16 +962,19 @@ def export_tower_glb(
             continue
         section = bar.properties.get("section")
         role = bar_roles.get(cid, "DIAG")
+        if _section_is_fallback(section, role):
+            section_fallback_count += 1
+            section_fallback_by_role[role] = section_fallback_by_role.get(role, 0) + 1
         try:
             # P1-7：角钢按真实 L 型截面拉伸，非统一圆柱
-            mesh = _angle_steel_mesh(section, length)
+            mesh = _angle_steel_mesh(section, length, role=role)
         except Exception:
             radius = _section_radius(section)
             mesh = trimesh.creation.cylinder(radius=radius, height=length, sections=12)
         mid = ((pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, (pa[2] + pb[2]) / 2)
         # P1-8：L 截面法向定向——角顶朝外（LEG 朝四棱台外角、斜材翼缘贴立面），
         # 取代 align_vectors 的绕轴随机旋转。
-        transform = _align_matrix(direction, mid, role=role)
+        transform = angle_steel_orientation(pa, pb, role=role)
         mesh.apply_transform(transform)
         if color_by == "provenance":
             origin = bar.properties.get("geometry_origin")
@@ -1059,7 +1064,13 @@ def export_tower_glb(
         )
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    scene.export(str(out_path))
+    # Normals are required by three.js; trimesh omits NORMAL by default.
+    scene.metadata.update({
+        "section_fallback_count": section_fallback_count,
+        "section_fallback_by_role": section_fallback_by_role,
+        "section_missing_rate": (section_fallback_count / total_bars) if total_bars else 0.0,
+    })
+    scene.export(str(out_path), include_normals=True)
     # 侧车索引：便于 Web 在不读 GLB extras 时回退
     map_path = out_path.with_suffix(".bar_map.json")
     map_path.write_text(
@@ -1069,23 +1080,44 @@ def export_tower_glb(
     return str(out_path)
 
 
-def _parse_section(section: Optional[str]) -> Tuple[float, float]:
-    """解析角钢截面规格（如 L100x8 / L100×8 / ∠100*8）→ (肢宽, 肢厚) mm。"""
+def _parse_section(section: Optional[str], role: Optional[str] = None) -> Tuple[float, float]:
+    """Parse an angle section as ``(leg, thickness)`` in mm.
+
+    Section labels in extracted drawings often contain a grade prefix (for
+    example ``Q345L100X7``), unicode multiplication signs, or other
+    punctuation.  Only a genuine L-size pair is accepted; malformed values
+    are assigned the role-specific engineering default so every bar has a
+    deterministic section.
+    """
     import re
 
-    if not section:
-        return 100.0, 8.0
-    m = re.search(r"[Ll]?\s*(\d+(?:\.\d+)?)\s*[xX×*]\s*(\d+(?:\.\d+)?)", str(section))
-    if m:
-        return float(m.group(1)), float(m.group(2))
-    m = re.search(r"(\d+(?:\.\d+)?)", str(section))
-    if m:
-        w = float(m.group(1))
-        return w, w * 0.08
-    return 100.0, 8.0
+    defaults = {"LEG": (100.0, 7.0), "DIAG": (75.0, 6.0),
+                "HORIZ": (56.0, 4.0), "CROSS": (75.0, 6.0)}
+    fallback = defaults.get(str(role or "").upper(), (100.0, 8.0))
+    text = str(section or "").strip().upper().replace("×", "X").replace("*", "X")
+    # Permit steel grades and the angle symbol before dimensions, but do not
+    # infer a section from an unrelated number (e.g. a bar id).
+    m = re.search(r"(?:L|∠)\s*(\d+(?:\.\d+)?)\s*X\s*(\d+(?:\.\d+)?)", text)
+    if not m:
+        return fallback
+    leg, thickness = float(m.group(1)), float(m.group(2))
+    if leg <= 0 or thickness <= 0 or thickness >= leg:
+        return fallback
+    return leg, thickness
 
 
-def _angle_steel_mesh(section: Optional[str], length: float):
+def _section_is_fallback(section: Optional[str], role: str) -> bool:
+    """Whether *section* did not contain a valid L leg/thickness pair."""
+    import re
+    text = str(section or "").strip().upper().replace("×", "X").replace("*", "X")
+    m = re.search(r"(?:L|∠)\s*(\d+(?:\.\d+)?)\s*X\s*(\d+(?:\.\d+)?)", text)
+    if not m:
+        return True
+    leg, thickness = float(m.group(1)), float(m.group(2))
+    return leg <= 0 or thickness <= 0 or thickness >= leg
+
+
+def _angle_steel_mesh(section: Optional[str], length: float, role: Optional[str] = None):
     """P1-7：L 型角钢截面沿杆长拉伸成实体网格（无 shapely 依赖）。
 
     截面放在 XY 平面，沿 Z 轴从 -length/2 拉伸到 +length/2（中点=局部原点），
@@ -1095,12 +1127,12 @@ def _angle_steel_mesh(section: Optional[str], length: float):
     import numpy as np
     import trimesh
 
-    w, t = _parse_section(section)
-    # 短杆截面宽度 cap：杆长 50mm 却拉出 100mm 角钢会变成「铁板/方砖」。
-    # 截面肢宽不超过杆长 30%（且不小于肢厚+1），长杆不受影响（如 2000mm
-    # 杆 * 0.3 = 600mm > L100 的 100mm）。
-    w = min(float(w), max(float(length) * 0.3, float(t) + 1.0))
-    w = max(float(w), float(t) + 1.0)
+    w, t = _parse_section(section, role=role)
+    # Preserve the specified section dimensions exactly.  A short synthetic
+    # member is still useful for section tests, so do not scale the L legs by
+    # member length.
+    w = float(w)
+    t = float(t)
     z0 = -float(length) / 2.0
     z1 = float(length) / 2.0
     # L 型截面外轮廓（逆时针，含内侧缺口）

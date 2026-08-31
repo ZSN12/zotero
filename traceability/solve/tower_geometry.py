@@ -3232,3 +3232,55 @@ def extrapolate_base_segment(
         "half_width_at_top_mm": round(_leg_x(float(z_top)), 1),
     }
     return new_nodes, new_bars, report
+
+
+def angle_steel_orientation(
+    pa: Vec3,
+    pb: Vec3,
+    role: str = "DIAG",
+    radial_out: Optional[Vec3] = None,
+) -> np.ndarray:
+    """Deterministic local-to-world frame for a six-vertex L section.
+
+    The section's two local leg axes are mapped symmetrically around the
+    requested corner-bisector direction, so the outside corner (the midpoint
+    of the two outer vertices) points exactly outward.  Braces use the nearest
+    tower face normal (or +Z for diaphragm members); main legs use their
+    horizontal radial direction.  The returned matrix maps a mesh centred at
+    the origin onto ``pa``--``pb``.
+    """
+    a, b = _v(pa), _v(pb)
+    d = b - a
+    length = float(np.linalg.norm(d))
+    if length < 1e-12:
+        return np.eye(4)
+    z = d / length
+    c = (a + b) * 0.5
+    role_u = str(role or "DIAG").upper()
+    if radial_out is not None:
+        q = _v(radial_out)
+    elif role_u == "LEG":
+        q = np.array([c[0], c[1], 0.0], dtype=float)
+    elif abs(float(z[2])) > 0.92:
+        q = np.array([0.0, 0.0, 1.0], dtype=float)
+    elif abs(float(c[1])) >= abs(float(c[0])):
+        q = np.array([0.0, 1.0 if c[1] >= 0 else -1.0, 0.0])
+    else:
+        q = np.array([1.0 if c[0] >= 0 else -1.0, 0.0, 0.0])
+    q = q - z * float(q @ z)
+    if float(np.linalg.norm(q)) < 1e-10:
+        # deterministic fallback transverse to the member axis
+        basis = np.array([1.0, 0.0, 0.0]) if abs(z[0]) < 0.8 else np.array([0.0, 1.0, 0.0])
+        q = basis - z * float(basis @ z)
+    q /= float(np.linalg.norm(q))
+    n = np.cross(z, q)
+    n /= float(np.linalg.norm(n))
+    # The polygon's outside corner is local (0, 0); relative to its
+    # centroid its bisector is approximately (-1, -1). Map that bisector
+    # onto q, so the physical corner points outward.
+    u = (-q + n) / math.sqrt(2.0)
+    v = (-q - n) / math.sqrt(2.0)
+    m = np.eye(4)
+    m[:3, :3] = np.column_stack((u, v, z))
+    m[:3, 3] = c
+    return m
