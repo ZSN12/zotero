@@ -476,6 +476,39 @@ def expand_4_face_symmetry_model(
     # Phase 3 审计锚点：展开后（未拼接/未修复）的初始门禁值
     _genuine_initial = topology.get("genuine_dangling_degree1")
 
+    # P1（06 段斜材拓扑闭环）：证据约束的斜材候选图 + 双层扭转桁架重建。
+    # 图纸 front 视图的斜线是绘图惯例投影（半交叉/截断/full-cross），
+    # 直接当 3D 杆用产生系统性 FP（实测 06 段 31 FP/0 TP 斜材）。本步：
+    #   1. 收集证据线候选（source_handles + 端点）；
+    #   2. 端点 z 聚类 → 螺旋高度，配合平台层做 fan/twist 解释评分；
+    #   3. 生成 3D 斜材（origin=diagonal_topology_reconstructed，
+    #      level_source 跟随平台层来源）并撤下被替代的原始投影杆。
+    # 实测（2026-08-31 离线）：64 生成 / 56 TP@500（88%）。
+    # 保守默认关闭，须 overlay 显式开启（diagonal_topology_reconstruct=true）。
+    if bool(spec.get("diagonal_topology_reconstruct", False)):
+        from ..solve.diagonal_topology import reconstruct_diagonal_topology
+        _dt_sheets = spec.get("diagonal_topology_sheets") or ["35A1-JC1-06"]
+        _dt_window = spec.get("diagonal_topology_z_window") or (11000.0, 17500.0)
+        face_nodes, face_bars, _dt_rep = reconstruct_diagonal_topology(
+            face_nodes, face_bars, half_width_fn,
+            sheets=list(_dt_sheets),
+            panel_levels=panel_levels,
+            z_window=(float(_dt_window[0]), float(_dt_window[1])),
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _dt_df = model.components.get("drawing_file")
+        if _dt_df is not None:
+            _dt_df.properties["diagonal_topology_report"] = {
+                k: _dt_rep[k] for k in (
+                    "sheets", "z_window", "n_candidates", "n_heights",
+                    "heights", "interpretations", "generated",
+                    "removed_originals", "fan_pairs", "twist_pairs",
+                    "candidates")
+            }
+
     # S4 贪心共线拼接（Phase 2）：把断裂碎片杆拼回整杆。
     # 关键教训（2026-08-31 实测，三轮复核）：
     #   1. 必须在 classify_members 之后挂——否则 face_bars 无 role，
@@ -634,6 +667,13 @@ def expand_4_face_symmetry_model(
             bar_source = orig_comp.source if (orig_comp is not None and orig_comp.source is not None) else SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "panel_subdivision"
             evidence_status = "reconstructed"
+        elif b.get("diagonal_topology"):
+            # P1 斜材拓扑重建杆：证据线候选图 + fan/twist 模板生成的 3D
+            # 斜材（06 段双层扭转桁架）。确定性重建（图纸证据 + 结构规则），
+            # geometry_origin=diagonal_topology_reconstructed，进 physical P/R。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "diagonal_topology_reconstructed"
+            evidence_status = "reconstructed"
         elif b.get("corner_leg") or face in ("center", "corner"):
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "derived_4face"
@@ -695,6 +735,8 @@ def expand_4_face_symmetry_model(
             "panel_subdivision": bool(b.get("panel_subdivision")),
             "root_bar_id": b.get("root_bar_id"),
             "level_source": b.get("level_source"),
+            "source_handles": b.get("source_handles"),
+            "diagonal_kind": b.get("diagonal_kind"),
             "generated_4face": True,
             "solve_status": "solved",
             # 证据链

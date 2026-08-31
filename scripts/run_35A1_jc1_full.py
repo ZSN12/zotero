@@ -51,6 +51,77 @@ def sheet_bar_summary(cross_file_dir: Path) -> list[tuple[str, int]]:
     return sorted(rows, key=lambda x: -x[1])
 
 
+def run_postprocess(out_dir: Path, repo: Path, overlay_path: Path,
+                    demo_dir: Path) -> dict:
+    """P0 收口流水线：review queue → diff → version.json → sync demo 资产。
+
+    每步落盘 + 打印；任何一步失败都显式记录（不允许无声跳过，调用方把
+    退出码抬到 2）。网页资产目录从此只由这条链决定，刷新即见最新模型。
+    """
+    import subprocess
+
+    from traceability.project.versioning import write_version_manifest
+    from scripts.sync_demo_assets import sync_assets
+
+    postprocess: dict = {"steps": {}, "ok": True}
+
+    def pp_step(name: str, fn) -> None:
+        import traceback as _tb
+
+        print(f"\n--- postprocess: {name} ---")
+        try:
+            detail = fn()
+            postprocess["steps"][name] = {"ok": True, "detail": detail}
+        except Exception as e:  # noqa: BLE001 — 收口步骤失败必须显式落盘
+            postprocess["steps"][name] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            postprocess["ok"] = False
+            print(_tb.format_exc())
+
+    def run_review_queue() -> str:
+        r = subprocess.run(
+            [sys.executable, str(repo / "scripts/generate_review_queue.py"),
+             "--model", str(out_dir / "model.json"),
+             "--out", str(out_dir / "review_queue.json")],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(f"generate_review_queue 退出码 {r.returncode}: {r.stderr[:400]}")
+        return f"review_queue.json ({(out_dir / 'review_queue.json').stat().st_size} B)"
+
+    def run_diff() -> str:
+        old = repo / "out/35A1-JC1-baseline/model.json"
+        if not old.exists():
+            return "跳过：冻结基线缺失（diff 模式不可用）"
+        r = subprocess.run(
+            [sys.executable, str(repo / "scripts/generate_diff_glb.py")],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(f"generate_diff_glb 退出码 {r.returncode}: {r.stderr[:400]}")
+        return f"diff.glb ({(out_dir / 'diff.glb').stat().st_size // 1024} KB)"
+
+    def run_version() -> str:
+        info = write_version_manifest(out_dir, repo, overlay_path)
+        short = lambda s: (s or "")[:12]  # noqa: E731
+        return (f"version.json run_id={short(info['run_id'])} "
+                f"git={short(info.get('git_sha'))}{'*' if info.get('git_dirty') else ''} "
+                f"model_sha={short(info.get('model_sha'))}")
+
+    def run_sync() -> str:
+        result = sync_assets(out_dir, demo_dir / "latest_deliver")
+        if result.get("sha_mismatch"):
+            raise RuntimeError(f"同步 SHA 不一致: {result['sha_mismatch']}")
+        parts = [f"{len(result['copied'])} 个资产",
+                 f"清理旧文件 {len(result.get('pruned', []))} 个"]
+        return "，".join(parts)
+
+    pp_step("review_queue", run_review_queue)
+    pp_step("diff", run_diff)
+    pp_step("version", run_version)
+    pp_step("sync", run_sync)
+    return postprocess
+
+
 def main() -> int:
     import argparse
     import subprocess
@@ -174,9 +245,26 @@ def main() -> int:
     )
     print(f"报告: {OUT / 'full_run_report.json'}")
 
+    # ------------------------------------------------------------------
+    # P0 收口流水线：run full → review queue → diff → version.json → sync。
+    # 每步落盘 + 打印，任何一步失败都显式进入 postprocess 状态（不允许无声跳过，
+    # 结束码抬到 2），网页资产目录从此只由这条链决定。
+    # ------------------------------------------------------------------
+    postprocess = run_postprocess(OUT, REPO, overlay_path, DEMO_DIR)
+    report["postprocess"] = postprocess
+    (OUT / "full_run_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    if not postprocess["ok"]:
+        print("\n✗ postprocess 未全部成功："
+              + ", ".join(k for k, v in postprocess["steps"].items() if not v["ok"]))
+
     # P0-2 失败传播：verified → 0，review_required → 1，failed → 2。
     status = pd.get("status", "failed")
     exit_code = {"verified": 0, "review_required": 1, "failed": 2}.get(status, 2)
+    if not postprocess["ok"]:
+        exit_code = 2
     return exit_code
 
 

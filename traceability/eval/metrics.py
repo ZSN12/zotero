@@ -532,10 +532,14 @@ def bars_from_model_2d(
             # 横隔（diaphragm）是水平面内的真实物理杆，投影到 front(x-z) 与
             # side(y-z) 均为水平段，GT 在两个视图投影中都存在横隔。故横隔不按
             # face 过滤，任意 view 均纳入（与 GT 侧「无 face、直接投影」口径一致）。
+            # P1 斜材拓扑重建杆（diagonal_topology_reconstructed）同理：它是
+            # 全塔 3D 实体杆（双层扭转桁架 fan/twist），无 face 归属，GT 侧
+            # 对应杆同样无 face 直接投影——口径对称，任意 view 均纳入。
             is_dia = str(face or "").lower() == "diaphragm"
-            if resolved is None and not is_dia:
+            is_3d_recon = str(p.get("geometry_origin") or "") == "diagonal_topology_reconstructed"
+            if resolved is None and not (is_dia or is_3d_recon):
                 continue
-            if resolved is not None and resolved != view and not is_dia:
+            if resolved is not None and resolved != view and not (is_dia or is_3d_recon):
                 continue
         f, t = p.get("from_node"), p.get("to_node")
         nf = nodes.get(f) if f else None

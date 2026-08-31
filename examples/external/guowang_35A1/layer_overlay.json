@@ -1169,5 +1169,13 @@
     }
   },
   "parametric_base_extrapolation": true,
-  "parametric_base_z_top": 6500.0
+  "parametric_base_z_top": 6500.0,
+  "diagonal_topology_reconstruct": true,
+  "diagonal_topology_sheets": [
+    "35A1-JC1-06"
+  ],
+  "diagonal_topology_z_window": [
+    11000.0,
+    17500.0
+  ]
 }

@@ -161,13 +161,15 @@ class TestSyncDemoAssets(unittest.TestCase):
         return src
 
     def test_manifest_complete_copy(self):
-        """全清单同步：11 个文件全部落位，bar_map 按目标名重命名。"""
+        """全清单同步：清单内文件全部落位，bar_map 按目标名重命名。"""
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
             src = self._make_src(tmp)
             result = sync_mod.sync_assets(src, tmp / "dst")
-            self.assertEqual(len(result["copied"]), 11)
+            # P0：清单含 version.json（版本指纹），计数随清单动态断言
+            self.assertEqual(len(result["copied"]), len(sync_mod.ASSET_MANIFEST))
             self.assertEqual(result["skipped_optional"], [])
+            self.assertEqual(result["sha_mismatch"], [])
             for _, dst_name, _ in sync_mod.ASSET_MANIFEST:
                 self.assertTrue((tmp / "dst" / dst_name).exists(), dst_name)
             self.assertEqual(
@@ -188,7 +190,7 @@ class TestSyncDemoAssets(unittest.TestCase):
             tmp = Path(td)
             src = self._make_src(tmp, skip={"diff.glb", "diff_report.json"})
             result = sync_mod.sync_assets(src, tmp / "dst")
-            self.assertEqual(len(result["copied"]), 9)
+            self.assertEqual(len(result["copied"]), len(sync_mod.ASSET_MANIFEST) - 2)
             self.assertEqual(set(result["skipped_optional"]), {"diff.glb", "diff_report.json"})
 
 
