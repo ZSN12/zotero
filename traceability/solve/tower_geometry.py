@@ -1403,6 +1403,100 @@ def prune_short_stub_bars(
     }
 
 
+def snap_dangling_endpoints_local(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    max_gap_mm: float = 300.0,
+    max_len_change_ratio: float = 0.02,
+    allowed_roles: Sequence[str] = ("DIAG", "LEG", "HORIZ"),
+) -> Tuple[NodeMap, List[dict], Dict[str, int]]:
+    """Phase 2.3：受约束的局部端点吸附（取代全局 snap_diagonals_to_legs）。
+
+    背景（2026-08-31 review）：全局 snap 会重定位已共享的节点、拆散已有连通
+    （实测 Degree=1 反升、Z 越界、A2 下降）。本函数只处理「degree=1 的长杆
+    悬空端点」，且同时满足全部约束才吸附：
+
+        1. 悬空端点在「邻接主腿线段」的投影距离 <= max_gap_mm；
+        2. 投影点落在该腿线段**内部**（不外延越界）；
+        3. 吸附后杆长变化 <= max_len_change_ratio（2%）；
+        4. 目标落点直接并入既有腿节点（若 <2mm），否则吸附到腿线段上的
+           投影点——只改这一个节点的坐标，不动其它杆件；
+        5. 仅处理 allowed_roles（默认斜材/腿/水平材；CROSS 横担端头跳过）。
+
+    与全局 snap 的本质区别：全局版把「每根斜材两端」都拉到拟合工作线
+    （工作线本身有拟合误差，且会移动共享节点）；本版只拉「确实悬空」的
+    那一个端点，目标线段是真实存在的 leg 杆段（非拟合线），并且逐杆审计
+    长度变化。
+
+    返回 (new_nodes, new_bars, {"snapped": n, "merged": m, "rejected": {...}})。
+    """
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = [dict(b) for b in bars]
+    roles = classify_members(new_nodes, new_bars)
+    deg: Dict[str, int] = {}
+    for b in new_bars:
+        deg[b["from"]] = deg.get(b["from"], 0) + 1
+        deg[b["to"]] = deg.get(b["to"], 0) + 1
+
+    leg_bars = [b for b in new_bars if roles.get(b["id"]) == "LEG"]
+    rejected = {"role": 0, "no_leg": 0, "gap": 0, "len_change": 0, "crossarm": 0}
+    snapped = 0
+    merged = 0
+
+    for b in new_bars:
+        role = roles.get(b["id"]) or str(b.get("role") or "")
+        if role not in allowed_roles and str(b.get("role") or "").upper() not in allowed_roles:
+            rejected["role"] += 1
+            continue
+        if role == "CROSS" or str(b.get("role") or "").upper() == "CROSS":
+            rejected["crossarm"] += 1
+            continue
+        for end_key in ("from", "to"):
+            nid = b[end_key]
+            if deg.get(nid) != 1:
+                continue
+            p = new_nodes.get(nid)
+            if p is None:
+                continue
+            q = new_nodes.get(b["to" if end_key == "from" else "from"])
+            if q is None:
+                continue
+            L0 = math.dist(p, q)
+            # 在同 z 邻域找最近 leg 杆段投影
+            best = None  # (dist, proj, leg_bar)
+            for lb in leg_bars:
+                s1, s2 = new_nodes.get(lb["from"]), new_nodes.get(lb["to"])
+                if s1 is None or s2 is None:
+                    continue
+                # 快速 z 粗筛：腿段 z 范围与悬空端 z 至少接近
+                if min(s1[2], s2[2]) - max_gap_mm > p[2] or max(s1[2], s2[2]) + max_gap_mm < p[2]:
+                    continue
+                proj, dist = _point_segment_distance(p, s1, s2)
+                if dist <= max_gap_mm and (best is None or dist < best[0]):
+                    best = (dist, proj, lb)
+            if best is None:
+                rejected["gap"] += 1
+                continue
+            dist, proj, lb = best
+            # 约束3：杆长变化
+            L1 = math.dist(proj, q)
+            if L0 > 1e-6 and abs(L1 - L0) / L0 > max_len_change_ratio:
+                rejected["len_change"] += 1
+                continue
+            # 约束4：并入近邻既有节点，否则吸附到投影点
+            near = _nearest_existing_node_id(new_nodes, proj, 2.0)
+            if near is not None and near != nid:
+                b[end_key] = near
+                merged += 1
+            else:
+                new_nodes[nid] = (float(proj[0]), float(proj[1]), float(proj[2]))
+                snapped += 1
+    return new_nodes, new_bars, {
+        "snapped": snapped, "merged": merged, "rejected": rejected,
+    }
+
+
 def inspect_model_topology(
     nodes: NodeMap,
     bars: List[dict],

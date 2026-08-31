@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""S0 基线报告：冻结当前模型状态的全部可量化指标。
+"""S0 基线报告：冻结当前模型状态的全部可量化指标（Phase 0 可复现基线）。
 
 产出（每次实验必须输出，否则实验无效）：
+    * run_id / git_sha / 时间戳 / 输入文件 sha —— 保证可复现性
     * 总杆数 / physical 杆数 / front 可评测杆数
     * 主腿 / 横隔 / 斜材 数量
     * 斜材长度分布（<0.5m / 0.5-2m / 2-5m / 5-6m / >6m）
     * >6m 超长杆数（按类别）
     * degree-1 节点数（模型拓扑，来自 drawing_file 组件属性）
-    * A2 TP / Recall（分 tol）
+    * A2 分层口径（Phase 0 口径冻结）：
+        - A2-full                  正式全塔口径（GT 1071 根 vs 模型 physical）
+        - A2-effective             已知图纸范围辅助口径（z>=6500）
+        - A2-recognized-only       仅 front 直接识别杆（recognized 语义）
+        - A2-level-assisted 构成   physical 中 GT canonical 辅助成分透明化
     * 各类别 TP / Recall（leg / diagonal / horizontal）
     * 各段 TP / Recall（source_file 维度）
     * 横隔 z 水平数与 GT 18 平台对比
@@ -16,15 +21,18 @@
     python3 scripts/baseline_report.py \
         examples/gt/35A1-JC1_ground_truth.json \
         out/35A1-JC1-full-deliver/model.json \
-        [--view front] [--out out/baseline.json]
+        [--view front] [--out out/baseline.json] [--check-repro]
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import subprocess
 import sys
+import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -37,6 +45,27 @@ from traceability.eval.metrics import (
     bars_from_model_2d,
     segment_cost,
 )
+
+
+def _file_sha(path: str) -> str:
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12]
+    except OSError:
+        return "unknown"
+
+
+def _git_sha() -> str:
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except Exception:
+        return "unknown"
+
+
+def _run_id() -> str:
+    return f"{time.strftime('%Y%m%d-%H%M%S')}-{_git_sha()}"
 
 
 def _role(p: dict) -> str:
@@ -299,6 +328,8 @@ def main():
     ap.add_argument("model")
     ap.add_argument("--view", default="front")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--check-repro", action="store_true",
+                    help="同一输入连续评测两次并断言 TP/FP/FN 完全一致（Phase 0 验收）")
     args = ap.parse_args()
 
     gt = json.loads(Path(args.gt).read_text(encoding="utf-8"))
@@ -310,20 +341,69 @@ def main():
     cat = per_category_recall(gt, model, args.view)
     seg = per_segment_recall(model, args.view)
 
+    # Phase 0 口径冻结：A2-recognized-only（仅 front 直接识别，无重建/横隔/镜像）
+    from traceability.eval.metrics import gt_bars_2d
+    g2 = gt_bars_2d(gt, args.view)
+    m_rec = bars_from_model_2d(model, view=args.view, mode="recognition")
+    a2_rec = eval_segment_pr(
+        [s for s, _, _ in g2], [s for s, _ in m_rec], segment_cost, DEFAULT_TOLS)
+
+    # Phase 0 透明化：physical 中 GT canonical 辅助成分（level_source 标记）
+    m_phys = bars_from_model_2d(model, view=args.view, mode="physical")
+    assisted = Counter()
+    for _, p in m_phys:
+        if p.get("level_source") == "gt_canonical":
+            assisted["diaphragm@gt_levels"] += 1
+        elif p.get("level_source") == "dxf_derived":
+            assisted["diaphragm@dxf_levels"] += 1
+        if p.get("panel_subdivision"):
+            assisted["panel_subdivision"] += 1
+        if p.get("panel_levels_source") == "gt_canonical_z_only":
+            assisted["subdiv@gt_levels"] += 1
+
+    run_meta = {
+        "run_id": _run_id(),
+        "git_sha": _git_sha(),
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "gt_sha": _file_sha(args.gt),
+        "model_sha": _file_sha(args.model),
+        "view": args.view,
+    }
+
     report = {
+        "run": run_meta,
         "model": ms,
         "gt": gs,
         "a2": {
+            "metric_scope": a2.get("metric_scope"),
             "n_gt": a2["n_gt"],
             "n_model": a2["n_model"],
             "sweep": a2["sweep"],
             "effective": a2.get("effective"),
         },
+        "a2_recognized_only": {
+            "metric_scope": "recognized_semantics",
+            "n_gt": len(g2),
+            "n_model": len(m_rec),
+            "sweep": a2_rec["sweep"],
+        },
+        "level_assisted_composition": dict(assisted),
         "recall_by_category": cat,
         "front_bars_by_segment": seg,
     }
 
+    # Phase 0 验收：双跑一致性（评测是纯函数，TP/FP/FN 必须逐项一致）
+    if args.check_repro:
+        a2b = eval_a2_geometry_2d(gt, model, view=args.view, tols=DEFAULT_TOLS)
+        for s, s2 in zip(a2["sweep"], a2b["sweep"]):
+            assert (s["tp"], s["fp"], s["fn"]) == (s2["tp"], s2["fp"], s2["fn"]), \
+                f"评测不可复现: tol={s['tol']}"
+        report["repro_check"] = "passed (two consecutive runs identical)"
+
     print("=== S0 基线报告 ===")
+    print(f"run_id={run_meta['run_id']}  gt_sha={run_meta['gt_sha']}  model_sha={run_meta['model_sha']}")
+    if args.check_repro:
+        print("repro_check: PASSED（两次评测 TP/FP/FN 完全一致）")
     print(f"模型杆件总数: {ms['total_bars']}")
     print(f"physical 杆件: {ms['physical_bars']}")
     print(f"front 可评测杆件: {ms['front_evaluable_bars']}")
@@ -340,17 +420,24 @@ def main():
     print()
     print("GT 杆件:", gs)
     print()
-    print("A2 tolerance sweep:")
+    print(f"A2-full ({a2.get('metric_scope')}) tolerance sweep:")
     print(f"{'tol':>6} {'TP':>5} {'FP':>5} {'FN':>5} {'P':>8} {'R':>8}")
     for s in a2["sweep"]:
         print(f"{s['tol']:>6.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
               f"{s['precision']:>8.1%} {s['recall']:>8.1%}")
     eff = a2.get("effective")
     if eff:
-        print(f"A2-effective (z>={eff['z_min_mm']:.0f}mm, 剔除无源 GT {eff['gt_excluded']} 根):")
+        print(f"A2-effective ({eff.get('metric_scope')}, z>={eff['z_min_mm']:.0f}mm, 剔除无源 GT {eff['gt_excluded']} 根):")
         for s in eff["sweep"]:
             print(f"{s['tol']:>6.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
                   f"{s['precision']:>8.1%} {s['recall']:>8.1%}")
+    print()
+    print(f"A2-recognized-only (n_gt={len(g2)}, n_model={len(m_rec)}) — 仅直接识别，无重建/横隔/镜像:")
+    for s in a2_rec["sweep"]:
+        print(f"{s['tol']:>6.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
+              f"{s['precision']:>8.1%} {s['recall']:>8.1%}")
+    if assisted:
+        print(f"level-assisted 构成（physical 内）: {dict(assisted)}")
     print()
     print("各类别 500mm 召回:")
     for c, d in cat.items():

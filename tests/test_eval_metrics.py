@@ -425,14 +425,45 @@ class FourMetricsIndependentTest(unittest.TestCase):
         from traceability.eval.metrics import eval_a1_labels
 
         gt = self._gt()
-        # 模型识别出 PM_0001 / PM_0002，漏 PM_0003，多了 PM_9999
-        model = self._model(["PM_0001", "PM_0002", "PM_9999"])
-        r = eval_a1_labels(gt, model)
+        # 模型识别出 101 / 102，漏 103，多了 999（P1 口径：BOM 形态件号）
+        model = self._model(["101", "102", "999"])
+        r = eval_a1_labels(gt, model, gt_label_ids={"101", "102", "103"})
         self.assertEqual(r["tp"], 2)
         self.assertEqual(r["fp"], 1)
         self.assertEqual(r["fn"], 1)
         self.assertAlmostEqual(r["precision"], 2 / 3, places=3)
         self.assertAlmostEqual(r["recall"], 2 / 3, places=3)
+        # P1（2026-08-31）：orphan 登记簿分离呈报
+        self.assertIn("orphan_inventory", r)
+        self.assertEqual(r["orphan_inventory"]["total"], 0)
+
+    def test_a1_filters_label_pollution(self):
+        """P1：几何 ID / 标注数字污染必须被挡在 prediction 之外。"""
+        from traceability.eval.metrics import eval_a1_labels, _looks_like_bar_label
+
+        # 形态判据：工程件号放行，污染剔除
+        self.assertTrue(_looks_like_bar_label("101"))
+        self.assertTrue(_looks_like_bar_label("648"))
+        self.assertTrue(_looks_like_bar_label("3905"))  # BOM 39XX 段
+        self.assertTrue(_looks_like_bar_label("-145"))  # 材料编号
+        self.assertFalse(_looks_like_bar_label("0"))
+        self.assertFalse(_looks_like_bar_label("1"))
+        self.assertFalse(_looks_like_bar_label("4477"))  # 长度数字
+        self.assertFalse(_looks_like_bar_label("1078"))
+        self.assertFalse(_looks_like_bar_label("corner_leg_1_06"))  # 几何 ID
+
+        # 集成：污染件号不进 prediction，orphan 只进 inventory
+        gt = self._gt()
+        model = self._model(["101", "corner_leg_1_06", "4477", "0"])
+        model["components"]["df1"] = {
+            "kind": "drawing_file",
+            "properties": {"orphan_label_ids": ["616", "999noise_x"]},
+        }
+        r = eval_a1_labels(gt, model, gt_label_ids={"101", "616"})
+        self.assertEqual(r["n_model"], 1)  # 只有 '101' 进 prediction
+        self.assertEqual(r["tp"], 1)
+        # orphan 616 是 BOM-valid 证据但不进 prediction
+        self.assertEqual(r["orphan_inventory"]["bom_valid"], 1)
 
     def test_a1_with_id_mapping(self):
         from traceability.eval.metrics import eval_a1_labels

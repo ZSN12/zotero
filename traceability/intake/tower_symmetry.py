@@ -256,6 +256,25 @@ def expand_4_face_symmetry_model(
         )
         orphan_label_ids = list(stub_rep.get("pruned_label_ids") or [])
 
+    # Phase 2.3（2026-08-31 review）：受约束的局部端点吸附。
+    # 与全局 snap_diagonals_to_legs 的区别：只处理 degree=1 长杆悬空端点，
+    # 目标是真实存在的 leg 杆段（非拟合工作线），逐杆审计杆长变化 <=2%，
+    # 不移动任何已共享节点。默认关闭（snap_dangling_endpoints=false），
+    # 须在 overlay 显式启用——与 max_stub_len_mm 同纪律。
+    if bool(spec.get("snap_dangling_endpoints", False)):
+        from ..solve.tower_geometry import snap_dangling_endpoints_local
+        snapped_nodes, snapped_bars, snap_rep = snap_dangling_endpoints_local(
+            snapped_nodes, snapped_bars,
+            max_gap_mm=float(spec.get("snap_dangling_max_gap_mm", 300.0)),
+        )
+        df_snap = model.components.get("drawing_file")
+        if df_snap is not None:
+            df_snap.properties["dangling_snap_report"] = {
+                "snapped": int(snap_rep.get("snapped", 0)),
+                "merged": int(snap_rep.get("merged", 0)),
+                "rejected": snap_rep.get("rejected", {}),
+            }
+
     # Phase 2：四面镜像展开 + 四角主腿熔合 + 横隔面
     # 阶段 5.3：多段立面拼接边界自动缝合（消除段间重叠横杆与重复节点）。
     if bool(spec.get("stitch_boundaries", True)):
