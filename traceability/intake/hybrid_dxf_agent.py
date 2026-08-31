@@ -828,6 +828,49 @@ def run_hybrid_dxf_agent_pipeline(
                 if candidate_fusion == "union_dedup":
                     keep_vector = _vector_bars_not_covered(model, bars, view_type)
                     mllm_geom_meta["vector_bars_kept"] = len(keep_vector)
+                    # P7 双源交叉验证证据：MLLM 候选 × ezdxf 候选
+                    # （同像素坐标系）→ 协议记录 + 一致率报告，进
+                    # drawing_file.properties.mllm_cross_validation。
+                    try:
+                        from .mllm_candidate_protocol import (
+                            apply_confidence_gate,
+                            cross_validate,
+                            records_to_evidence,
+                        )
+                        dxf_px = []
+                        if mapping:
+                            for vb in ezdxf_bars:
+                                try:
+                                    px1, py1 = drawing_xy_to_px(
+                                        float(vb["x1"]), float(vb["y1"]), mapping)
+                                    px2, py2 = drawing_xy_to_px(
+                                        float(vb["x2"]), float(vb["y2"]), mapping)
+                                    dxf_px.append({
+                                        "component_id": vb.get("component_id"),
+                                        "bar_uid": vb.get("bar_uid"),
+                                        "x1": px1, "y1": py1,
+                                        "x2": px2, "y2": py2,
+                                    })
+                                except (KeyError, TypeError, ValueError):
+                                    continue
+                        _cv_records, _cv_report = cross_validate(
+                            bars, dxf_px,
+                            model_name=str(mllm_geom_meta.get("model") or ""),
+                            image_ref=str(png_path),
+                        )
+                        _, _rej, _gate = apply_confidence_gate(_cv_records)
+                        _df_cv = model.components.get("drawing_file")
+                        if _df_cv is not None:
+                            _df_cv.properties["mllm_cross_validation"] = (
+                                records_to_evidence(_cv_records, _cv_report, _gate))
+                        mllm_geom_meta["cross_validation"] = {
+                            k: _cv_report[k] for k in
+                            ("consistent", "mllm_only", "dxf_only",
+                             "consistency_rate") if k in _cv_report}
+                        mllm_geom_meta["low_confidence_rejected"] = (
+                            _gate["rejected_low_confidence"])
+                    except Exception as _cv_err:  # 证据链失败不阻塞融合
+                        mllm_geom_meta["cross_validation_error"] = str(_cv_err)
                 stripped = _strip_vector_geometry(model, keep=keep_vector)
                 injected = _inject_mllm_bars_into_model(
                     model, bars, view_type=view_type,
