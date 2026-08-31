@@ -27,6 +27,7 @@ from traceability.eval.metrics import (
     DEFAULT_TOLS,
     eval_a2_geometry_2d,
     eval_a2_dual_caliber,
+    eval_a2_multi_caliber,
     eval_a1_labels,
     eval_a3_association,
     model_has_gt_alignment,
@@ -148,6 +149,54 @@ def main():
     else:
         print(f"GT 件号: {a1['n_gt']}，模型识别件号: {a1['n_model']}，"
               f"Exact Match: {a1['tp']}（P={a1['precision']:.1%} R={a1['recall']:.1%}）")
+
+    # ------------------------------------------------------------- #
+    # Phase 1（P1.1/P1.2/P1.3）：多口径 + 追溯 + 分角色 + 落盘产物
+    # ------------------------------------------------------------- #
+    multi = eval_a2_multi_caliber(gt, model, view=args.view, tols=DEFAULT_TOLS,
+                                  allow_legacy=args.allow_legacy_semantics)
+    print(f"\n=== A2 五层口径并列（Phase 1，默认 tol={DEFAULT_TOLS[-1]:.0f}mm）===")
+    print(f"{'口径':<16} {'模型杆':>6} {'TP':>5} {'FP':>5} {'FN':>5} {'P':>8} {'R':>8}")
+    for name in ("pure", "reconstructed", "level_assisted", "parametric", "full"):
+        cal = multi["calibers"][name]
+        s = cal["sweep"][-1]
+        print(f"{name:<16} {cal['n_model']:>6} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
+              f"{s['precision']:>8.1%} {s['recall']:>8.1%}")
+    print("\n分角色（GT 侧，默认 tol）:")
+    for role, rs in multi["by_role"].items():
+        print(f"  {role:<12} n_gt={rs['n_gt']:>4}  TP={rs['tp']:>4}  "
+              f"FN={rs['fn']:>4}  R={rs['recall']:.1%}")
+    print("分来源（模型侧，默认 tol）:")
+    for origin, os_ in multi["by_origin"].items():
+        print(f"  {origin:<16} n_model={os_['n_model']:>4}  TP={os_['tp']:>4}  FP={os_['fp']:>4}")
+
+    # 计划「五、交付级报告」：metrics 系列产物落盘（与 model.json 同目录）
+    out_dir = Path(args.model).parent
+    _dump_json(out_dir / "metrics_multi_caliber.json", {
+        "calibers": {k: {"n_model": v["n_model"], "sweep": v["sweep"],
+                          "metric_scope": v["metric_scope"]}
+                     for k, v in multi["calibers"].items()},
+        "effective": multi["effective"],
+        "ceiling": multi["ceiling"],
+        "n_gt": multi["n_gt"],
+    })
+    _dump_json(out_dir / "metrics_by_role.json", multi["by_role"])
+    _dump_json(out_dir / "metrics_by_origin.json", multi["by_origin"])
+    _dump_json(out_dir / "evidence_report.json", {
+        "description": "每个匹配对/FP 的来源追溯（Phase 1 P1.1，默认 tol）",
+        "match_provenance": multi["match_provenance"],
+        "counts": {
+            "tp": sum(1 for r in multi["match_provenance"] if r["match_status"] == "tp"),
+            "fp": sum(1 for r in multi["match_provenance"] if r["match_status"] == "fp"),
+        },
+    })
+
+
+def _dump_json(path: Path, obj) -> None:
+    try:
+        path.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError as exc:
+        print(f"⚠ 指标落盘失败 {path.name}: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -557,6 +557,11 @@ def bars_from_model_2d(
         # 阶段 1.7：不按 round() 坐标静默去重（会吞掉投影重合的不同物理杆）。
         # 每个 component 都是独立物理杆件（physical identity = cid），投影重合
         # 的多根物理杆应保留 multiplicity，不做坐标去重。
+        # Phase 1（P1.1 追溯）：附带组件 id（浅拷贝不污染原模型），下游
+        # match_provenance 据此回链 model.json 的具体组件。
+        if "id" not in p and cid:
+            p = dict(p)
+            p["id"] = cid
         out.append((seg, p))
     return out
 
@@ -822,6 +827,241 @@ def eval_a2_dual_caliber(
         "n_model_pure": len(m_rec),
         "n_model_full": len(m_phys),
         "ceiling": front_view_ceiling(gt),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Phase 1（2026-08-31）：多口径 + 匹配来源追溯 + 分角色统计
+# 计划三任务：P1.1 匹配对追溯 / P1.2 按角色统计 / P1.3 口径并列
+# --------------------------------------------------------------------------- #
+
+def _bar_caliber_class(p: Dict[str, Any]) -> str:
+    """杆件 → 口径分层（P1.3 五层口径的唯一判定函数）。
+
+    判定顺序（geometry_origin 优先于 geometry_class——origin 是证据事实，
+    class 是生成路径标签，证据事实优先）：
+
+    recognized           DXF 直接识别（origin=dxf_geom 且 front 非镜像）
+    reconstructed        证据驱动重建：collinear_stitch（DXF 片段+合并规则）、
+                         panel_subdivision（dxf 层高）、镜像面 b/l/r 展开
+    level_assisted       GT canonical 标高辅助重建（diaphragm@gt_levels /
+                         subdiv@gt_levels）
+    parametric           参数化推断（Phase 5 底段外推，当前为 0）
+    derived              纯展示派生（corner/center，不进任何口径）
+
+    注：collinear_stitch 虽继承 geometry_class=recognized，但语义属「图纸有
+    局部证据，系统按规则重建」（计划第三节第 2 类），归 reconstructed 层。
+    """
+    if is_derived_bar(p):
+        return "derived"
+    if str(p.get("geometry_class") or "") == "derived_parametric":
+        return "parametric"
+    # GT 标高辅助判定与 eval_a2_dual_caliber 的 assisted 归因一致（优先）
+    if p.get("level_source") == "gt_canonical":
+        return "level_assisted"
+    if p.get("panel_levels_source") == "gt_canonical_z_only":
+        return "level_assisted"
+    origin = str(p.get("geometry_origin") or "")
+    if origin == "collinear_stitch":
+        return "reconstructed"
+    face = p.get("face")
+    if (is_recognized_bar(p) and origin in ("", "dxf_geom")
+            and face in (None, "f")):
+        # front 面直接识别；b/l/r 镜像虽同为 dxf_geom 但属四面展开重建
+        return "recognized"
+    if is_reconstructed_bar(p):
+        return "reconstructed"
+    if is_recognized_bar(p):
+        return "reconstructed"  # 镜像面（face=b/l/r）dxf_geom → 展开重建
+    return "unknown"
+
+
+_CALIBER_SETS: Dict[str, Tuple[str, ...]] = {
+    # A2-pure：纯 DXF 直接识别（对外主口径）
+    "pure": ("recognized",),
+    # A2-reconstructed：直接识别 + 证据驱动重建（不含 GT 标高辅助）
+    "reconstructed": ("recognized", "reconstructed"),
+    # A2-level-assisted：+ GT canonical 标高辅助
+    "level_assisted": ("recognized", "reconstructed", "level_assisted"),
+    # A2-parametric：参数化推断单独口径（Phase 5 前恒为空集）
+    "parametric": ("parametric",),
+    # A2-full：最终物理模型总口径
+    "full": ("recognized", "reconstructed", "level_assisted", "parametric"),
+}
+
+
+def _gt_role_for_view(gt: Dict[str, Any]) -> List[str]:
+    """GT 杆件按 3D 节点分类角色，顺序与 gt_bars_2d 输出严格对齐。"""
+    nodes = gt.get("nodes", {})
+    roles: List[str] = []
+    for b in gt.get("bars", []):
+        f, t = nodes.get(b.get("from")), nodes.get(b.get("to"))
+        if f is None or t is None:
+            continue  # gt_bars_2d 同样跳过，保持索引对齐
+        roles.append(classify_gt_role_3d(f, t))
+    return roles
+
+
+_MODEL_ROLE_MAP = {
+    # 模型 classify_members 的 role 值 → 统一角色名（与 classify_gt_role_3d 对齐）
+    "LEG": "leg",
+    "CROSS": "crossarm",
+    "DIAG": "diagonal",
+    "HORIZ": "horiz_x",
+}
+
+
+def _model_bar_role(p: Dict[str, Any]) -> str:
+    """模型杆件角色：优先 face='diaphragm'，其次 role 字段映射，兜底 other。"""
+    face = str(p.get("face") or "").lower()
+    if face == "diaphragm":
+        return "diaphragm"
+    r = str(p.get("role") or "").upper()
+    if r in _MODEL_ROLE_MAP:
+        return _MODEL_ROLE_MAP[r]
+    return "other"
+
+
+def eval_a2_multi_caliber(
+    gt: Dict[str, Any],
+    model: Dict[str, Any],
+    view: str = "front",
+    tols: Sequence[float] = DEFAULT_TOLS,
+    allow_legacy: bool = False,
+    effective_z_min: Optional[float] = 6500.0,
+) -> Dict[str, Any]:
+    """A2 多口径评测（Phase 1：P1.1 追溯 + P1.2 角色 + P1.3 口径并列）。
+
+    与 eval_a2_dual_caliber 的关系：dual_caliber 保留为兼容入口（pure/full
+    两口径），本函数是计划「四、Phase 1」的完整实现——
+
+    1. 五层口径并列（_CALIBER_SETS）：pure / reconstructed / level_assisted /
+       parametric / full，每层独立 sweep。任何提升必须能回答「来自哪层」。
+    2. match_provenance：默认容差（tols[-1]）下每个匹配对/未匹配杆的来源
+       记录（gt_bar_id / model_component_id / geometry_origin / member_type /
+       source_sheet / distance_mm / length_ratio / match_status）。
+    3. by_role：GT 杆按 classify_gt_role_3d 分角色的 TP/FN（匹配对在 GT
+       侧归角色）；by_origin：模型杆按口径层归类的 TP/FP。
+    4. effective：z >= effective_z_min 双侧同口径重算（沿用 D1 语义）。
+    """
+    g = gt_bars_2d(gt, view)
+    gt_roles = _gt_role_for_view(gt)
+    gt_segs = [s for s, _, _ in g]
+
+    # 模型杆件：bars_from_model_2d 的 (seg, props)，组件 id 从 props["id"] 取
+    # （组件内 id 字段由 bars_from_model_2d 原样携带）
+    m_items: List[Tuple[Seg2D, Dict[str, Any]]] = bars_from_model_2d(
+        model, view=view, mode="physical", allow_legacy=allow_legacy)
+
+    # 每根模型杆的口径层
+    caliber_of: List[str] = [_bar_caliber_class(p) for _, p in m_items]
+
+    # 各口径 sweep（P1.3）
+    calibers: Dict[str, Any] = {}
+    for name, classes in _CALIBER_SETS.items():
+        idxs = [i for i, c in enumerate(caliber_of) if c in classes]
+        res = eval_segment_pr(gt_segs, [m_items[i][0] for i in idxs], segment_cost, tols)
+        res["metric_scope"] = f"a2_{name}"
+        res["caliber_classes"] = list(classes)
+        res["n_model"] = len(idxs)
+        calibers[name] = res
+
+    # ---- P1.1 匹配来源追溯（默认容差 = tols[-1]，用 full 口径的匹配） ----
+    full_res = calibers["full"]
+    full_idx = [i for i, c in enumerate(caliber_of) if c in _CALIBER_SETS["full"]]
+    matched = full_res.get("matched_at_default") or []
+    matched_model = {full_idx[mj] for _, mj in matched}
+    provenance: List[Dict[str, Any]] = []
+    for gi, mj in matched:
+        seg_m, p = m_items[full_idx[mj]]
+        seg_g, gid, _sec = g[gi]
+        dist = segment_cost(seg_g, seg_m)
+        lg = _seg_len_2d(seg_g)
+        lm = _seg_len_2d(seg_m)
+        provenance.append({
+            "gt_bar_id": gid,
+            "model_component_id": p.get("id") or p.get("component_id"),
+            "geometry_origin": p.get("geometry_origin"),
+            "caliber": caliber_of[full_idx[mj]],
+            "member_type": _model_bar_role(p),
+            "gt_role": gt_roles[gi] if gi < len(gt_roles) else None,
+            "source_sheet": p.get("source_file") or p.get("drawing_view"),
+            "bar_id": p.get("bar_id"),
+            "distance_mm": round(dist, 1),
+            "length_ratio": round(lm / lg, 3) if lg > 1e-9 else None,
+            "z_mid_mm": round((seg_m[1] + seg_m[3]) / 2.0, 1),
+            "match_status": "tp",
+        })
+    for k, (seg_m, p) in enumerate(m_items):
+        if k in matched_model:
+            continue
+        provenance.append({
+            "gt_bar_id": None,
+            "model_component_id": p.get("id") or p.get("component_id"),
+            "geometry_origin": p.get("geometry_origin"),
+            "caliber": caliber_of[k],
+            "member_type": _model_bar_role(p),
+            "gt_role": None,
+            "source_sheet": p.get("source_file") or p.get("drawing_view"),
+            "bar_id": p.get("bar_id"),
+            "distance_mm": None,
+            "length_ratio": None,
+            "z_mid_mm": round((seg_m[1] + seg_m[3]) / 2.0, 1),
+            "match_status": "fp",
+        })
+
+    # ---- P1.2 分角色统计（GT 角色口径，TP 归 GT 侧角色）----
+    matched_gt_roles: Counter = Counter()
+    for gi, _mj in matched:
+        if gi < len(gt_roles):
+            matched_gt_roles[gt_roles[gi]] += 1
+    by_role: Dict[str, Any] = {}
+    role_counts: Counter = Counter(gt_roles)
+    for role, n_gt in sorted(role_counts.items()):
+        tp = matched_gt_roles.get(role, 0)
+        by_role[role] = {
+            "n_gt": n_gt,
+            "tp": tp,
+            "fn": n_gt - tp,
+            "recall": round(tp / n_gt, 4) if n_gt else 0.0,
+        }
+    # 模型杆按口径层归类的 TP/FP（by_origin）
+    matched_calibers: Counter = Counter()
+    for _gi, mj in matched:
+        matched_calibers[caliber_of[full_idx[mj]]] += 1
+    by_origin: Dict[str, Any] = {}
+    origin_counts: Counter = Counter(caliber_of)
+    for origin, n in sorted(origin_counts.items()):
+        by_origin[origin] = {
+            "n_model": n,
+            "tp": matched_calibers.get(origin, 0),
+            "fp": n - matched_calibers.get(origin, 0),
+        }
+
+    # ---- effective 口径（P1.3：与 dual_caliber 同语义）----
+    effective: Optional[Dict[str, Any]] = None
+    if effective_z_min is not None:
+        g_eff_idx = [i for i, (s, _, _) in enumerate(g)
+                     if (s[1] + s[3]) / 2.0 >= effective_z_min]
+        m_eff_idx = [i for i, (s, _p) in enumerate(m_items)
+                     if (s[1] + s[3]) / 2.0 >= effective_z_min]
+        eff = eval_segment_pr(
+            [g[i][0] for i in g_eff_idx], [m_items[i][0] for i in m_eff_idx],
+            segment_cost, tols)
+        eff["metric_scope"] = "known_source_range"
+        eff["z_min_mm"] = effective_z_min
+        eff["gt_excluded"] = len(g) - len(g_eff_idx)
+        effective = eff
+
+    return {
+        "calibers": calibers,
+        "match_provenance": provenance,
+        "by_role": by_role,
+        "by_origin": by_origin,
+        "effective": effective,
+        "ceiling": front_view_ceiling(gt),
+        "n_gt": len(g),
+        "n_model_full": len(m_items),
     }
 
 
