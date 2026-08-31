@@ -299,7 +299,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     glb = out_dir / "detail_sample.glb"
-    scene.export(str(glb))
+    # include_normals：trimesh 默认不写 NORMAL 属性，MeshStandardMaterial 缺法线
+    # 会渲染成纯黑（2026-08-31 实测坑）——生成侧烘焙法线，viewer 侧另有兜底
+    scene.export(str(glb), include_normals=True)
     (out_dir / "detail_sample.bar_map.json").write_text(
         json.dumps(bar_map, ensure_ascii=False, indent=1), encoding="utf-8")
     n_holes = sum(1 for e in bar_map if e["kind"] == "bolt_holes")
