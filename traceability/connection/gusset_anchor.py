@@ -12,7 +12,7 @@ import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..model import EngineeringModel
+from ..model import EngineeringModel, Component, SourceRef, SourceType
 from .detail_view import DetailViewTransform, anchor_transform, local_to_global
 from .gusset import GussetPlate, parse_gusset_from_detail
 
@@ -188,3 +188,105 @@ def auto_anchor_gussets(
         from ..harness.tower_validators import inject_connection_rules
         inject_connection_rules(model)
     return report
+
+
+def anchor_gussets_to_model(model: EngineeringModel, node_specs) -> Dict[str, Any]:
+    """Attach representative gusset shells to real tower nodes.
+
+    ``node_specs`` is a list of dictionaries.  A spec may provide ``node_id``
+    (or ``z``/``z_mm`` to select the closest node), ``normal`` (``front``
+    defaults to +Y), ``width_mm``/``height_mm`` and ``thickness_mm``.  The
+    function deliberately stores all placement facts on the component, while
+    returning meshes for callers that need to export a GLB.
+    """
+    import numpy as np
+    from .gusset import make_gusset_shell
+
+    def vec(value, default):
+        a = np.asarray(value if value is not None else default, dtype=float)
+        n = np.linalg.norm(a)
+        return a / n if n > 1e-9 else np.asarray(default, dtype=float)
+
+    nodes = {cid: c for cid, c in model.components.items() if c.kind == "tower_node"}
+    bars = [c for c in model.components.values() if c.kind == "tower_bar"]
+    specs = list(node_specs or [])
+    result = {"plates": [], "anchored": [], "failed": [], "d1": None}
+
+    # Preserve the established detail route; never overwrite its semantics.
+    try:
+        result["d1"] = auto_anchor_gussets(model, {"gusset_auto_anchor": True})
+    except Exception as exc:
+        result["d1"] = {"error": str(exc), "anchored": [], "pending": []}
+
+    for index, spec0 in enumerate(specs):
+        spec = dict(spec0 or {})
+        requested = spec.get("node_id")
+        node_id = requested if requested in nodes else None
+        if node_id is None:
+            target_z = spec.get("z_mm", spec.get("z"))
+            candidates = list(nodes.items())
+            if target_z is not None:
+                candidates.sort(key=lambda kv: abs(float(kv[1].properties.get("z", 0)) - float(target_z)))
+            else:
+                candidates.sort(key=lambda kv: kv[0])
+            if candidates:
+                node_id = candidates[0][0]
+        if node_id is None:
+            result["failed"].append({"spec": spec, "reason": "node_not_found"})
+            continue
+        node = nodes[node_id]
+        p = np.array([float(node.properties.get(k, 0.0)) for k in ("x", "y", "z")])
+        related = []
+        for bar in bars:
+            bp = bar.properties
+            if bp.get("from_node") == node_id or bp.get("to_node") == node_id:
+                other = bp.get("to_node") if bp.get("from_node") == node_id else bp.get("from_node")
+                if other in nodes:
+                    q = np.array([float(nodes[other].properties.get(k, 0.0)) for k in ("x", "y", "z")])
+                    d = q - p
+                    if np.linalg.norm(d) > 1e-9:
+                        related.append((bar, d / np.linalg.norm(d)))
+        if not related:
+            result["failed"].append({"spec": spec, "node_id": node_id, "reason": "no_intersecting_bars"})
+            continue
+        n = vec(spec.get("normal"), (0, 1, 0) if str(spec.get("face", "front")).lower() == "front" else (1, 0, 0))
+        # Select a member direction and project it into the plate plane.
+        direction = related[0][1]
+        u = direction - n * float(np.dot(direction, n))
+        if np.linalg.norm(u) < 1e-8:
+            u = np.cross(n, np.array([0., 0., 1.]))
+        u = vec(u, (1, 0, 0))
+        v = vec(np.cross(n, u), (0, 0, 1))
+        width = float(spec.get("width_mm") or max(_section_leg(b.properties.get("section")) for b, _ in related) * 1.2)
+        height = float(spec.get("height_mm") or width * 0.75)
+        thickness = float(spec.get("thickness_mm") or 6.0)
+        local = [(-width/2, -height/2), (width/2, -height/2), (width/2, height/2), (-width/2, height/2)]
+        mesh = make_gusset_shell(local, thickness)
+        # local shell XY maps to u/v, and shell Z maps to normal.
+        verts = mesh.vertices.copy()
+        verts = p + verts[:, 0:1] * u + verts[:, 1:2] * v + verts[:, 2:3] * n
+        mesh.vertices = verts
+        cid = str(spec.get("gusset_id") or f"gusset_synth_{index+1:02d}_{node_id}")
+        comp = Component(id=cid, name=f"节点板 {node_id}", kind="gusset_plate",
+                         source=SourceRef(SourceType.ASSUMPTION, "LOD3-stage3", confidence=0.5),
+                         properties={"node_id": node_id, "position_mm": p.tolist(),
+                                     "normal": n.tolist(), "dimensions_mm": [width, height],
+                                     "width_mm": width, "height_mm": height,
+                                     "thickness_mm": thickness, "source": "synthesized",
+                                     "associated_bars": [b.id for b, _ in related],
+                                     "solve_status": "verified"})
+        model.add_component(comp)
+        mesh.metadata = {"component_id": cid, "node_id": node_id, "kind": "gusset_plate"}
+        item = {"gusset": cid, "node_id": node_id, "position_mm": p.tolist(), "normal": n.tolist(),
+                "dimensions_mm": [width, height], "thickness_mm": thickness,
+                "source": "synthesized", "associated_bars": [b.id for b, _ in related], "mesh": mesh}
+        result["plates"].append(item)
+        result["anchored"].append({k: v for k, v in item.items() if k != "mesh"})
+    return result
+
+
+def _section_leg(section: Any) -> float:
+    """Best-effort nominal angle leg width in millimetres."""
+    import re
+    m = re.search(r"L\s*(\d+(?:\.\d+)?)", str(section or ""), re.I)
+    return float(m.group(1)) if m else 200.0

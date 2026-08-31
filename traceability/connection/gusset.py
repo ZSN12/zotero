@@ -105,3 +105,45 @@ def add_gusset_to_model(model: EngineeringModel, plate: GussetPlate) -> Componen
             applies_to=comp.id,
         ))
     return comp
+
+
+def make_gusset_shell(polygon_2d, thickness_mm):
+    """Create a watertight triangularly-capped thin plate from a 2-D polygon.
+
+    The polygon is interpreted in its local XY plane and the thickness is along Z.
+    This intentionally uses no optional triangulation backend, making it reliable in
+    the minimal trimesh + numpy installation used by the pipeline.
+    """
+    import numpy as np
+    import trimesh
+    pts = [(float(p[0]), float(p[1])) for p in polygon_2d]
+    if len(pts) < 3 or float(thickness_mm) <= 0:
+        raise ValueError("gusset shell requires >=3 points and positive thickness")
+    # Remove a repeated closing point and consecutive duplicates.
+    if pts[-1] == pts[0]:
+        pts.pop()
+    clean = []
+    for p in pts:
+        if not clean or p != clean[-1]:
+            clean.append(p)
+    pts = clean
+    if len(pts) < 3:
+        raise ValueError("degenerate gusset polygon")
+    area = sum(pts[i][0] * pts[(i + 1) % len(pts)][1] - pts[(i + 1) % len(pts)][0] * pts[i][1] for i in range(len(pts)))
+    if abs(area) < 1e-9:
+        raise ValueError("degenerate gusset polygon")
+    if area < 0:
+        pts.reverse()
+    n = len(pts)
+    verts = np.array([(x, y, 0.0) for x, y in pts] + [(x, y, float(thickness_mm)) for x, y in pts], dtype=float)
+    faces = []
+    for i in range(1, n - 1):
+        faces.append((0, i, i + 1))
+        faces.append((n, n + i + 1, n + i))
+    for i in range(n):
+        j = (i + 1) % n
+        faces.extend(((i, j, n + j), (i, n + j, n + i)))
+    mesh = trimesh.Trimesh(vertices=verts, faces=np.asarray(faces, dtype=np.int64), process=True)
+    if not mesh.is_watertight:
+        raise ValueError("gusset shell is not watertight")
+    return mesh
