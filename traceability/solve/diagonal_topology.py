@@ -100,6 +100,105 @@ def collect_diagonal_candidates(
     return cands
 
 
+_FACE_AXIS = {"f": "x", "b": "x", "l": "y", "r": "y"}
+_FACE_REGION = {"f": "front", "b": "back", "l": "left", "r": "right"}
+
+
+def _classify_twist_line(
+    endpoints: List[Tuple[float, float]],
+    hw_fn,
+    *,
+    axis: str = "x",
+) -> Optional[str]:
+    """twist 证据线分类（轴感知：front/back 用 x，left/right 用 y）。
+
+    接受 FULL（角→对角）与 TWIST_TRUNC（截断对角，异号端点）。
+    同号端点的 MID/HALF 是 fan 惯例，不作为 twist 证据（FP 守门）。
+    """
+    (c1, z1), (c2, z2) = endpoints
+    r1 = abs(c1) / max(hw_fn(z1), 1e-9)
+    r2 = abs(c2) / max(hw_fn(z2), 1e-9)
+    if c1 * c2 >= 0:
+        return None
+    if r1 >= 0.6 and r2 >= 0.6:
+        return "FULL"
+    if min(r1, r2) <= 0.35 and max(r1, r2) >= 0.6:
+        return "TWIST_TRUNC"
+    if 0.3 <= min(r1, r2) <= 0.7 and max(r1, r2) >= 0.6:
+        return "TWIST_TRUNC"
+    return None
+
+
+def collect_twist_candidates(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    sheets: Sequence[str],
+    z_window: Optional[Tuple[float, float]] = None,
+    incl_lo_deg: float = 20.0,
+    incl_hi_deg: float = 70.0,
+    min_len_mm: float = 400.0,
+    twist_faces: Sequence[str] = ("f", "l", "r"),
+    hw_fn=None,
+) -> List[Dict[str, Any]]:
+    """收集 twist 证据候选（多面：front + left/right 捕获 yflip depth diagonal）。"""
+    allowed = {str(f).lower() for f in twist_faces}
+    cands: List[Dict[str, Any]] = []
+    for b in bars:
+        p = b.get("properties") or b
+        origin = str(p.get("geometry_origin") or "")
+        src = str(p.get("source_file") or "")
+        if origin != "dxf_geom" or src not in sheets:
+            continue
+        face = str(p.get("face") or "f").lower()
+        if face not in allowed:
+            continue
+        axis = _FACE_AXIS.get(face, "x")
+        f = nodes.get(b.get("from") or p.get("from_node"))
+        t = nodes.get(b.get("to") or p.get("to_node"))
+        if f is None or t is None:
+            continue
+        if axis == "x":
+            c1, z1, c2, z2 = f[0], f[2], t[0], t[2]
+            planar = abs(f[1] - t[1])
+        else:
+            c1, z1, c2, z2 = f[1], f[2], t[1], t[2]
+            planar = abs(f[0] - t[0])
+        dc, dz = abs(c2 - c1), abs(z2 - z1)
+        len2d = math.hypot(dc, dz)
+        if len2d < min_len_mm:
+            continue
+        incl = math.degrees(math.atan2(dz, max(dc, 1e-9)))
+        if not (incl_lo_deg <= incl <= incl_hi_deg):
+            continue
+        if z_window is not None:
+            if not (z_window[0] <= min(z1, z2) and max(z1, z2) <= z_window[1]):
+                continue
+        twist_kind = (_classify_twist_line([(c1, z1), (c2, z2)], hw_fn, axis=axis)
+                      if hw_fn else None)
+        if twist_kind is None:
+            continue
+        cands.append({
+            "bar_id": str(b.get("id")),
+            "source_handles": [
+                p.get("bar_id") or "",
+                f"layer={p.get('layer')}",
+                str(b.get("id")),
+            ],
+            "source_region": f"{src}/{_FACE_REGION.get(face, face)}",
+            "endpoints": [(c1, z1), (c2, z2)],
+            "length_2d": round(len2d, 1),
+            "inclination_deg": round(incl, 1),
+            "view_y": round((f[1] + t[1]) / 2.0, 1),
+            "z_mid": (z1 + z2) / 2.0,
+            "face": face,
+            "axis": axis,
+            "twist_kind": twist_kind,
+            "planar_offset_mm": round(planar, 1),
+        })
+    return cands
+
+
 def cluster_endpoint_heights(
     cands: List[Dict[str, Any]],
     *,
@@ -156,6 +255,7 @@ def build_interpretations(
     twist_span_hi: float = 3300.0,
     evidence_radius_mm: float = 900.0,
     selection_mode: str = "p11",
+    twist_cands: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """证据线 → fan/twist 解释对（P1 2.2/2.3 的评分聚合）。
 
@@ -183,10 +283,15 @@ def build_interpretations(
                 best, bd = zt, d
         return best
 
-    # ---- twist：full-cross 线（角→对角）----
-    for c in cands:
-        kind = _classify_drawn_line(c["endpoints"], hw_fn)
-        if kind != "FULL":
+    # ---- twist：多面 full-cross / 截断对角（异号端点）----
+    if twist_cands is None:
+        twist_cands = []
+        for c in cands:
+            tk = _classify_twist_line(c["endpoints"], hw_fn, axis="x")
+            if tk:
+                twist_cands.append({**c, "twist_kind": tk, "face": "f", "axis": "x"})
+    for c in twist_cands or ():
+        if c.get("twist_kind") not in ("FULL", "TWIST_TRUNC"):
             continue
         (x1, z1), (x2, z2) = c["endpoints"]
         zt, zb = max(z1, z2), min(z1, z2)
@@ -481,6 +586,7 @@ def reconstruct_diagonal_topology(
     cluster_tol_mm: float = 250.0,
     keep_originals: bool = False,
     selection_mode: str = "p11",
+    twist_faces: Sequence[str] = ("f", "l", "r"),
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """斜材拓扑闭环主入口。
 
@@ -488,14 +594,18 @@ def reconstruct_diagonal_topology(
       * new_bars 已移除被替代的原始投影斜材（keep_originals=False）；
       * report 含候选图记录、解释对、生成/撤除统计（audit 用）。
     """
-    # 1. 候选收集（front 面 dxf_geom 证据线）
+    # 1. 候选收集（front 面 fan + 多面 twist）
     cands = collect_diagonal_candidates(
         nodes, bars, sheets=sheets, z_window=z_window, hw_fn=hw_fn)
-    # 2. 端点 z 聚类 → 螺旋高度
+    twist_cands = collect_twist_candidates(
+        nodes, bars, sheets=sheets, z_window=z_window,
+        twist_faces=twist_faces, hw_fn=hw_fn)
+    # 2. 端点 z 聚类 → 螺旋高度（fan 证据驱动）
     heights = cluster_endpoint_heights(cands, tol_mm=cluster_tol_mm)
     # 3. 解释评分（fan/twist 对）+ P1.1 冲突图择优
     interps, sel_audit = build_interpretations(
-        cands, heights, panel_levels, hw_fn, selection_mode=selection_mode)
+        cands, heights, panel_levels, hw_fn,
+        selection_mode=selection_mode, twist_cands=twist_cands)
     # 4. 生成 3D 斜材（去重 + Degree=1 守门）
     gen_raw: List[dict] = []
     for interp in interps:
@@ -522,6 +632,7 @@ def reconstruct_diagonal_topology(
 
     removed_ids: set = set()
     fams = {_family(c["bar_id"]) for c in cands}
+    fams |= {_family(c["bar_id"]) for c in twist_cands}
     for b in bars:
         if _family(b.get("id")) in fams:
             removed_ids.add(str(b.get("id")))
@@ -571,6 +682,8 @@ def reconstruct_diagonal_topology(
         "sheets": list(sheets),
         "z_window": list(z_window) if z_window else None,
         "n_candidates": len(cands),
+        "n_twist_candidates": len(twist_cands),
+        "twist_faces": list(twist_faces),
         "n_heights": len(heights),
         "heights": [{"z": round(h["z"], 1), "n": h["count"]} for h in heights],
         "interpretations": [
@@ -589,6 +702,12 @@ def reconstruct_diagonal_topology(
              ("bar_id", "source_handles", "source_region", "endpoints",
               "length_2d", "inclination_deg", "line_kind")}
             for c in cands
+        ],
+        "twist_candidates": [
+            {k: c[k] for k in
+             ("bar_id", "source_region", "endpoints", "length_2d",
+              "face", "axis", "twist_kind")}
+            for c in twist_cands
         ],
     }
     return new_nodes, final_bars, report

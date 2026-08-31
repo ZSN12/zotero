@@ -97,10 +97,25 @@ python3 -m pytest tests/test_diagonal_topology.py -q
 
 - P=16000 仍可能保留 5 个 fan vs GT 3 个（mid-edge 度数偏高，但经容差仍命中 GT，不产生 FP）
 - 节拍规律来自 JC1 development 经验；盲测 ZC1 需 per-sheet 自校准（见 UNIMPLEMENTED_PLAN P4）
-- `twist_pairs=0`：06 front 证据线无 FULL 分类 → P1.2 单独处理
+- `twist_pairs=0`（06 front 无 FULL）→ **P1.2 已落地**：多面 twist 收集，待全管线复验
 
 ## 7. 变更记录
 
 | 日期 | 变更 |
 |------|------|
 | 2026-08-31 | Phase 0：节拍单位从 panel 中位差改为 fan 跨度自校准；修复 panel_crossing 断言方向 |
+| 2026-08-31 | P1.2：`collect_twist_candidates` 多面 (f/l/r) + 异号 MID 截断；yflip depth diagonal 从 L/R 面触发 |
+
+## 8. P1.2 twist 证据（2026-08-31）
+
+**根因**：06 front 面 line_kind 分布 {MID:12, HALF:4, None:7, **FULL:0**}；yflip twist 在 front `(x,z)` 投影与主腿重合（同号 x）。
+
+**规则**
+
+- fan 证据：仍仅 **front 面** `collect_diagonal_candidates`
+- twist 证据：`collect_twist_candidates(twist_faces=["f","l","r"])`
+  - front/back：`(x,z)` 分类；left/right：`(y,z)` 分类
+  - 接受 `FULL` 或异号端点 `TWIST_TRUNC`；**拒绝同号 MID/HALF**（fan 惯例）
+- overlay 键：`diagonal_topology_twist_faces`（默认 f,l,r）
+
+**验收**：`twist_pairs ≥ 2`；fan 基线 TP/FP 不降（56/8 @ p11）

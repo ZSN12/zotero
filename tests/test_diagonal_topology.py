@@ -16,8 +16,10 @@ from traceability.solve.diagonal_topology import (
     build_interpretations,
     cluster_endpoint_heights,
     collect_diagonal_candidates,
+    collect_twist_candidates,
     reconstruct_diagonal_topology,
     _classify_drawn_line,
+    _classify_twist_line,
 )
 
 
@@ -250,6 +252,72 @@ class TestSelectionP11(unittest.TestCase):
             [twist], [11000, 12000, 13000, 14000, 16000, 17000, 19000])
         self.assertEqual(len(kept), 1)
         self.assertEqual(kept[0]["kind"], "twist")
+
+
+class TestTwistEvidence(unittest.TestCase):
+    """P1.2：多面 twist 证据（yflip depth diagonal + 异号 MID 截断）。"""
+
+    def test_yflip_visible_on_left_face(self):
+        zt, zb = 16500.0, 14200.0
+        # yflip：front 投影 x 同号 → _classify_drawn_line 为 None
+        endpoints_f = [(hw(zt), zt), (hw(zb), zb)]
+        self.assertIsNone(_classify_drawn_line(endpoints_f, hw))
+        # left 面 (y,z) 投影 y 异号 → twist
+        self.assertEqual(
+            _classify_twist_line([(hw(zt), zt), (-hw(zb), zb)], hw, axis="y"),
+            "FULL")
+
+    def test_fan_mid_same_sign_not_twist(self):
+        # fan MID：同号 x，不应进 twist
+        self.assertIsNone(
+            _classify_twist_line([(0.45 * hw(15964), 15964),
+                                  (hw(15370), 15370)], hw, axis="x"))
+
+    def test_twist_trunc_opposite_x(self):
+        self.assertEqual(
+            _classify_twist_line([(hw(16486), 16486), (-0.45 * hw(14278), 14278)],
+                                 hw, axis="x"),
+            "TWIST_TRUNC")
+
+    def test_collect_twist_lr_faces(self):
+        zt, zb = 16500.0, 14200.0
+        nodes = {
+            "n1": (hw(zt), hw(zt), zt),
+            "n2": (hw(zb), -hw(zb), zb),
+        }
+        bars = [{
+            "id": "35A1-JC1-06__bar_T_left_L", "from": "n1", "to": "n2",
+            "face": "l", "role": "DIAG",
+            "source_file": "35A1-JC1-06", "geometry_origin": "dxf_geom",
+            "geometry_class": "recognized", "bar_id": "T", "layer": "1",
+        }]
+        tc = collect_twist_candidates(
+            nodes, bars, sheets=["35A1-JC1-06"],
+            z_window=(11000.0, 17500.0), hw_fn=hw)
+        self.assertEqual(len(tc), 1)
+        self.assertEqual(tc[0]["twist_kind"], "FULL")
+        self.assertEqual(tc[0]["face"], "l")
+
+    def test_reconstruct_with_lr_twist(self):
+        zt, zb = 17000.0, 14000.0
+        nodes = {
+            "n1": (hw(zt), hw(zt), zt),
+            "n2": (hw(zb), -hw(zb), zb),
+        }
+        bars = [{
+            "id": "35A1-JC1-06__bar_T_left_L", "from": "n1", "to": "n2",
+            "face": "l", "role": "DIAG",
+            "source_file": "35A1-JC1-06", "geometry_origin": "dxf_geom",
+            "geometry_class": "recognized", "bar_id": "T", "layer": "1",
+        }]
+        _, new_bars, rep = reconstruct_diagonal_topology(
+            nodes, bars, hw, sheets=["35A1-JC1-06"],
+            panel_levels=[14000.0, 16000.0, 17000.0],
+            z_window=(11000.0, 17500.0))
+        self.assertGreaterEqual(rep["twist_pairs"], 1)
+        gen = [b for b in new_bars if b.get("diagonal_topology")]
+        kinds = {b.get("diagonal_kind") for b in gen}
+        self.assertTrue(kinds & {"twist_xflip", "twist_yflip"})
 
 
 if __name__ == "__main__":

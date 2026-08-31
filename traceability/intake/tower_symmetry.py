@@ -494,6 +494,7 @@ def expand_4_face_symmetry_model(
         from ..solve.diagonal_topology import reconstruct_diagonal_topology
         _dt_sheets = spec.get("diagonal_topology_sheets") or ["35A1-JC1-06"]
         _dt_window = spec.get("diagonal_topology_z_window") or (11000.0, 17500.0)
+        _dt_twist_faces = spec.get("diagonal_topology_twist_faces") or ("f", "l", "r")
         face_nodes, face_bars, _dt_rep = reconstruct_diagonal_topology(
             face_nodes, face_bars, half_width_fn,
             sheets=list(_dt_sheets),
@@ -502,16 +503,18 @@ def expand_4_face_symmetry_model(
             level_source_label=(
                 "gt_canonical" if level_source == "gt" else "dxf_derived"
             ),
+            twist_faces=list(_dt_twist_faces),
         )
         roles = classify_members(face_nodes, face_bars)
         _dt_df = model.components.get("drawing_file")
         if _dt_df is not None:
             _dt_df.properties["diagonal_topology_report"] = {
                 k: _dt_rep[k] for k in (
-                    "sheets", "z_window", "n_candidates", "n_heights",
+                    "sheets", "z_window", "n_candidates", "n_twist_candidates",
+                    "twist_faces", "n_heights",
                     "heights", "interpretations", "generated",
                     "removed_originals", "fan_pairs", "twist_pairs",
-                    "selection", "candidates")
+                    "selection", "candidates", "twist_candidates")
             }
 
     # S4 贪心共线拼接（Phase 2）：把断裂碎片杆拼回整杆。
