@@ -368,8 +368,17 @@ def expand_4_face_symmetry_model(
         from ..debug.gt_profile import gt_platform_levels
         panel_levels = list(gt_platform_levels())
     elif level_source == "dxf":
-        from ..solve.tower_geometry import derive_panel_levels
-        panel_levels = derive_panel_levels(snapped_nodes, snapped_bars)
+        from ..solve.tower_geometry import derive_panel_levels_detailed
+        _manual = spec.get("panel_level_manual_levels") or []
+        panel_levels, _pl_records = derive_panel_levels_detailed(
+            snapped_nodes, snapped_bars,
+            manual_levels=[float(z) for z in _manual] if _manual else None,
+        )
+        # P4.1 证据链：逐层来源（dxf/manual + manual_snapped）进 drawing_file，
+        # delivery 可呈现「每个节间的层位证据」。
+        _df_pl = model.components.get("drawing_file")
+        if _df_pl is not None and _pl_records:
+            _df_pl.properties["panel_level_evidence"] = _pl_records
 
     if panel_levels:
         subdivide_on = bool(spec.get("subdivide_legs", True))
@@ -745,7 +754,77 @@ def expand_4_face_symmetry_model(
             # S1c：被剪标注残片携带的件号（几何已清、A1 证据保留）
             "orphan_label_ids": merged_orphans,
         })
+
+    # P4.3 件号长度一致性核验（错配剥离），见 _strip_misassociated_bar_ids。
+    _strip_misassociated_bar_ids(
+        model,
+        strip_ratio=float(spec.get("bar_id_mismatch_strip_ratio", 2.5)),
+        suspect_ratio=float(spec.get("bar_id_mismatch_suspect_ratio", 1.03)),
+    )
     return model
+
+
+def _strip_misassociated_bar_ids(
+    model: EngineeringModel,
+    *,
+    strip_ratio: float = 2.5,
+    suspect_ratio: float = 1.03,
+) -> None:
+    """P4.3：件号长度一致性核验（3D 长度解算后调用）。
+
+    按杆核验 杆长/BOM长：
+        ratio > strip_ratio → 件号错配：剥离 bar_id（bar_id_detached 存原值，
+          bar_id_misassociation=True），件号进 orphan 登记簿——A1 口径按
+          orphan 重算，BOM 长度核验自动跳过（bar_id=None 无 BOM dim）；
+        1.03 < ratio <= strip_ratio → bar_id_length_suspect=True（保留件号，
+          同号多杆歧义属 review 队列，不自动剥离）；
+        ratio < 0.4（识别不全）不剥离——几何问题是 Phase 5/7 战场，
+        件号关联本身没错，如实报超差（诚实失败）。
+    """
+    _detached: List[str] = []
+    _suspect: List[str] = []
+    for cid, comp in model.components.items():
+        if comp.kind != "tower_bar":
+            continue
+        p = comp.properties or {}
+        bid = str(p.get("bar_id") or "")
+        if not bid or bid == "None":
+            continue
+        bom_dim = model.dimensions.get(f"dim_bom_length_{bid}")
+        if bom_dim is None or bom_dim.value is None:
+            continue
+        try:
+            bom_len = float(bom_dim.value)
+        except (TypeError, ValueError):
+            continue
+        if bom_len <= 0:
+            continue
+        actual = p.get("length_mm_3d") or p.get("length_mm")
+        if actual is None:
+            continue
+        ratio = float(actual) / bom_len
+        if ratio > strip_ratio:
+            p["bar_id_detached"] = bid
+            p["bar_id_misassociation"] = True
+            p["bar_id"] = None
+            if bid not in _detached:
+                _detached.append(bid)
+        elif ratio > suspect_ratio:
+            p["bar_id_length_suspect"] = True
+            if bid not in _suspect:
+                _suspect.append(bid)
+    if _detached or _suspect:
+        _df = model.components.get("drawing_file")
+        if _df is not None:
+            _orphans = list(_df.properties.get("orphan_label_ids") or [])
+            for lab in _detached:
+                if lab not in _orphans:
+                    _orphans.append(lab)
+            _df.properties.update({
+                "orphan_label_ids": _orphans,
+                "bar_id_misassociated_stripped": sorted(_detached),
+                "bar_id_length_suspect": sorted(_suspect),
+            })
 
 
 def _retarget_applies_to(

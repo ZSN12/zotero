@@ -1205,6 +1205,122 @@ def derive_panel_levels(
     return merged
 
 
+def derive_panel_levels_detailed(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    cluster_gap_mm: float = 400.0,
+    min_node_evidence: int = 4,
+    min_horiz_evidence: int = 2,
+    manual_levels: Optional[List[float]] = None,
+    manual_snap_mm: float = 500.0,
+) -> Tuple[List[float], List[dict]]:
+    """P4.1：节间平台多证据判定（逐层 source 分层 + 可追溯证据）。
+
+    在 derive_panel_levels 的聚类逻辑之上，输出每层的证据结构：
+        {"z_mm": ..., "source": "dxf"|"manual",
+         "n_bar_evidence": int, "n_horiz_evidence": int,
+         "z_cluster_span_mm": [z_min, z_max]}
+
+    manual_levels（overlay panel_level_manual_levels 注入的人工标高）：
+    与 DXF 推导层差 <= manual_snap_mm 时**吸附**到人工值（source 保留
+    dxf，记 manual_snapped=true——层位数值被人工校正但存在图纸证据）；
+    无对应 DXF 层的人工标高追加为 source="manual" 纯人工层。
+
+    返回 (levels, records)：levels 与 derive_panel_levels 同序同值
+    （含 manual 吸附/追加），records 供 delivery 证据链呈现。
+    """
+    base = derive_panel_levels(
+        nodes, bars,
+        cluster_gap_mm=cluster_gap_mm,
+        min_node_evidence=min_node_evidence,
+        min_horiz_evidence=min_horiz_evidence,
+    )
+    # 重新跑一遍聚类以取每簇证据计数（derive_panel_levels 只返回 z）
+    from collections import defaultdict
+    evidence: Dict[int, Dict[str, object]] = defaultdict(
+        lambda: {"bars": set(), "horiz": set(), "n": 0}
+    )
+    for b in bars:
+        f = nodes.get(b.get("from"))
+        t = nodes.get(b.get("to"))
+        if f is None or t is None:
+            continue
+        is_horiz = abs(float(f[2]) - float(t[2])) < 100.0 and abs(
+            float(f[0]) - float(t[0])
+        ) > 300.0
+        bid = b.get("id") or f"{b.get('from')}->{b.get('to')}"
+        for p in (f, t):
+            ev = evidence[int(round(float(p[2]) / 100.0) * 100)]
+            ev["bars"].add(bid)
+            ev["n"] += 1
+            if is_horiz:
+                ev["horiz"].add(bid)
+    zs = sorted(evidence)
+    clusters: List[List[int]] = []
+    if zs:
+        cur = [zs[0]]
+        for z in zs[1:]:
+            if z - cur[-1] <= cluster_gap_mm:
+                cur.append(z)
+            else:
+                clusters.append(cur)
+                cur = [z]
+        clusters.append(cur)
+
+    # 推导层 -> 簇证据（按最近簇）
+    def _cluster_stats(z_level: float) -> Tuple[int, int, List[int]]:
+        best = None
+        for c in clusters:
+            lo, hi = min(c), max(c)
+            if lo - 1000 <= z_level <= hi + 1000:
+                if best is None or abs(sum(c) / len(c) - z_level) < abs(
+                        sum(best) / len(best) - z_level):
+                    best = c
+        if best is None:
+            return 0, 0, [int(z_level)]
+        c_bars: set = set()
+        c_horiz: set = set()
+        for z in best:
+            c_bars |= evidence[z]["bars"]
+            c_horiz |= evidence[z]["horiz"]
+        return len(c_bars), len(c_horiz), [min(best), max(best)]
+
+    records: List[dict] = []
+    used_manual: set = set()
+    for z in base:
+        n_bars, n_horiz, span = _cluster_stats(z)
+        rec = {
+            "z_mm": round(float(z), 1),
+            "source": "dxf",
+            "n_bar_evidence": n_bars,
+            "n_horiz_evidence": n_horiz,
+            "z_cluster_span_mm": [float(span[0]), float(span[1])],
+            "manual_snapped": False,
+        }
+        if manual_levels:
+            best_m = min(manual_levels, key=lambda mz: abs(mz - z))
+            if abs(best_m - z) <= manual_snap_mm:
+                rec["z_mm"] = round(float(best_m), 1)
+                rec["manual_snapped"] = True
+                used_manual.add(best_m)
+        records.append(rec)
+    if manual_levels:
+        for mz in sorted(manual_levels):
+            if mz not in used_manual:
+                records.append({
+                    "z_mm": round(float(mz), 1),
+                    "source": "manual",
+                    "n_bar_evidence": 0,
+                    "n_horiz_evidence": 0,
+                    "z_cluster_span_mm": [float(mz), float(mz)],
+                    "manual_snapped": False,
+                })
+    records.sort(key=lambda r: r["z_mm"])
+    levels_out = [float(r["z_mm"]) for r in records]
+    return levels_out, records
+
+
 def subdivide_legs_at_levels(
     nodes: NodeMap,
     bars: List[dict],
@@ -1249,6 +1365,7 @@ def subdivide_legs_at_levels(
     new_bars: List[dict] = []
     n_legs = 0
     n_segs = 0
+    conservation_max = 0.0  # P4.2 长度守恒（验收 <= 0.1%）
     node_seq = max(
         (int(k.split("_")[-1]) for k in nodes if str(k).split("_")[-1].isdigit()),
         default=100000,
@@ -1335,12 +1452,32 @@ def subdivide_legs_at_levels(
             })
             new_bars.append(seg)
             n_segs += 1
+        # P4.2 长度守恒审计：节间杆长度和 vs 原通长杆长度（切点沿原杆
+        # 直线插值，理论偏差 = 节点复用吸附的微小抖动）。超标即 bug。
+        _orig_len = math.sqrt(
+            (float(t[0]) - float(f[0])) ** 2
+            + (float(t[1]) - float(f[1])) ** 2
+            + (float(t[2]) - float(f[2])) ** 2
+        )
+        _seg_len_sum = 0.0
+        for k in range(len(node_ids) - 1):
+            p, q = new_nodes[node_ids[k]], new_nodes[node_ids[k + 1]]
+            _seg_len_sum += math.sqrt(
+                (float(q[0]) - float(p[0])) ** 2
+                + (float(q[1]) - float(p[1])) ** 2
+                + (float(q[2]) - float(p[2])) ** 2
+            )
+        if _orig_len > 1e-6:
+            conservation_max = max(
+                conservation_max, abs(_seg_len_sum - _orig_len) / _orig_len)
         n_legs += 1
 
     return new_nodes, new_bars, {
         "subdivided_legs": n_legs,
         "segments_created": n_segs,
         "levels_used": len(lv),
+        # P4.2：最大相对长度偏差（验收 <= 0.1%）
+        "length_conservation_max_rel_err": round(conservation_max, 6),
     }
 
 
