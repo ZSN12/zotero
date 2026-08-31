@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -852,6 +853,8 @@ def export_tower_glb(
     allow_scan: bool = False,
     allow_derived_y: bool = False,
     mode: str = "physical",
+    color_by: str = "role",
+    review_queue_path: str | Path | None = None,
 ) -> str:
     """从模型求解并把杆件实体化导出 GLB（Phase 3）。
 
@@ -862,9 +865,19 @@ def export_tower_glb(
         * "physical"（默认）—— 只导出物理杆件（recognized + reconstructed），
           排除 derived（corner_leg/diaphragm/center 派生展示几何）。正式交付用。
         * "qa_all" —— 导出全部杆件（含 derived），供 QA 目视检查派生几何。
+
+    Phase 4 着色口径（color_by）：
+        * "role"（默认）—— LEG/HORIZ/DIAG/CROSS 语义角色着色（旧行为）。
+        * "provenance" —— 按几何来源分类着色（交付验收口径）：
+          dxf_geom 绿（直接识别）、diaphragm_reconstructed/panel_subdivision
+          蓝（GT 标高辅助重建）、collinear_stitch 黄（拼接）、derived_4face
+          灰（派生展示）；叠加 review_queue 残留悬空节点红球标记。
     """
     if mode not in ("physical", "qa_all"):
         raise SolveError(f"未知导出模式 mode={mode!r}（应为 physical / qa_all）")
+    if color_by not in ("role", "provenance"):
+        raise SolveError(
+            f"未知着色口径 color_by={color_by!r}（应为 role / provenance）")
     try:
         import trimesh
     except ImportError as e:  # pragma: no cover
@@ -887,6 +900,14 @@ def export_tower_glb(
         "KNEE": [180, 120, 30, 255],
         "HANG": [120, 160, 40, 255],
         "TRUSS_MAIN": [220, 40, 40, 255],
+    }
+    # Phase 4 provenance 着色（按 geometry_origin 分类，交付验收口径）
+    provenance_colors = {
+        "dxf_geom": [40, 180, 40, 255],               # 绿：直接识别
+        "diaphragm_reconstructed": [40, 120, 230, 255],  # 蓝：GT 标高辅助重建
+        "panel_subdivision": [40, 120, 230, 255],        # 蓝：节间化辅助
+        "collinear_stitch": [230, 200, 40, 255],         # 黄：共线拼接
+        "derived_4face": [150, 150, 150, 255],           # 灰：派生展示
     }
 
     meshes: List = []
@@ -950,10 +971,17 @@ def export_tower_glb(
         # 取代 align_vectors 的绕轴随机旋转。
         transform = _align_matrix(direction, mid, role=role)
         mesh.apply_transform(transform)
-        color = layer_colors.get(role, layer_colors.get(bar.properties.get("layer", ""), [180, 180, 180, 255]))
+        if color_by == "provenance":
+            origin = bar.properties.get("geometry_origin")
+            color = provenance_colors.get(
+                origin, [180, 180, 180, 255])
+        else:
+            color = layer_colors.get(role, layer_colors.get(bar.properties.get("layer", ""), [180, 180, 180, 255]))
         mesh.visual.face_colors = color
         bid = str(bar.properties.get("bar_id") or cid)
         extras = {"bar_id": bid, "component_id": cid, "role": role}
+        if color_by == "provenance":
+            extras["geometry_origin"] = str(origin)
         mesh.metadata = dict(extras)
         meshes.append(mesh)
         mesh_meta.append(extras)
@@ -993,6 +1021,36 @@ def export_tower_glb(
         )
 
     scene = trimesh.Scene()
+
+    # Phase 4：review_queue 残留悬空节点红球标记（人工复核定位）。
+    review_nodes = []
+    if review_queue_path is not None and Path(review_queue_path).exists():
+        try:
+            rq = json.loads(Path(review_queue_path).read_text(encoding="utf-8"))
+            for grp in rq.get("groups", []):
+                for ent in grp.get("entries", []):
+                    xyz = ent.get("xyz_mm")
+                    if xyz and len(xyz) == 3:
+                        review_nodes.append((ent.get("node_id"), xyz))
+        except (ValueError, OSError):
+            review_nodes = []
+    for node_id, xyz in review_nodes:
+        try:
+            sphere = trimesh.creation.icosphere(
+                radius=180.0, subdivisions=2)
+            sphere.apply_translation((float(xyz[0]), float(xyz[1]), float(xyz[2])))
+            sphere.visual.face_colors = [255, 40, 40, 255]
+            extras = {
+                "bar_id": f"review_{node_id}",
+                "component_id": f"review_{node_id}",
+                "kind": "review_queue_node",
+            }
+            sphere.metadata = dict(extras)
+            meshes.append(sphere)
+            mesh_meta.append(extras)
+        except Exception:
+            continue
+
     for mesh, extras in zip(meshes, mesh_meta):
         scene.add_geometry(
             mesh,

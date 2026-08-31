@@ -673,7 +673,18 @@ def deliver_project(
             else:
                 skeleton_glb_path = out_dir / "skeleton.glb"
                 try:
-                    export_tower_glb(merged_model, skeleton_glb_path, strict=True)
+                    # Phase 4：交付 GLB 按几何来源分类着色（recognized 绿/
+                    # reconstructed 蓝/collinear_stitch 黄/derived 灰），叠加
+                    # review_queue 残留悬空节点红球。HANDOFF 3.2 分色清单含
+                    # derived 灰，故用 qa_all 全量导出（含 internal helpers）。
+                    # review_queue.json 由 scripts/generate_review_queue.py
+                    # 生成（可能不存在，红球缺省为 0）。
+                    export_tower_glb(
+                        merged_model, skeleton_glb_path, strict=True,
+                        mode="qa_all",
+                        color_by="provenance",
+                        review_queue_path=out_dir / "review_queue.json",
+                    )
                     try:
                         import trimesh
                         scene = trimesh.load(str(skeleton_glb_path), force="scene")
