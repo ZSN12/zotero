@@ -962,7 +962,14 @@ def export_tower_glb(
             continue
         section = bar.properties.get("section")
         role = bar_roles.get(cid, "DIAG")
-        if _section_is_fallback(section, role):
+        # T3：四字段证据链写回模型杆属性（导出期副作用，随 model.json 持久化）
+        resolved = resolve_section(section, role)
+        if strict and resolved["section_confidence"] == 0.0:
+            resolved["section_status"] = "review_required"  # strict 不静默猜：显式复核态
+        for key in ("recognized_section", "normalized_section",
+                    "fallback_section", "section_confidence", "section_status"):
+            bar.properties[key] = resolved[key]
+        if resolved["section_confidence"] == 0.0:
             section_fallback_count += 1
             section_fallback_by_role[role] = section_fallback_by_role.get(role, 0) + 1
         try:
@@ -1080,6 +1087,67 @@ def export_tower_glb(
     return str(out_path)
 
 
+SECTION_DEFAULTS = {"LEG": (100.0, 7.0), "DIAG": (75.0, 6.0),
+                    "HORIZ": (56.0, 4.0), "CROSS": (75.0, 6.0)}
+
+
+def _normalize_section_text(section: object) -> str:
+    return str(section or "").strip().upper().replace("×", "X").replace("*", "X").replace(" ", "")
+
+
+def _match_section(text: str) -> Optional[Tuple[float, float]]:
+    """历史格式统一解析：L100X7 / ∠100*8 / 100x8 / L100X100X10 / Q345L100X7。
+
+    返回 (肢宽, 肢厚)；不等边 L100X100X10 取最大肢宽与末位厚度。
+    裸数字形式必须整串匹配（防 '5M16X40' 螺栓、'-6X146' 钢板污染冒充）。
+    """
+    import re
+    t = re.sub(r"^Q\d+", "", _normalize_section_text(text))
+    if not t:
+        return None
+    m = re.fullmatch(r"(?:L|∠)?(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)", t)
+    if m:  # 不等边角钢 leg1 X leg2 X t
+        l1, l2, th = (float(m.group(i)) for i in (1, 2, 3))
+        leg = max(l1, l2)
+        if th >= min(l1, l2) or not (20.0 <= leg <= 300.0) or not (2.0 <= th <= 30.0):
+            return None
+        return leg, th
+    m = re.fullmatch(r"(?:L|∠)(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)", t)
+    if m is None:  # 裸数字仅接受纯 NNxNN（必须带 L/∠ 前缀之外的白名单形态）
+        m = re.fullmatch(r"(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)", t)
+    if m:
+        leg, th = float(m.group(1)), float(m.group(2))
+        if leg <= 0 or th <= 0 or th >= leg or not (20.0 <= leg <= 300.0) or not (2.0 <= th <= 30.0):
+            return None
+        return leg, th
+    return None
+
+
+def resolve_section(section: Optional[str], role: Optional[str] = None) -> Dict[str, object]:
+    """T3：截面解析显式化——四字段证据链，不再静默猜。
+
+    返回 {recognized_section, normalized_section, fallback_section,
+          section_confidence(1.0 识别 / 0.0 角色兜底), section_status}。
+    """
+    rkey = str(role or "").upper()
+    matched = _match_section(section)
+    if matched:
+        leg, th = matched
+        return {"recognized_section": str(section).strip(),
+                "normalized_section": f"L{leg:g}X{th:g}",
+                "fallback_section": None,
+                "section_confidence": 1.0,
+                "section_status": "recognized",
+                "leg_mm": leg, "thickness_mm": th}
+    dleg, dth = SECTION_DEFAULTS.get(rkey, (100.0, 8.0))
+    return {"recognized_section": None,
+            "normalized_section": f"L{dleg:g}X{dth:g}",
+            "fallback_section": f"L{dleg:g}X{dth:g}",
+            "section_confidence": 0.0,
+            "section_status": "fallback_applied",
+            "leg_mm": dleg, "thickness_mm": dth}
+
+
 def _parse_section(section: Optional[str], role: Optional[str] = None) -> Tuple[float, float]:
     """Parse an angle section as ``(leg, thickness)`` in mm.
 
@@ -1089,32 +1157,13 @@ def _parse_section(section: Optional[str], role: Optional[str] = None) -> Tuple[
     are assigned the role-specific engineering default so every bar has a
     deterministic section.
     """
-    import re
-
-    defaults = {"LEG": (100.0, 7.0), "DIAG": (75.0, 6.0),
-                "HORIZ": (56.0, 4.0), "CROSS": (75.0, 6.0)}
-    fallback = defaults.get(str(role or "").upper(), (100.0, 8.0))
-    text = str(section or "").strip().upper().replace("×", "X").replace("*", "X")
-    # Permit steel grades and the angle symbol before dimensions, but do not
-    # infer a section from an unrelated number (e.g. a bar id).
-    m = re.search(r"(?:L|∠)\s*(\d+(?:\.\d+)?)\s*X\s*(\d+(?:\.\d+)?)", text)
-    if not m:
-        return fallback
-    leg, thickness = float(m.group(1)), float(m.group(2))
-    if leg <= 0 or thickness <= 0 or thickness >= leg:
-        return fallback
-    return leg, thickness
+    r = resolve_section(section, role)
+    return float(r["leg_mm"]), float(r["thickness_mm"])
 
 
 def _section_is_fallback(section: Optional[str], role: str) -> bool:
     """Whether *section* did not contain a valid L leg/thickness pair."""
-    import re
-    text = str(section or "").strip().upper().replace("×", "X").replace("*", "X")
-    m = re.search(r"(?:L|∠)\s*(\d+(?:\.\d+)?)\s*X\s*(\d+(?:\.\d+)?)", text)
-    if not m:
-        return True
-    leg, thickness = float(m.group(1)), float(m.group(2))
-    return leg <= 0 or thickness <= 0 or thickness >= leg
+    return resolve_section(section, role)["section_confidence"] == 0.0
 
 
 def _angle_steel_mesh(section: Optional[str], length: float, role: Optional[str] = None):

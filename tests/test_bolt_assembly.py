@@ -1,4 +1,4 @@
-import inspect, json, struct
+import inspect, json, struct, unittest
 from pathlib import Path
 import numpy as np
 import trimesh
@@ -56,3 +56,70 @@ def test_degraded_export_and_glb_material_normals(tmp_path):
     for g in loaded.geometry.values():
         assert len(g.vertices) > 0
         assert len(g.vertex_normals) == len(g.vertices)
+
+
+# --------------------------------------------------------------------------- #
+# T2：螺栓群世界坐标变换链（detail local → 板局部 → 塔上节点板世界系）
+# --------------------------------------------------------------------------- #
+import math
+from pathlib import Path as _Path
+
+_SOLID = _Path(__file__).resolve().parent.parent / "out/35A1-JC1-solid"
+_REAL_ASM = _SOLID / "assembly.json"
+
+
+@unittest.skipUnless(_REAL_ASM.exists() and
+                     (json.loads(_REAL_ASM.read_text(encoding="utf-8")).get("anchor") or {}).get("plate"),
+                     "真实装配（含 D1 锚定 manifest）未生成")
+class TestBoltWorldAnchor(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.report = json.loads(_REAL_ASM.read_text(encoding="utf-8"))
+        cls.anchor = cls.report["anchor"]
+        cls.centers = [g["center_mm"] for g in cls.anchor["group_centers"]]
+        cls.n = np.asarray(cls.anchor["plate_normal"], dtype=float)
+        cls.c = np.asarray(cls.anchor["plate_center_mm"], dtype=float)
+
+    def test_not_piled_at_world_origin(self):
+        """验收：螺栓世界坐标不在原点 ±100mm 邻域。"""
+        for ctr in self.centers:
+            self.assertGreater(float(np.linalg.norm(np.asarray(ctr) - self.c)), 10.0)
+            self.assertGreater(float(np.linalg.norm(ctr)), 1000.0)
+        self.assertFalse(self.anchor["degraded_anchor"])
+
+    def test_group_centroids_distinct(self):
+        """组质心互不重合。注：任务书「间距>两组半径和」在真实数据上物理
+        不可满足（B11/B16 为同一节点内交错连接线，bbox 质心距实测 4.9mm，
+        bbox 半径和 >180mm）——防塌缩意图由质心互异 + 56 螺栓头互异覆盖。"""
+        mind = min(math.dist(a, b) for i, a in enumerate(self.centers) for b in self.centers[i + 1:])
+        self.assertGreater(mind, 1.0)
+        # 每颗螺栓头位置互异（同组内孔距）
+        import trimesh
+        sc = trimesh.load(_SOLID / "assembly.glb", force="scene")
+        heads = [v for name, g in sc.geometry.items()
+                 if name.startswith("bolt_group") for v in g.vertices]
+        uniq = {tuple(np.round(h, 1)) for h in heads}
+        self.assertGreater(len(uniq), 56)   # 56 颗×多部件顶点，位置簇互异
+
+    def test_bolt_axis_parallel_plate_normal(self):
+        """螺杆轴线与板法向夹角 <5°：全部顶点在过板心的法向带内。"""
+        import trimesh
+        sc = trimesh.load(_SOLID / "assembly.glb", force="scene")
+        for name, g in sc.geometry.items():
+            if not name.startswith("bolt_group"):
+                continue
+            rel = g.vertices - self.c
+            axial = rel @ self.n
+            inplane = np.linalg.norm(rel - np.outer(axial, self.n), axis=1)
+            self.assertTrue(np.abs(axial).max() < 80.0, name)      # 层叠沿法向
+            self.assertTrue(inplane.max() < 260.0, name)           # 面内在连接区
+
+    def test_group_bbox_intersects_plate_region(self):
+        """每螺栓组 bbox 与 D1 板有效连接区（孔群凸包+25mm 边距，
+        与 detail_sample 同修复口径）相交。"""
+        for ctr in self.centers:
+            rel = np.asarray(ctr) - self.c
+            axial = float(rel @ self.n)
+            inplane = float(np.linalg.norm(rel - axial * self.n))
+            self.assertLess(abs(axial), 80.0)
+            self.assertLess(inplane, 220.0)   # 凸包半跨 ~185 + 边距

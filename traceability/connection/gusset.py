@@ -107,12 +107,62 @@ def add_gusset_to_model(model: EngineeringModel, plate: GussetPlate) -> Componen
     return comp
 
 
-def make_gusset_shell(polygon_2d, thickness_mm):
-    """Create a watertight triangularly-capped thin plate from a 2-D polygon.
+def _triangulate_polygon(pts):
+    """Ear-clipping 三角化简单多边形（支持凹形），返回 CCW 三角形索引表。
 
-    The polygon is interpreted in its local XY plane and the thickness is along Z.
-    This intentionally uses no optional triangulation backend, making it reliable in
-    the minimal trimesh + numpy installation used by the pipeline.
+    输入 pts 为去重后的多边形顶点（任意绕向）。O(n²) 对节点板轮廓（n<100）
+    足够；找不到耳即失败（自交输入），由调用方兜底 watertight 校验。
+    """
+    def shoelace(poly):
+        return sum(poly[i][0] * poly[(i + 1) % len(poly)][1]
+                   - poly[(i + 1) % len(poly)][0] * poly[i][1]
+                   for i in range(len(poly))) / 2.0
+
+    def tri_area(a, b, c):
+        return ((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2.0
+
+    def point_in_tri(p, a, b, c):
+        d1 = tri_area(a, b, p); d2 = tri_area(b, c, p); d3 = tri_area(c, a, p)
+        has_neg = min(d1, d2, d3) < -1e-9
+        has_pos = max(d1, d2, d3) > 1e-9
+        return not (has_neg and has_pos)
+
+    idx = list(range(len(pts)))
+    flip = shoelace(pts) < 0
+    if flip:
+        idx.reverse()
+    work = [pts[i] for i in idx]
+    tris = []
+    guard = 0
+    while len(idx) > 3 and guard < 10000:
+        guard += 1
+        m = len(idx)
+        clipped = False
+        for i in range(m):
+            ia, ib, ic = idx[(i - 1) % m], idx[i], idx[(i + 1) % m]
+            a, b, c = pts[ia], pts[ib], pts[ic]
+            if tri_area(a, b, c) <= 1e-9:      # 凹角/退化，不是耳
+                continue
+            if any(point_in_tri(pts[j], a, b, c) for j in idx if j not in (ia, ib, ic)):
+                continue
+            tris.append((ia, ib, ic) if not flip else (ia, ic, ib))
+            idx.pop(i)
+            clipped = True
+            break
+        if not clipped:
+            raise ValueError("ear clipping failed: polygon self-intersecting or degenerate")
+    if len(idx) == 3:
+        tris.append((idx[0], idx[1], idx[2]) if not flip else (idx[0], idx[2], idx[1]))
+    else:
+        raise ValueError("ear clipping failed: residual polygon")
+    return tris
+
+
+def make_gusset_shell(polygon_2d, thickness_mm):
+    """Create a watertight thin plate from a 2-D simple polygon (T4: concave-safe).
+
+    Caps are triangulated with ear clipping (handles concave node plates), walls
+    extruded along +Z by thickness_mm. No optional triangulation backend needed.
     """
     import numpy as np
     import trimesh
@@ -136,10 +186,13 @@ def make_gusset_shell(polygon_2d, thickness_mm):
         pts.reverse()
     n = len(pts)
     verts = np.array([(x, y, 0.0) for x, y in pts] + [(x, y, float(thickness_mm)) for x, y in pts], dtype=float)
+    # T4：ear clipping 三角化（凹多边形安全）——原扇形切法只对凸轮廓可靠，
+    # 凹节点板会产生穿出轮廓/自交的三角形。
+    tris = _triangulate_polygon(pts)
     faces = []
-    for i in range(1, n - 1):
-        faces.append((0, i, i + 1))
-        faces.append((n, n + i + 1, n + i))
+    for (a, b, c) in tris:
+        faces.append((a, c, b))            # 底盖（法向 -Z）
+        faces.append((n + a, n + b, n + c))  # 顶盖（法向 +Z）
     for i in range(n):
         j = (i + 1) % n
         faces.extend(((i, j, n + j), (i, n + j, n + i)))

@@ -228,3 +228,44 @@ class TestNoEvidenceSelector(unittest.TestCase):
         m = _synth_model()
         res = gusset_anchor.anchor_gussets_to_model(m, [{"z_mm": 17500, "face": "side"}])
         self.assertEqual(res["plates"][0]["selector"], "z")
+
+
+class TestConcaveTriangulation(unittest.TestCase):
+    """T4：凹（L 形）节点板轮廓 ear clipping 正确性。"""
+
+    L_SHAPE = [(0, 0), (120, 0), (120, 50), (60, 50), (60, 100), (0, 100)]
+
+    def _shoelace(self, poly):
+        return abs(sum(poly[i][0] * poly[(i + 1) % len(poly)][1]
+                       - poly[(i + 1) % len(poly)][0] * poly[i][1]
+                       for i in range(len(poly))) / 2.0)
+
+    def test_l_shaped_plate_watertight_and_volume(self):
+        mesh = gusset.make_gusset_shell(self.L_SHAPE, 8.0)
+        self.assertTrue(mesh.is_watertight)
+        area = self._shoelace(self.L_SHAPE)          # 120*100 - 60*50 = 9000
+        self.assertAlmostEqual(area, 9000.0, delta=1e-6)
+        self.assertAlmostEqual(mesh.volume, area * 8.0, delta=1.0)
+
+    def test_triangle_area_sum_equals_shoelace(self):
+        tris = gusset._triangulate_polygon(self.L_SHAPE)
+        def ta(a, b, c):
+            return abs((b[0]-a[0])*(c[1]-a[1]) - (c[0]-a[0])*(b[1]-a[1])) / 2.0
+        pts = self.L_SHAPE
+        total = sum(ta(pts[a], pts[b], pts[c]) for a, b, c in tris)
+        self.assertAlmostEqual(total, self._shoelace(pts), delta=1e-6)
+        self.assertEqual(len(tris), len(pts) - 2)    # n-2 三角形
+        # 所有三角形顶点都在轮廓顶点集内（不新增穿出点）
+        used = {v for t in tris for v in t}
+        self.assertTrue(used <= set(range(len(pts))))
+
+    def test_convex_still_works(self):
+        rect = [(0, 0), (100, 0), (100, 60), (0, 60)]
+        mesh = gusset.make_gusset_shell(rect, 6.0)
+        self.assertTrue(mesh.is_watertight)
+        self.assertAlmostEqual(mesh.volume, 100 * 60 * 6, delta=1.0)
+
+    def test_self_intersecting_raises(self):
+        bowtie = [(0, 0), (100, 0), (0, 100), (100, 100)]   # 自交
+        with self.assertRaises(ValueError):
+            gusset.make_gusset_shell(bowtie, 6.0)
