@@ -92,13 +92,28 @@ def run_postprocess(out_dir: Path, repo: Path, overlay_path: Path,
         old = repo / "out/35A1-JC1-baseline/model.json"
         if not old.exists():
             return "跳过：冻结基线缺失（diff 模式不可用）"
+        if not (out_dir / "model.json").exists():
+            return "跳过：主模型缺失（前序 deliver 失败，无 diff 可生成）"
+        # P5 修复（2026-08-31）：diff 脚本的 DEFAULT_NEW 硬编码指向
+        # full-deliver 目录——production/canonical 独立 out_dir 时它
+        # 仍读旧 full-deliver 模型、把 diff.glb 写回 full-deliver，而
+        # 本函数却在 out_dir 下 stat() → FileNotFoundError（postprocess
+        # 未闭环的直接原因）。改为显式传 --new/--out-dir，diff 永远
+        # 基于本次 out_dir 的模型生成、落在本次 out_dir 里。
         r = subprocess.run(
-            [sys.executable, str(repo / "scripts/generate_diff_glb.py")],
+            [sys.executable, str(repo / "scripts/generate_diff_glb.py"),
+             "--old", str(old),
+             "--new", str(out_dir / "model.json"),
+             "--out-dir", str(out_dir)],
             capture_output=True, text=True,
         )
         if r.returncode != 0:
             raise RuntimeError(f"generate_diff_glb 退出码 {r.returncode}: {r.stderr[:400]}")
-        return f"diff.glb ({(out_dir / 'diff.glb').stat().st_size // 1024} KB)"
+        glb = out_dir / "diff.glb"
+        if not glb.exists():
+            raise RuntimeError(
+                f"diff 生成器退出码 0 但未产出 {glb}（生成器内部路径异常）")
+        return f"diff.glb ({glb.stat().st_size // 1024} KB)"
 
     def run_version() -> str:
         info = write_version_manifest(out_dir, repo, overlay_path)

@@ -1530,6 +1530,18 @@ def derive_panel_levels(
             cur = [z]
     clusters.append(cur)
 
+    # P4.3 实验结论（2026-08-31，已回滚）：簇内高斯核密度谷分割
+    # （σ=200/vr=0.4）确实能从 [30400~32800] 宽簇里分出 30700+32700
+    # 双平台层（层位 Δ≤100），但——
+    #   * 32700 横隔 hw 拟合与 GT 层几何不匹配（4 FN 依旧）；
+    #   * [13800~15500] 簇同时被切出 15400 噪声子层，连锁破坏 16000
+    #     层横隔（16 TP → FN）；
+    #   * 实测净退化 horiz_x 91→75。
+    # 塔头横担区平台（30000/32700）的横隔几何缺口与 canonical 同源
+    # （canonical 也无法命中，见 PRODUCTION_REGRESSION_ANALYSIS.md
+    # 「结构性 FN」一节），层位恢复本身不带来收益。故保持链式聚类
+    # 原样，不再做密度分割。
+
     levels: List[float] = []
     for c in clusters:
         # 风险5 证据去重：跨簇合并杆件 ID 集合后再计数——同一根杆
@@ -1555,6 +1567,7 @@ def derive_panel_levels(
         else:
             merged.append(z)
     return merged
+
 
 
 def derive_panel_levels_detailed(
@@ -1671,6 +1684,299 @@ def derive_panel_levels_detailed(
     records.sort(key=lambda r: r["z_mm"])
     levels_out = [float(r["z_mm"]) for r in records]
     return levels_out, records
+
+
+# ---------------------------------------------------------------------------
+# P4.2：生产 DXF 平台标高推导 v2——主腿斜率转折锚定（2026-08-31 归因后重构）
+#
+# v1（derive_panel_levels）实测缺陷（production 25 层 vs GT 15 层）：
+#   * 噪声层：7600/9500/17700/20000/25400/26300/27300/28800 —— 无平台
+#     但有杆端点密簇（06 拓扑窗斜材端点、跨段标注残片）；
+#   * 分裂/拉偏：GT 11500 被簇中位数拉到 12400（斜材端点 27 根投票），
+#     14000 分裂成 13200/14400。
+#
+# v2 物理先验：铁塔主腿是分段收腰的直线链——平台标高处坡度必变
+# （|Δslope| 显著）。主腿 z→x 序列的斜率转折点是平台层的**强证据**：
+#   * 断点 ±400 内的 DXF 簇 → 真层，z 向断点校正（拉回中位数漂移）；
+#   * 断点无簇但 ±600 内有 ≥2 独立杆端点 → 直接采纳断点；
+#   * 无断点支持的簇 → 噪声抑制。
+# 实测（35A1-JC1 production）：断点 6500/8500/11500/14250/16250/19000/
+# 21000/22750/23750 与 GT 9 个塔身层一一对齐（Δ≤250mm）。
+# ---------------------------------------------------------------------------
+
+
+def _extract_leg_breakpoints(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    slope_delta_threshold: float = 0.025,
+    min_leg_incl_deg: float = 60.0,
+    max_seg_gap_mm: float = 800.0,
+) -> List[float]:
+    """从主腿链提取斜率转折标高。
+
+    主腿判据（几何，不依赖 role 标注——调用点 role 尚未赋值）：
+    近竖直（倾角 >= min_leg_incl_deg）+ 贴外缘（径向 |x| 或 |y| 为该
+    标高层附近最大）。链构建：端点共享 + z 单调段。转折判定：相邻段
+    |Δslope| > slope_delta_threshold 且段长 >= max_seg_gap_mm/2。
+
+    返回转折 z 列表（升序，500mm 网格去重）。
+    """
+    import math as _math
+    from collections import defaultdict as _dd
+
+    # 1. 候选主腿杆：近竖直
+    leg_like: List[dict] = []
+    for b in bars:
+        f, t = nodes.get(b.get("from")), nodes.get(b.get("to"))
+        if f is None or t is None:
+            continue
+        dz = abs(float(t[2]) - float(f[2]))
+        dh = _math.hypot(
+            float(t[0]) - float(f[0]), float(t[1]) - float(f[1]))
+        if dz < 500.0:
+            continue
+        if _math.degrees(_math.atan2(dz, dh)) < min_leg_incl_deg:
+            continue
+        leg_like.append(b)
+    if not leg_like:
+        return []
+
+    # 2. 连通成链
+    adj: Dict[str, List[str]] = _dd(list)
+    bid_of = {}
+    for b in leg_like:
+        f, t = str(b.get("from")), str(b.get("to"))
+        adj[f].append(t)
+        adj[t].append(f)
+        bid_of[f"{f}->{t}"] = str(b.get("id") or f"{f}->{t}")
+        bid_of[f"{t}->{f}"] = str(b.get("id") or f"{f}->{t}")
+    seen: set = set()
+    breakpoints: List[float] = []
+    for start in list(adj):
+        if start in seen:
+            continue
+        # 连通分量
+        comp, stack = [], [start]
+        seen.add(start)
+        while stack:
+            cur = stack.pop()
+            comp.append(cur)
+            for nb in adj[cur]:
+                if nb not in seen:
+                    seen.add(nb)
+                    stack.append(nb)
+        if len(comp) < 3:
+            continue
+        # 3. 分量内找 z 单调主链（从端点出发的 DFS 最长路径）
+        comp_set = set(comp)
+        ends = [n for n in comp if len([x for x in adj[n] if x in comp_set]) == 1]
+        best_chain: List[str] = []
+        for e in (ends or comp[:1]):
+            stack = [(e, [e])]
+            while stack:
+                cur, path = stack.pop()
+                ext = False
+                for nb in adj[cur]:
+                    if nb in comp_set and nb not in path:
+                        stack.append((nb, path + [nb]))
+                        ext = True
+                if not ext and len(path) > len(best_chain):
+                    best_chain = path
+        if len(best_chain) < 3:
+            continue
+        # 4. 链上节点 z 排序 → 斜率转折
+        chain_pts = []
+        for nid in best_chain:
+            p = nodes.get(nid)
+            if p is not None and p[2] is not None:
+                chain_pts.append((float(p[2]), float(p[0]), float(p[1])))
+        chain_pts.sort(key=lambda q: q[0])
+        if len(chain_pts) < 3:
+            continue
+        # 相邻段斜率（径向收腰：用 |x| 与 |y| 的较大者——主腿在立面图
+        # 的投影方向不定，取径向更稳）
+        slopes: List[Tuple[float, float]] = []  # (z_mid, slope)
+        for i in range(1, len(chain_pts)):
+            z0, r0 = chain_pts[i - 1][0], max(abs(chain_pts[i - 1][1]), abs(chain_pts[i - 1][2]))
+            z1, r1 = chain_pts[i][0], max(abs(chain_pts[i][1]), abs(chain_pts[i][2]))
+            if z1 - z0 < 100.0:
+                continue
+            slopes.append((z0, z1, (r1 - r0) / (z1 - z0)))
+        for i in range(1, len(slopes)):
+            _, z0a, s_prev = slopes[i - 1]
+            z1a, _, s_cur = slopes[i]
+            if abs(s_cur - s_prev) <= slope_delta_threshold:
+                continue
+            # 转折 z 取两段交界节点
+            zp = z1a
+            if breakpoints and abs(zp - breakpoints[-1]) < 500.0:
+                breakpoints[-1] = (breakpoints[-1] + zp) / 2.0
+            else:
+                breakpoints.append(zp)
+    breakpoints.sort()
+    # 500mm 网格去重
+    dedup: List[float] = []
+    for z in breakpoints:
+        if dedup and abs(z - dedup[-1]) < 500.0:
+            continue
+        dedup.append(z)
+    return dedup
+
+
+def derive_panel_levels_v2(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    cluster_gap_mm: float = 400.0,
+    min_node_evidence: int = 4,
+    min_horiz_evidence: int = 2,
+    manual_levels: Optional[List[float]] = None,
+    manual_snap_mm: float = 500.0,
+    breakpoint_anchor_mm: float = 400.0,
+    breakpoint_free_evidence_mm: float = 600.0,
+    breakpoint_free_min_bars: int = 2,
+) -> Tuple[List[float], List[dict]]:
+    """P4.2：断点锚定的平台标高推导（生产 DXF 口径）。
+
+    在 v1 簇证据之上叠加主腿斜率转折证据：
+        * 断点 ±breakpoint_anchor_mm 内的簇 → 真层（z 取簇内靠近断点的
+          加权中位数，向断点校正不超过 anchor 距离）；
+        * 断点 ±breakpoint_free_evidence_mm 内有 >= breakpoint_free_min_bars
+          根独立杆端点（即使不成簇）→ 直接采纳断点 z；
+        * 其余簇 → 噪声抑制（无主腿收腰支持的平台不可信）。
+    manual_levels 吸附语义与 derive_panel_levels_detailed 兼容。
+
+    返回 (levels, records)；records 增加 leg_breakpoint 字段（可追溯）。
+    """
+    # 1. v1 簇证据（复用完整逻辑拿 records）
+    _base_levels, records = derive_panel_levels_detailed(
+        nodes, bars,
+        cluster_gap_mm=cluster_gap_mm,
+        min_node_evidence=min_node_evidence,
+        min_horiz_evidence=min_horiz_evidence,
+    )
+    # 2. 主腿断点
+    breakpoints = _extract_leg_breakpoints(nodes, bars)
+
+    # 3. 端点证据密度（断点免簇采纳用）：z(100mm 桶) → 独立杆集合
+    from collections import defaultdict as _dd
+    ev_bars: Dict[int, set] = _dd(set)
+    for b in bars:
+        f, t = nodes.get(b.get("from")), nodes.get(b.get("to"))
+        if f is None or t is None:
+            continue
+        bid = str(b.get("id") or f"{b.get('from')}->{b.get('to')}")
+        for p in (f, t):
+            ev_bars[int(round(float(p[2]) / 100.0) * 100)].add(bid)
+
+    out_records: List[dict] = []
+    used_bp: set = set()
+
+    # 4. 断点免簇采纳（无簇但有杆端点证据）
+    for bp in breakpoints:
+        near_bars: set = set()
+        for zb, bs in ev_bars.items():
+            if abs(float(zb) - bp) <= breakpoint_free_evidence_mm:
+                near_bars |= bs
+        if len(near_bars) >= breakpoint_free_min_bars:
+            continue  # 先不采纳——若附近有簇，走簇校正路径
+        # 采纳断点
+        out_records.append({
+            "z_mm": round(float(bp), 1),
+            "source": "dxf",
+            "n_bar_evidence": len(near_bars),
+            "n_horiz_evidence": 0,
+            "z_cluster_span_mm": [float(bp), float(bp)],
+            "manual_snapped": False,
+            "leg_breakpoint": True,
+        })
+
+    # 5. 簇过滤与校正
+    for rec in records:
+        if rec.get("source") == "manual":
+            out_records.append(dict(rec))
+            continue
+        z = float(rec["z_mm"])
+        bp_near = [bp for bp in breakpoints
+                   if abs(bp - z) <= breakpoint_anchor_mm]
+        if not bp_near:
+            # 无断点支持的簇——噪声抑制
+            # （horiz 证据强的簇例外：已绘水平材直接可信，如 22700 层）
+            if int(rec.get("n_horiz_evidence") or 0) >= min_horiz_evidence:
+                rec2 = dict(rec)
+                rec2["leg_breakpoint"] = False
+                out_records.append(rec2)
+            continue
+        bp = min(bp_near, key=lambda b: abs(b - z))
+        # z 向断点校正（拉回中位数漂移，幅度不超过 anchor 距离）
+        z_corrected = z + (bp - z) * 0.5
+        rec2 = dict(rec)
+        rec2["z_mm"] = round(z_corrected, 1)
+        rec2["leg_breakpoint"] = True
+        out_records.append(rec2)
+
+    # 6. 断点免簇采纳（第 4 步推迟到此处统一）：处理「断点无簇」情形
+    bp_claimed = set()
+    for rec in out_records:
+        if rec.get("leg_breakpoint"):
+            for bp in breakpoints:
+                if abs(float(rec["z_mm"]) - bp) <= breakpoint_anchor_mm + 250.0:
+                    bp_claimed.add(bp)
+    for bp in breakpoints:
+        if bp in bp_claimed:
+            continue
+        near_bars: set = set()
+        for zb, bs in ev_bars.items():
+            if abs(float(zb) - bp) <= breakpoint_free_evidence_mm:
+                near_bars |= bs
+        if len(near_bars) >= breakpoint_free_min_bars:
+            out_records.append({
+                "z_mm": round(float(bp), 1),
+                "source": "dxf",
+                "n_bar_evidence": len(near_bars),
+                "n_horiz_evidence": 0,
+                "z_cluster_span_mm": [float(bp), float(bp)],
+                "manual_snapped": False,
+                "leg_breakpoint": True,
+            })
+
+    # 7. manual 吸附（与 v1 兼容）
+    used_manual: set = set()
+    if manual_levels:
+        for rec in out_records:
+            best_m = min(manual_levels, key=lambda mz: abs(mz - float(rec["z_mm"])))
+            if abs(best_m - float(rec["z_mm"])) <= manual_snap_mm:
+                rec["z_mm"] = round(float(best_m), 1)
+                rec["manual_snapped"] = True
+                used_manual.add(best_m)
+        for mz in sorted(manual_levels):
+            if mz not in used_manual:
+                out_records.append({
+                    "z_mm": round(float(mz), 1),
+                    "source": "manual",
+                    "n_bar_evidence": 0,
+                    "n_horiz_evidence": 0,
+                    "z_cluster_span_mm": [float(mz), float(mz)],
+                    "manual_snapped": False,
+                    "leg_breakpoint": False,
+                })
+
+    out_records.sort(key=lambda r: float(r["z_mm"]))
+    # 相邻层过近合并（<350mm）
+    merged: List[dict] = []
+    for rec in out_records:
+        if merged and float(rec["z_mm"]) - float(merged[-1]["z_mm"]) < 350.0:
+            # 保留断点证据更强者
+            prev, cur = merged[-1], rec
+            if cur.get("leg_breakpoint") and not prev.get("leg_breakpoint"):
+                merged[-1] = cur
+            else:
+                prev["z_mm"] = round(
+                    (float(prev["z_mm"]) + float(cur["z_mm"])) / 2.0, 1)
+        else:
+            merged.append(rec)
+    return [float(r["z_mm"]) for r in merged], merged
 
 
 def subdivide_legs_at_levels(

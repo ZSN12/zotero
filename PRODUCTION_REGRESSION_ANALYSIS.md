@@ -101,3 +101,76 @@ production full 79 TP vs canonical 基线 241 TP 的 **162 TP 差距**分解：
   + model.json 的 drawing_file.properties（keep_drop 过滤会留 centerline_geom_filter 痕迹）
 - production profile 的 overlay 快照写到固定目录 out/35A1-JC1-production/
   （不受 --out-dir 影响）——runner 的小 bug，待修
+
+---
+
+# 附录 B：2026-08-31 第二轮收敛（层位实验 + FP 归因 + 后处理闭环）
+
+## B.1 本轮改动与最终状态
+
+| 改动 | 效果 | 决定 |
+|---|---|---|
+| DXF 模式移除横隔 z_cap（`diaphragm_z_cap_enabled=False`） | full 198→206，horiz_x 83→91（+8） | **保留**（塔头 6 个真实平台层恢复） |
+| `derive_panel_levels_v2`（断点锚定） | full 198→140（图碎裂，断点仅 1 个） | **拒绝**（实验代码保留，默认 v1） |
+| 簇内密度谷分割（σ=200/vr=0.4） | 层 25→27（30700/32700 恢复）但 horiz_x 91→75 | **回滚**（详见 B.3） |
+| `run_diff` 显式传 `--old/--new/--out-dir` | diff.glb 落在各自 out_dir，postprocess 4/4 | **保留** |
+
+冻结基线见 `out/baselines-frozen/BASELINE_MANIFEST.json`：
+- canonical_assisted：full 336 / horiz_x 158 / gate ok / postprocess ok
+- production_dxf：full 206 / horiz_x 91 / gate ok / postprocess ok
+
+## B.2 生产 horiz_x 117 FN 的真实构成（修正此前误判）
+
+match_provenance 的 `matched=None` 条目是「各口径并列记录」，此前按
+`not matched` 过滤会把 full 口径已匹配的层误判为 FN。用
+`matched_at_default` 重算后（2D front 投影、端点距离和 ≤500）：
+
+| z | FN | 根因 |
+|---|---|---|
+| 11500 | 16 | 推导层缺失（12400 簇，Δ900） |
+| 14000 | 16 | 层位偏 400（14400，和≈800>500） |
+| 19000 | 16 | 层位偏 300（19300，双峰簇，和≈600>500） |
+| 20700/21000 | 4+16 | 20883 层：hw 交叉点错位 + GT 重复条目 |
+| 22800 | 10 | GT 16 半跨 vs 模型 8 可用（重复条目结构性缺口） |
+| 30000 | 23 | **结构性**：横担平台梁 ±2200 跨度，横隔只覆塔身 hw（canonical 0/25 同样 FN） |
+| 32700 | 4 | 同上（横担区平台） |
+| 30800/33500/34200/36600 | 2+8+2+8 | hw 拟合偏差（29800 层左右不对称 675/886） |
+
+关键结论：**30000 层 23 FN 在 canonical（GT 层位）下也是 0/25**——
+横隔生成器无法表达横担平台梁布局，这不是生产层位缺口，是结构性 FN。
+生产与 canonical 的真实 horiz_x 差距 ≈ 67 = 层位 z 偏差 48 + 顶部 hw ~15 + 缺层 4。
+
+## B.3 谷分割实验回滚详情
+
+簇内 KDE 谷分割（σ=200/vr=0.4/合并 1000/子簇≥4 杆）确实从
+[30400~32800] 宽簇分出 30700（Δ100）+32700（Δ0）双平台层，但：
+- 32700 横隔 hw 与 GT 层几何不匹配（4 FN 依旧，结构性）
+- [13800~15500] 簇同时切出 15400 噪声子层（6 杆证据过阈），
+  连锁破坏 16000 层横隔（16 TP→FN，机制待查：腿细分/角点候选串扰）
+- 净退化 horiz_x 91→75 → 回滚
+
+若未来重启，需先解决：噪声子层的证据量判据（17700 层 bars=57 与
+真层不可分）+ 子层对相邻层横隔的干扰隔离。
+
+## B.4 Phase 2 归因：reconstructed 845 FP（2D front/full/tol500）
+
+| 来源 | n | TP | FP | P |
+|---|---:|---:|---:|---:|
+| diagonal_topology_reconstructed | 496 | 91 | 405 | 18.3% |
+| diaphragm_reconstructed | 484 | 82 | 402 | 16.9% |
+| dxf_geom | 131 | 22 | 109 | 16.8% |
+| panel_subdivision | 20 | 5 | 15 | 25.0% |
+| panel_cross_reconstructed | 13 | 0 | 13 | 0% |
+| collinear_stitch | 11 | 1 | 10 | 9.1% |
+| derived_parametric_base | 7 | 5 | 2 | 71.4% |
+
+横隔 402 FP 细分：
+- **噪声层横隔 242**（12 个非 GT 层 × 22 杆：7600/9500/10700/12400/
+  13200/14400/17700/19300/25400/26300/27300/28800）
+- GT 层附近几何/竞争失败 ~84（29800:20、31000:22、33500:20 等）
+- GT 层重复段 ~76（如 22800 层模型 20+ 杆 vs GT 16 杆）
+
+拓扑重建 405 FP 按区段：塔身中段(06) 189、塔脚(05) 112、上段(07) 104、塔头(04) 0。
+
+下一步优先级（按用户计划）：06 selection_mode A/B → 拓扑 FP 收敛 →
+横隔层位置信度（区分 19300 噪声 vs 20700 真层）→ 主腿链。

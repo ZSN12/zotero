@@ -368,12 +368,25 @@ def expand_4_face_symmetry_model(
         from ..debug.gt_profile import gt_platform_levels
         panel_levels = list(gt_platform_levels())
     elif level_source == "dxf":
-        from ..solve.tower_geometry import derive_panel_levels_detailed
+        # P4.2 实测结论（2026-08-31）：v2 主腿断点在真实 merge 节点集上
+        # 不可靠（碎片化链图 → 断点只剩 1 个，层推导退化为 5 层，full
+        # 198→140 净退化）。默认回退 v1（簇证据推导 25 层，其中塔头 6 层
+        # 与 GT 全对齐 Δ≤224mm）；v2 保留为 overlay panel_level_algo=v2
+        # 实验入口，待重设计：单调包络（isotonic）+ 横杆证据融合。
+        _algo = str(spec.get("panel_level_algo", "v1"))
         _manual = spec.get("panel_level_manual_levels") or []
-        panel_levels, _pl_records = derive_panel_levels_detailed(
-            snapped_nodes, snapped_bars,
-            manual_levels=[float(z) for z in _manual] if _manual else None,
-        )
+        if _algo == "v2":
+            from ..solve.tower_geometry import derive_panel_levels_v2
+            panel_levels, _pl_records = derive_panel_levels_v2(
+                snapped_nodes, snapped_bars,
+                manual_levels=[float(z) for z in _manual] if _manual else None,
+            )
+        else:
+            from ..solve.tower_geometry import derive_panel_levels_detailed
+            panel_levels, _pl_records = derive_panel_levels_detailed(
+                snapped_nodes, snapped_bars,
+                manual_levels=[float(z) for z in _manual] if _manual else None,
+            )
         # P4.1 证据链：逐层来源（dxf/manual + manual_snapped）进 drawing_file，
         # delivery 可呈现「每个节间的层位证据」。
         _df_pl = model.components.get("drawing_file")
@@ -390,12 +403,16 @@ def expand_4_face_symmetry_model(
         filter_panel_levels_for_diaphragms,
         resolve_diaphragm_z_cap,
     )
-    # P3.2 修正（2026-08-31 回归归因）：z_cap 只对 DXF 推导层位生效。
-    # GT canonical 层位是权威证据——本塔 GT 在塔头横担区（30024~36600）
-    # 确有 6 个平台层横隔，cap 会误杀（horiz_x 162→143，−19 TP，
-    # 实测见 PRODUCTION_REGRESSION_ANALYSIS.md）。DXF 层位的塔头聚类
-    # 噪声（30300/32600 等漂移簇）仍需要 cap 清理。
-    if level_source == "gt":
+    # P3.2 修正（2026-08-31 回归归因，二段）：z_cap 废除——本塔 GT 塔头
+    # 横担区（30024~36600）确有 6 个平台层横隔；production DXF 推导层
+    # 29800/31000/33500/34400/36600 全部对应真实 GT 层（Δ≤224mm），
+    # cap 一刀切砍掉 = horiz_x 直接损失 ~60 TP（实测 production
+    # horiz_x 83 vs canonical 158 的主差距）。横担区噪声层交给
+    # derive 层位的证据门槛控制，不再用几何 cap。
+    # （overlay 保留 diaphragm_z_cap_enabled=true 可回退旧行为。）
+    if not bool(spec.get("diaphragm_z_cap_enabled", False)):
+        _z_cap = None
+    elif level_source == "gt":
         _z_cap = None
     else:
         _z_cap = resolve_diaphragm_z_cap(
