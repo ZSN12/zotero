@@ -210,7 +210,8 @@ def anchor_gussets_to_model(model: EngineeringModel, node_specs) -> Dict[str, An
     nodes = {cid: c for cid, c in model.components.items() if c.kind == "tower_node"}
     bars = [c for c in model.components.values() if c.kind == "tower_bar"]
     specs = list(node_specs or [])
-    result = {"plates": [], "anchored": [], "failed": [], "d1": None}
+    result = {"plates": [], "anchored": [], "failed": [],
+              "review_required": [], "d1": None}
 
     # Preserve the established detail route; never overwrite its semantics.
     try:
@@ -222,17 +223,30 @@ def anchor_gussets_to_model(model: EngineeringModel, node_specs) -> Dict[str, An
         spec = dict(spec0 or {})
         requested = spec.get("node_id")
         node_id = requested if requested in nodes else None
+        selector = "node_id" if node_id else None
         if node_id is None:
             target_z = spec.get("z_mm", spec.get("z"))
+            pos = spec.get("position_mm") or spec.get("xyz") or spec.get("anchor_position")
             candidates = list(nodes.items())
-            if target_z is not None:
+            if pos is not None and len(pos) == 3:
+                # 证据选择器 2：锚点三维坐标 → 最近节点（3D 距离）
+                pv = np.asarray([float(v) for v in pos], dtype=float)
+                candidates.sort(key=lambda kv: float(np.linalg.norm(
+                    np.asarray([float(kv[1].properties.get(k, 0.0)) for k in ("x", "y", "z")]) - pv)))
+                selector = "anchor_position"
+            elif target_z is not None:
+                # 证据选择器 3：标高 → 最近 z 节点
                 candidates.sort(key=lambda kv: abs(float(kv[1].properties.get("z", 0)) - float(target_z)))
-            else:
-                candidates.sort(key=lambda kv: kv[0])
-            if candidates:
+                selector = "z"
+            # T1：无任何证据选择器 → 不再按字典序猜节点（可能把板挂到塔脚），
+            # 返回 review_required 交人工复核。
+            if selector and candidates:
                 node_id = candidates[0][0]
         if node_id is None:
-            result["failed"].append({"spec": spec, "reason": "node_not_found"})
+            entry = {"spec": spec, "reason": "no_evidence_selector",
+                     "status": "review_required"}
+            result["review_required"].append(entry)
+            result["failed"].append({"spec": spec, "reason": "review_required_no_evidence_selector"})
             continue
         node = nodes[node_id]
         p = np.array([float(node.properties.get(k, 0.0)) for k in ("x", "y", "z")])
@@ -279,7 +293,8 @@ def anchor_gussets_to_model(model: EngineeringModel, node_specs) -> Dict[str, An
         mesh.metadata = {"component_id": cid, "node_id": node_id, "kind": "gusset_plate"}
         item = {"gusset": cid, "node_id": node_id, "position_mm": p.tolist(), "normal": n.tolist(),
                 "dimensions_mm": [width, height], "thickness_mm": thickness,
-                "source": "synthesized", "associated_bars": [b.id for b, _ in related], "mesh": mesh}
+                "source": "synthesized", "selector": selector,
+                "associated_bars": [b.id for b, _ in related], "mesh": mesh}
         result["plates"].append(item)
         result["anchored"].append({k: v for k, v in item.items() if k != "mesh"})
     return result

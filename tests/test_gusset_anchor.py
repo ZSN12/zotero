@@ -195,3 +195,36 @@ class TestGussetArtifact(unittest.TestCase):
         # 覆盖 ≥2 个高度带（塔身中段 15-25k 与塔头 30k+）
         bands = {("mid" if 15000 <= z < 30000 else "head" if z >= 30000 else "low") for z in zs}
         self.assertGreaterEqual(len(bands), 2, f"节点带覆盖不足: {zs}")
+
+
+class TestNoEvidenceSelector(unittest.TestCase):
+    """T1：无 node_id/锚点/z 选择器 → review_required，绝不字典序猜节点。"""
+
+    def test_spec_without_selector_goes_review_required(self):
+        m = _synth_model()
+        before = len(m.components)
+        res = gusset_anchor.anchor_gussets_to_model(m, [{"face": "front"}])
+        self.assertEqual(res["plates"], [])
+        self.assertTrue(any(e.get("status") == "review_required" for e in res["review_required"]))
+        self.assertEqual(res["review_required"][0]["reason"], "no_evidence_selector")
+        self.assertEqual(len(m.components), before)   # 模型组件数不增加
+
+    def test_unknown_node_id_without_fallback_review_required(self):
+        m = _synth_model()
+        res = gusset_anchor.anchor_gussets_to_model(m, [{"node_id": "N_NOT_EXIST"}])
+        self.assertEqual(res["plates"], [])
+        self.assertEqual(len(res["review_required"]), 1)
+
+    def test_anchor_position_selector_still_works(self):
+        m = _synth_model()
+        res = gusset_anchor.anchor_gussets_to_model(
+            m, [{"position_mm": [500, 500, 17900], "face": "front"}])
+        self.assertEqual(len(res["plates"]), 1)
+        self.assertEqual(res["plates"][0]["node_id"], "N_mid0")
+        self.assertEqual(res["plates"][0]["selector"], "anchor_position")
+
+    def test_existing_11_tests_backward_compatible(self):
+        # z 选择器路径带 selector 标记
+        m = _synth_model()
+        res = gusset_anchor.anchor_gussets_to_model(m, [{"z_mm": 17500, "face": "side"}])
+        self.assertEqual(res["plates"][0]["selector"], "z")
