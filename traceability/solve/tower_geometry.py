@@ -939,6 +939,7 @@ def generate_diaphragms(
     with_perimeter: bool = True,
     levels: Optional[List[float]] = None,
     level_source_label: Optional[str] = None,
+    dedup_report: Optional[dict] = None,
 ) -> Tuple[NodeMap, List[dict]]:
     """在各标高平台处生成水平横隔面（内部横隔材）。
 
@@ -1030,6 +1031,27 @@ def generate_diaphragms(
     new_nodes = dict(nodes)
     node_id_counter = max((int(k.split('_')[-1]) for k in new_nodes if k.split('_')[-1].isdigit()), default=1000)
 
+    # Canonical levels can contain near-duplicates.  Generation itself remains
+    # unchanged; only generated bars are coalesced by a geometry key afterwards.
+    # This deliberately leaves the no-duplicate return value byte-for-byte
+    # compatible with the historic path.
+    z_bucket_by_level: Dict[float, int] = {}
+    bucket_anchors: List[float] = []
+    for z in sorted(corner_ids_by_z):
+        bucket = next(
+            (i for i, anchor in enumerate(bucket_anchors)
+             if abs(anchor - float(z)) <= min_z_gap),
+            None,
+        )
+        if bucket is None:
+            bucket = len(bucket_anchors)
+            bucket_anchors.append(float(z))
+        z_bucket_by_level[float(z)] = bucket
+
+    generated_count = 0
+    dedup_survivors: Dict[Tuple[Any, ...], dict] = {}
+    dedup_counts: Dict[Tuple[Any, ...], int] = {}
+
     for z, cids in sorted(corner_ids_by_z.items()):
         if any(c is None for c in cids):
             continue
@@ -1116,7 +1138,45 @@ def generate_diaphragms(
             # / "dxf_derived"（DXF 证据推导，纯 DXF 口径）。
             if levels and level_source_label:
                 dia_bar["level_source"] = str(level_source_label)
+
+            generated_count += 1
+            pa, pb = new_nodes[a], new_nodes[b]
+            endpoint_pair = tuple(sorted((
+                (round(float(pa[0]), 6), round(float(pa[1]), 6)),
+                (round(float(pb[0]), 6), round(float(pb[1]), 6)),
+            )))
+            mid_x = (float(pa[0]) + float(pb[0])) / 2.0
+            mid_y = (float(pa[1]) + float(pb[1])) / 2.0
+            region = (
+                0 if abs(mid_x) <= 1e-9 else (1 if mid_x > 0 else -1),
+                0 if abs(mid_y) <= 1e-9 else (1 if mid_y > 0 else -1),
+            )
+            member_type = "edge" if idx < 8 else "cross"
+            dedup_key = (
+                z_bucket_by_level[float(z)], region, member_type, endpoint_pair,
+            )
+            survivor = dedup_survivors.get(dedup_key)
+            if survivor is not None:
+                dedup_counts[dedup_key] += 1
+                survivor["diaphragm_dedup_merged"] = dedup_counts[dedup_key] - 1
+                continue
+            dedup_survivors[dedup_key] = dia_bar
+            dedup_counts[dedup_key] = 1
             new_bars.append(dia_bar)
+
+    if dedup_report is not None:
+        groups = [
+            {"key": repr(key), "count": count}
+            for key, count in dedup_counts.items()
+            if count > 1
+        ]
+        dedup_report.clear()
+        dedup_report.update({
+            "n_generated": generated_count,
+            "n_deduped": len(dedup_survivors),
+            "duplicates_removed": generated_count - len(dedup_survivors),
+            "groups": groups,
+        })
     return new_nodes, new_bars
 
 
@@ -1359,6 +1419,10 @@ def subdivide_legs_at_levels(
     if not levels:
         return dict(nodes), [dict(b) for b in bars], {
             "subdivided_legs": 0, "segments_created": 0,
+            "panel_conservation": {
+                "legs": [], "max_abs_delta_mm": 0.0, "violations": [],
+                "tol_mm": 0.5, "ok": True,
+            },
         }
     lv = sorted(float(z) for z in levels)
     new_nodes: NodeMap = dict(nodes)
@@ -1366,6 +1430,8 @@ def subdivide_legs_at_levels(
     n_legs = 0
     n_segs = 0
     conservation_max = 0.0  # P4.2 长度守恒（验收 <= 0.1%）
+    conservation_legs: List[dict] = []
+    conservation_tol_mm = 0.5
     node_seq = max(
         (int(k.split("_")[-1]) for k in nodes if str(k).split("_")[-1].isdigit()),
         default=100000,
@@ -1437,6 +1503,7 @@ def subdivide_legs_at_levels(
             node_ids.append(nid)
 
         base_id = str(b.get("id") or b.get("bar_id") or "leg")
+        emitted_segments: List[dict] = []
         for k in range(len(node_ids) - 1):
             seg = dict(b)
             seg.update({
@@ -1451,6 +1518,7 @@ def subdivide_legs_at_levels(
                 "subdiv_count": len(node_ids) - 1,
             })
             new_bars.append(seg)
+            emitted_segments.append(seg)
             n_segs += 1
         # P4.2 长度守恒审计：节间杆长度和 vs 原通长杆长度（切点沿原杆
         # 直线插值，理论偏差 = 节点复用吸附的微小抖动）。超标即 bug。
@@ -1460,24 +1528,44 @@ def subdivide_legs_at_levels(
             + (float(t[2]) - float(f[2])) ** 2
         )
         _seg_len_sum = 0.0
-        for k in range(len(node_ids) - 1):
-            p, q = new_nodes[node_ids[k]], new_nodes[node_ids[k + 1]]
+        for seg in emitted_segments:
+            p, q = new_nodes[seg["from"]], new_nodes[seg["to"]]
             _seg_len_sum += math.sqrt(
                 (float(q[0]) - float(p[0])) ** 2
                 + (float(q[1]) - float(p[1])) ** 2
                 + (float(q[2]) - float(p[2])) ** 2
             )
+        _delta = _seg_len_sum - _orig_len
+        conservation_legs.append({
+            "leg": base_id,
+            "orig_len_mm": _orig_len,
+            "sum_seg_len_mm": _seg_len_sum,
+            "delta_mm": _delta,
+        })
         if _orig_len > 1e-6:
             conservation_max = max(
-                conservation_max, abs(_seg_len_sum - _orig_len) / _orig_len)
+                conservation_max, abs(_delta) / _orig_len)
         n_legs += 1
 
+    max_abs_delta = max(
+        (abs(item["delta_mm"]) for item in conservation_legs), default=0.0)
+    violations = [
+        item["leg"] for item in conservation_legs
+        if abs(item["delta_mm"]) > conservation_tol_mm
+    ]
     return new_nodes, new_bars, {
         "subdivided_legs": n_legs,
         "segments_created": n_segs,
         "levels_used": len(lv),
         # P4.2：最大相对长度偏差（验收 <= 0.1%）
         "length_conservation_max_rel_err": round(conservation_max, 6),
+        "panel_conservation": {
+            "legs": conservation_legs,
+            "max_abs_delta_mm": max_abs_delta,
+            "violations": violations,
+            "tol_mm": conservation_tol_mm,
+            "ok": not violations,
+        },
     }
 
 
