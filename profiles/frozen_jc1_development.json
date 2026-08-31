@@ -1,0 +1,29 @@
+{
+  "_comment": "P4.1 冻结参数清单（JC1 development）。盲测前不得据结果修改这些键。",
+  "frozen_at": "2026-08-31",
+  "dataset_split": "development",
+  "profile": "canonical_assisted",
+  "overlay_keys": {
+    "use_gt_platform_levels": true,
+    "use_gt_half_width": false,
+    "diagonal_topology_reconstruct": true,
+    "diagonal_topology_sheets": ["35A1-JC1-05", "35A1-JC1-06", "35A1-JC1-07"],
+    "diagonal_topology_sheet_config": {
+      "35A1-JC1-06": {"z_window": [11000.0, 17500.0], "auto_z_window": false},
+      "35A1-JC1-05": {"auto_z_window": true},
+      "35A1-JC1-07": {"auto_z_window": true}
+    },
+    "diagonal_topology_twist_faces": ["f", "l", "r"],
+    "diaphragm_max_z_mm": 30000.0,
+    "collinear_stitch": true,
+    "collinear_stitch_max_single_len_mm": 800.0,
+    "collinear_stitch_max_segments": 2,
+    "mllm_confidence_gate_block_inject": false
+  },
+  "eval": {
+    "tolerance_mm": 500.0,
+    "cost_semantics": "endpoint_sum_cost_lt_tol",
+    "headline_profiles": ["A2-front-pure", "A2-dual-view-pure", "A2-dual-view-reconstructed"]
+  },
+  "blind_test_discipline": "禁止据 blind 结果回改本文件仍称 blind（P4.3）"
+}

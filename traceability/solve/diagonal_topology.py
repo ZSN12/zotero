@@ -570,6 +570,124 @@ def _max_degree_after(bars: List[dict], removed_ids: set) -> Dict[str, int]:
 
 
 # --------------------------------------------------------------------------- #
+# P1.3/P1.4：多分册 + z_window 自检测
+# --------------------------------------------------------------------------- #
+
+
+def infer_z_window_from_candidates(
+    cands: Sequence[Dict[str, Any]],
+    *,
+    margin_mm: float = 500.0,
+    min_span_mm: float = 2000.0,
+) -> Optional[Tuple[float, float]]:
+    """证据线端点 z 范围 → 斜材拓扑窗口（±margin）。
+
+    P1.3：05/07 分册不写死 06 的 [11000,17500]；候选不足时返回 None。
+    """
+    zs: List[float] = []
+    for c in cands:
+        zs.extend(z for _, z in c["endpoints"])
+    if not zs:
+        return None
+    lo, hi = min(zs), max(zs)
+    if hi - lo < min_span_mm:
+        return None
+    return (lo - margin_mm, hi + margin_mm)
+
+
+def resolve_diagonal_sheet_configs(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """overlay → 每分册 diagonal 配置（P1.4 独立 A/B 纪律：per-sheet 参数）。
+
+    键：
+      diagonal_topology_sheets — 分册列表（顺序即执行顺序）
+      diagonal_topology_sheet_config — {stem: {z_window, auto_z_window, twist_faces}}
+      diagonal_topology_z_window — 全局默认窗口
+      diagonal_topology_twist_faces — 全局默认 twist 面
+    """
+    sheets = list(spec.get("diagonal_topology_sheets") or ["35A1-JC1-06"])
+    per = dict(spec.get("diagonal_topology_sheet_config") or {})
+    default_win = spec.get("diagonal_topology_z_window")
+    default_twist = list(spec.get("diagonal_topology_twist_faces") or ("f", "l", "r"))
+    out: List[Dict[str, Any]] = []
+    for sheet in sheets:
+        cfg = dict(per.get(sheet) or {})
+        z_window = cfg.get("z_window") or default_win
+        auto = bool(cfg.get("auto_z_window", z_window is None))
+        out.append({
+            "sheet": sheet,
+            "z_window": tuple(z_window) if z_window else None,
+            "auto_z_window": auto,
+            "twist_faces": list(cfg.get("twist_faces") or default_twist),
+        })
+    return out
+
+
+def reconstruct_diagonal_sheets(
+    nodes: NodeMap,
+    bars: List[dict],
+    hw_fn,
+    spec: Dict[str, Any],
+    *,
+    panel_levels: Sequence[float] = (),
+    level_source_label: Optional[str] = None,
+    selection_mode: str = "p11",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """多分册顺序执行 diagonal 拓扑（P1.3/P1.4 主入口）。
+
+    每分册独立 z_window（可 auto）+ 独立 select_interpretations 节拍自校准。
+    返回合并 report.per_sheet[] 审计。
+    """
+    configs = resolve_diagonal_sheet_configs(spec)
+    cur_nodes = dict(nodes)
+    cur_bars = list(bars)
+    per_sheet: List[Dict[str, Any]] = []
+    totals = {"generated": 0, "fan_pairs": 0, "twist_pairs": 0,
+              "removed_originals": 0}
+
+    for idx, cfg in enumerate(configs):
+        sheet = cfg["sheet"]
+        z_window = cfg["z_window"]
+        if cfg["auto_z_window"] or z_window is None:
+            peek = collect_diagonal_candidates(
+                cur_nodes, cur_bars, sheets=[sheet], z_window=None, hw_fn=hw_fn)
+            inferred = infer_z_window_from_candidates(peek)
+            if inferred:
+                z_window = inferred
+        id_prefix = f"dtd_{sheet.replace('-', '_')}"
+        cur_nodes, cur_bars, rep = reconstruct_diagonal_topology(
+            cur_nodes, cur_bars, hw_fn,
+            sheets=[sheet],
+            panel_levels=panel_levels,
+            z_window=(float(z_window[0]), float(z_window[1]))
+            if z_window else None,
+            level_source_label=level_source_label,
+            selection_mode=selection_mode,
+            twist_faces=cfg["twist_faces"],
+            id_prefix=id_prefix,
+        )
+        rep["sheet"] = sheet
+        rep["auto_z_window"] = cfg["auto_z_window"]
+        per_sheet.append(rep)
+        totals["generated"] += rep.get("generated", 0)
+        totals["fan_pairs"] += rep.get("fan_pairs", 0)
+        totals["twist_pairs"] += rep.get("twist_pairs", 0)
+        totals["removed_originals"] += len(rep.get("removed_originals") or [])
+
+    merged = {
+        "sheets": [c["sheet"] for c in configs],
+        "per_sheet": per_sheet,
+        "totals": totals,
+        "n_candidates": sum(r.get("n_candidates", 0) for r in per_sheet),
+        "n_twist_candidates": sum(r.get("n_twist_candidates", 0) for r in per_sheet),
+        "generated": totals["generated"],
+        "fan_pairs": totals["fan_pairs"],
+        "twist_pairs": totals["twist_pairs"],
+        "selection": {r["sheet"]: r.get("selection") for r in per_sheet},
+    }
+    return cur_nodes, cur_bars, merged
+
+
+# --------------------------------------------------------------------------- #
 # 主入口
 # --------------------------------------------------------------------------- #
 
@@ -587,6 +705,7 @@ def reconstruct_diagonal_topology(
     keep_originals: bool = False,
     selection_mode: str = "p11",
     twist_faces: Sequence[str] = ("f", "l", "r"),
+    id_prefix: str = "dtd",
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """斜材拓扑闭环主入口。
 
@@ -652,7 +771,7 @@ def reconstruct_diagonal_topology(
         if n1 == n2:
             continue
         gen_bars.append({
-            "id": f"dtd_{len(gen_bars)}",
+            "id": f"{id_prefix}_{len(gen_bars)}",
             "from": n1,
             "to": n2,
             "role": g["role"],

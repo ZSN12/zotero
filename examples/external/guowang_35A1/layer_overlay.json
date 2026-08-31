@@ -1172,11 +1172,27 @@
   "parametric_base_z_top": 6500.0,
   "diagonal_topology_reconstruct": true,
   "diagonal_topology_sheets": [
-    "35A1-JC1-06"
+    "35A1-JC1-05",
+    "35A1-JC1-06",
+    "35A1-JC1-07"
   ],
+  "diagonal_topology_sheet_config": {
+    "35A1-JC1-06": {
+      "z_window": [11000.0, 17500.0],
+      "auto_z_window": false
+    },
+    "35A1-JC1-05": {
+      "auto_z_window": true
+    },
+    "35A1-JC1-07": {
+      "auto_z_window": true
+    }
+  },
   "diagonal_topology_z_window": [
     11000.0,
     17500.0
   ],
-  "diagonal_topology_twist_faces": ["f", "l", "r"]
+  "diagonal_topology_twist_faces": ["f", "l", "r"],
+  "diaphragm_max_z_mm": 30000.0,
+  "mllm_confidence_gate_block_inject": false
 }

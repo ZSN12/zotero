@@ -106,16 +106,13 @@ python3 -m pytest tests/test_diagonal_topology.py -q
 | 2026-08-31 | Phase 0：节拍单位从 panel 中位差改为 fan 跨度自校准；修复 panel_crossing 断言方向 |
 | 2026-08-31 | P1.2：`collect_twist_candidates` 多面 (f/l/r) + 异号 MID 截断；yflip depth diagonal 从 L/R 面触发 |
 
-## 8. P1.2 twist 证据（2026-08-31）
+## 8. 后续批次（P1.3–P4）
 
-**根因**：06 front 面 line_kind 分布 {MID:12, HALF:4, None:7, **FULL:0**}；yflip twist 在 front `(x,z)` 投影与主腿重合（同号 x）。
-
-**规则**
-
-- fan 证据：仍仅 **front 面** `collect_diagonal_candidates`
-- twist 证据：`collect_twist_candidates(twist_faces=["f","l","r"])`
-  - front/back：`(x,z)` 分类；left/right：`(y,z)` 分类
-  - 接受 `FULL` 或异号端点 `TWIST_TRUNC`；**拒绝同号 MID/HALF**（fan 惯例）
-- overlay 键：`diagonal_topology_twist_faces`（默认 f,l,r）
-
-**验收**：`twist_pairs ≥ 2`；fan 基线 TP/FP 不降（56/8 @ p11）
+| 批次 | 落地 |
+|------|------|
+| P1.3 | `infer_z_window_from_candidates` + 多分册 `reconstruct_diagonal_sheets` |
+| P1.4 | `diagonal_topology_sheet_config`（05/06/07 独立参数） |
+| P2.1 | `leg_chain_builder.build_leg_chains` |
+| P3.2 | `diaphragm_max_z_mm` |
+| P4 | `profiles/frozen_jc1_development.json` + `run_frozen_eval.py` |
+| Phase 1 eval | `scripts/eval_a2_profiles.py` |

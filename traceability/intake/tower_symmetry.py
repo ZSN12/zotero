@@ -380,6 +380,11 @@ def expand_4_face_symmetry_model(
         if _df_pl is not None and _pl_records:
             _df_pl.properties["panel_level_evidence"] = _pl_records
 
+    _diag_levels = list(panel_levels) if panel_levels else []
+    _dmax = spec.get("diaphragm_max_z_mm")
+    if _dmax is not None and _diag_levels:
+        _diag_levels = [z for z in _diag_levels if float(z) <= float(_dmax)]
+
     if panel_levels:
         subdivide_on = bool(spec.get("subdivide_legs", True))
         if subdivide_on:
@@ -471,7 +476,7 @@ def expand_4_face_symmetry_model(
         # S7：生产横担层保留真实 t（桁架内部节点不得推到外缘）；GT 注入路径
         # 保持旧行为（detect_crossarm_layers=False）。
         crossarm_preserve_t=bool(spec.get("detect_crossarm_layers", False)),
-        diaphragm_levels=panel_levels if panel_levels else None,
+        diaphragm_levels=_diag_levels if _diag_levels else None,
         level_source_label=(
             "gt_canonical" if level_source == "gt" else "dxf_derived"
         ) if panel_levels else None,
@@ -491,30 +496,48 @@ def expand_4_face_symmetry_model(
     # 实测（2026-08-31 离线）：64 生成 / 56 TP@500（88%）。
     # 保守默认关闭，须 overlay 显式开启（diagonal_topology_reconstruct=true）。
     if bool(spec.get("diagonal_topology_reconstruct", False)):
-        from ..solve.diagonal_topology import reconstruct_diagonal_topology
-        _dt_sheets = spec.get("diagonal_topology_sheets") or ["35A1-JC1-06"]
-        _dt_window = spec.get("diagonal_topology_z_window") or (11000.0, 17500.0)
-        _dt_twist_faces = spec.get("diagonal_topology_twist_faces") or ("f", "l", "r")
-        face_nodes, face_bars, _dt_rep = reconstruct_diagonal_topology(
-            face_nodes, face_bars, half_width_fn,
-            sheets=list(_dt_sheets),
-            panel_levels=panel_levels,
-            z_window=(float(_dt_window[0]), float(_dt_window[1])),
-            level_source_label=(
-                "gt_canonical" if level_source == "gt" else "dxf_derived"
-            ),
-            twist_faces=list(_dt_twist_faces),
+        from ..solve.diagonal_topology import (
+            reconstruct_diagonal_sheets,
+            reconstruct_diagonal_topology,
         )
+        _dt_sheets = spec.get("diagonal_topology_sheets") or ["35A1-JC1-06"]
+        _use_multi = (
+            len(_dt_sheets) > 1
+            or bool(spec.get("diagonal_topology_sheet_config"))
+        )
+        if _use_multi:
+            face_nodes, face_bars, _dt_rep = reconstruct_diagonal_sheets(
+                face_nodes, face_bars, half_width_fn, spec,
+                panel_levels=panel_levels,
+                level_source_label=(
+                    "gt_canonical" if level_source == "gt" else "dxf_derived"
+                ),
+            )
+        else:
+            _dt_window = spec.get("diagonal_topology_z_window") or (11000.0, 17500.0)
+            _dt_twist_faces = spec.get("diagonal_topology_twist_faces") or ("f", "l", "r")
+            face_nodes, face_bars, _dt_rep = reconstruct_diagonal_topology(
+                face_nodes, face_bars, half_width_fn,
+                sheets=list(_dt_sheets),
+                panel_levels=panel_levels,
+                z_window=(float(_dt_window[0]), float(_dt_window[1])),
+                level_source_label=(
+                    "gt_canonical" if level_source == "gt" else "dxf_derived"
+                ),
+                twist_faces=list(_dt_twist_faces),
+            )
         roles = classify_members(face_nodes, face_bars)
         _dt_df = model.components.get("drawing_file")
         if _dt_df is not None:
             _dt_df.properties["diagonal_topology_report"] = {
                 k: _dt_rep[k] for k in (
-                    "sheets", "z_window", "n_candidates", "n_twist_candidates",
+                    "sheets", "per_sheet", "totals", "z_window",
+                    "n_candidates", "n_twist_candidates",
                     "twist_faces", "n_heights",
                     "heights", "interpretations", "generated",
                     "removed_originals", "fan_pairs", "twist_pairs",
                     "selection", "candidates", "twist_candidates")
+                if k in _dt_rep
             }
 
     # S4 贪心共线拼接（Phase 2）：把断裂碎片杆拼回整杆。
