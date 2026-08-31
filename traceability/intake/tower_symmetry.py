@@ -385,6 +385,8 @@ def expand_4_face_symmetry_model(
     )
     topology = inspect_model_topology(face_nodes, face_bars, half_width_fn=half_width_fn)
     roles = classify_members(face_nodes, face_bars)
+    # Phase 3 审计锚点：展开后（未拼接/未修复）的初始门禁值
+    _genuine_initial = topology.get("genuine_dangling_degree1")
 
     # S4 贪心共线拼接（Phase 2）：把断裂碎片杆拼回整杆。
     # 关键教训（2026-08-31 实测，三轮复核）：
@@ -424,6 +426,35 @@ def expand_4_face_symmetry_model(
         _df = model.components.get("drawing_file")
         if _df is not None:
             _df.properties["collinear_stitch_report"] = dict(_stitch_rep)
+
+    # Phase 3：悬空断裂修复（微型残段清除 + 端点焊接）。
+    # 与 snap_dangling_endpoints_local 的关键区别：snap 只在四面展开之前
+    # 修 front 面原版，镜像 B/L/R 不继承其节点合并结果——这正是 17 个
+    # 悬空节点里 6 组「F 面正常、镜像面断裂」的根因。本修复在四面展开 +
+    # 共线拼接之后对所有面统一执行。实测（2026-08-31）：
+    #   残段清除（<250mm 孤立短杆，7 根）：噪声残根，无法匹配 GT（GT 杆长
+    #     中位 ~2005mm），删除同时降 FP；
+    #   端点焊接（<=350mm 内最近有效节点，6 处）：端点位移在 500mm 评测
+    #     容差内，TP 无回退；
+    #   剩余 2 处物理断裂（伙伴杆整体缺失，周围 450mm+ 无可接结构）留
+    #     review_queue 人工复核，不无中生有。
+    if bool(spec.get("repair_dangling", False)):
+        from ..solve.tower_geometry import repair_dangling_endpoints
+        face_bars, _repair_rep = repair_dangling_endpoints(
+            face_nodes, face_bars,
+            stub_max_len_mm=float(spec.get("repair_stub_max_len_mm", 250.0)),
+            weld_max_mm=float(spec.get("repair_weld_max_mm", 350.0)),
+            half_width_fn=half_width_fn,
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df = model.components.get("drawing_file")
+        if _df is not None:
+            _df.properties["dangling_repair_report"] = dict(_repair_rep)
+
+    # Phase 3：门禁度量「交付几何」——全部几何变换（展开/拼接/修复）之后
+    # 用同一 half_width_fn 终算 topology（half_width_fn 在本作用域仍可用，
+    # baseline_report 事后无法复现的问题不适用此处）。
+    topology = inspect_model_topology(face_nodes, face_bars, half_width_fn=half_width_fn)
 
     # 重建模型组件
     _KEEP_KINDS = frozenset({
@@ -657,6 +688,13 @@ def expand_4_face_symmetry_model(
             "topology_degree1": topology["dangling_degree1"],
             "topology_crossarm_tips": topology.get("crossarm_tip_count", 0),
             "topology_genuine_dangling": topology.get("genuine_dangling_degree1", topology["dangling_degree1"]),
+            # Phase 3：物理去重口径（同一杆 4 面镜像 = 1 处物理断裂），
+            # 门禁主口径；面实例数（topology_genuine_dangling）作审计辅口径。
+            "topology_genuine_dangling_physical": topology.get("genuine_dangling_physical"),
+            # Phase 3 审计锚点：展开后未拼接/未修复的初始门禁值
+            "topology_genuine_dangling_initial": _genuine_initial,
+            # Phase 3：真悬空节点明细（review_queue 的数据来源）
+            "genuine_dangling_nodes": topology.get("genuine_dangling_detail", []),
             "topology_components": topology["components"],
             # 阶段3.2：生产路径半宽来源标记（fit=立面主腿拟合，gt=GT注入，none=退化）
             "half_width_source": ("gt" if spec.get("use_gt_half_width")

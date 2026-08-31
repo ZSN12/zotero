@@ -754,6 +754,11 @@ def tower_geometry_gate(
     face_count = int(df_props.get("face_count") or 0)
     degree1 = int(df_props.get("topology_degree1") or 0)
     genuine_dangling = int(df_props.get("topology_genuine_dangling", degree1))
+    # Phase 3：门禁主口径改用「物理去重」计数——四面展开把同一物理断裂
+    # 复制成 4 个面实例（bar_id 仅尾部 _F/_B/_L/_R 不同），一处断裂镜像
+    # 4 次仍是 1 处缺陷。面实例数保留作审计辅口径。
+    genuine_physical = int(
+        df_props.get("topology_genuine_dangling_physical", genuine_dangling))
     crossarm_tips = int(df_props.get("topology_crossarm_tips") or 0)
     require_degree1_zero = bool(spec.get("glb_gate_require_degree1_zero", False))
     max_degree1 = int(spec.get("glb_gate_max_degree1", 0))
@@ -772,11 +777,12 @@ def tower_geometry_gate(
             reasons.append(f"四面网架 face_count={face_count}，应为 4")
         if corner_legs != 4:
             reasons.append(f"四角主腿数 {corner_legs}，应为 4")
-        if (require_degree1_zero or max_degree1 >= 0) and genuine_dangling > max_degree1:
+        if (require_degree1_zero or max_degree1 >= 0) and genuine_physical > max_degree1:
             # 量化验收 1（可配置严格档）：真悬空断裂节点（Degree=1，已排除
-            # 横担悬臂端头）应 <= max_degree1。
+            # 横担悬臂端头，按物理位置去重）应 <= max_degree1。
             reasons.append(
-                f"悬空断裂节点（Degree=1）{genuine_dangling} 个，应 <= {max_degree1}"
+                f"悬空断裂节点（Degree=1，物理去重）{genuine_physical} 处"
+                f"（面实例 {genuine_dangling} 个），应 <= {max_degree1}"
                 f"（另有 {crossarm_tips} 个横担悬臂端头属正常）")
         if min_span > 0 and span_mm < min_span:
             reasons.append(
@@ -835,6 +841,7 @@ def tower_geometry_gate(
         "topology_degree1": degree1,
         "topology_crossarm_tips": crossarm_tips,
         "topology_genuine_dangling": genuine_dangling,
+        "topology_genuine_dangling_physical": genuine_physical,
     }
 
 

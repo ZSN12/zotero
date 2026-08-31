@@ -1158,5 +1158,8 @@
   "collinear_stitch_min_len_mm": 600.0,
   "collinear_stitch_max_len_mm": 4500.0,
   "collinear_stitch_max_segments": 2,
-  "collinear_stitch_max_single_len_mm": 800.0
+  "collinear_stitch_max_single_len_mm": 800.0,
+  "repair_dangling": true,
+  "repair_stub_max_len_mm": 250.0,
+  "repair_weld_max_mm": 350.0
 }

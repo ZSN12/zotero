@@ -1741,6 +1741,146 @@ def snap_dangling_endpoints_local(
     }
 
 
+def repair_dangling_endpoints(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    stub_max_len_mm: float = 250.0,
+    weld_max_mm: float = 350.0,
+    t_junction_mm: float = 50.0,
+    half_width_fn: Optional[Callable[[float], float]] = None,
+) -> Tuple[List[dict], Dict[str, object]]:
+    """Phase 3：悬空断裂修复（微型残段清除 + 端点焊接）。
+
+    背景（2026-08-31，JC1 交付门禁 genuine_dangling=17 → 目标 <=4）：
+    17 个实例去重后仅 8 个物理位置，三类成因——
+
+        1. 微型残段（<250mm 的孤立短杆，图纸噪声/断裂残根）：直接删除。
+           这类杆无法匹配 GT（GT 杆长中位 ~2005mm），删除同时降低 FP。
+        2. 断裂端点近旁有真实节点（166~310mm）：端点焊接——把杆端引用
+           重指到最近的有效节点。端点位移在评测容差（500mm）内可控。
+        3. 伙伴杆整体缺失（周围 450mm+ 空无一物）：不能无中生有，
+           留给 review_queue 人工复核。
+
+    与 snap_dangling_endpoints_local 的区别：snap 在四面展开**之前**只修
+    front 面（镜像面不继承其合并结果，这正是 B/L/R 面悬空的根因）；本函数
+    在四面展开+共线拼接**之后**对所有面统一修复。
+
+    安全约束：
+        * role=CROSS（横担悬臂端头是合法自由端）、corner_leg、diaphragm
+          杆一律不碰；
+        * T 形接头（端点落在其它杆身上 <=t_junction_mm）已物理连接，跳过；
+        * 径向远超塔身半宽（>1.4x）的悬臂端头跳过；
+        * 焊接目标必须是仍有杆件引用的节点（度 >=1），且不是本杆另一端。
+
+    返回 (new_bars, report)；nodes 不变（被弃用的端点节点成为度 0 孤立点，
+    与 stitch 消费节点的处置一致）。
+    """
+    out_bars: List[dict] = [dict(b) for b in bars]
+    roles = classify_members(nodes, out_bars)
+
+    def _is_excused(b: dict, nid: str) -> bool:
+        """端点是否属合法自由端（横担悬臂 / T 形接头），不可动。"""
+        p = nodes.get(nid)
+        if p is None:
+            return True
+        # T 形接头：端点落在其它杆身上
+        for ob in out_bars:
+            if ob is b:
+                continue
+            s1, s2 = nodes.get(ob.get("from")), nodes.get(ob.get("to"))
+            if s1 is None or s2 is None:
+                continue
+            _, dist = _point_segment_distance((float(p[0]), float(p[1]), float(p[2])), s1, s2)
+            if dist <= t_junction_mm:
+                return True
+        # 横担外伸悬臂端
+        if half_width_fn is not None:
+            hw = half_width_fn(float(p[2]))
+            if hw > 0 and math.hypot(p[0], p[1]) > hw * 1.4:
+                return True
+        return False
+
+    def _degrees(blist: List[dict]) -> Dict[str, int]:
+        d: Dict[str, int] = {}
+        for b in blist:
+            d[b["from"]] = d.get(b["from"], 0) + 1
+            d[b["to"]] = d.get(b["to"], 0) + 1
+        return d
+
+    # ---- Pass 1：微型残段清除 ----
+    deg = _degrees(out_bars)
+    removed: List[str] = []
+    kept: List[dict] = []
+    for b in out_bars:
+        role = str(b.get("role") or "").upper()
+        if role == "CROSS" or b.get("corner_leg") or b.get("diaphragm"):
+            kept.append(b)
+            continue
+        p1, p2 = nodes.get(b.get("from")), nodes.get(b.get("to"))
+        if p1 is None or p2 is None:
+            kept.append(b)
+            continue
+        L = math.dist(p1, p2)
+        if L >= stub_max_len_mm:
+            kept.append(b)
+            continue
+        if deg.get(b["from"], 0) != 1 and deg.get(b["to"], 0) != 1:
+            kept.append(b)
+            continue
+        # 悬空端必须是「真悬空」（非横担端头、非 T 形接头）才允许删
+        if deg.get(b["from"], 0) == 1 and _is_excused(b, b["from"]):
+            kept.append(b)
+            continue
+        if deg.get(b["to"], 0) == 1 and _is_excused(b, b["to"]):
+            kept.append(b)
+            continue
+        removed.append(str(b.get("id")))
+    out_bars = kept
+
+    # ---- Pass 2：端点焊接 ----
+    deg = _degrees(out_bars)
+    welds: List[Dict[str, object]] = []
+    for b in out_bars:
+        role = str(b.get("role") or "").upper()
+        if role == "CROSS" or b.get("corner_leg") or b.get("diaphragm"):
+            continue
+        for end_key in ("from", "to"):
+            nid = b[end_key]
+            if deg.get(nid, 0) != 1:
+                continue
+            p = nodes.get(nid)
+            if p is None or _is_excused(b, nid):
+                continue
+            other = b["to" if end_key == "from" else "from"]
+            # 最近有效节点（仍有杆引用、非本杆另一端）
+            best = None
+            for cand, cpos in nodes.items():
+                if cand == nid or cand == other or deg.get(cand, 0) < 1:
+                    continue
+                d = math.dist(p, cpos)
+                if d <= weld_max_mm and (best is None or d < best[0]):
+                    best = (d, cand)
+            if best is None:
+                continue
+            dist, target = best
+            b[end_key] = target
+            deg[nid] = 0
+            deg[target] = deg.get(target, 0) + 1
+            welds.append({
+                "node": nid, "bar": str(b.get("id")),
+                "welded_to": target, "dist_mm": round(dist, 1),
+            })
+
+    report = {
+        "removed_stub_bars": removed,
+        "welded": welds,
+        "n_bars_in": len(bars),
+        "n_bars_out": len(out_bars),
+    }
+    return out_bars, report
+
+
 def inspect_model_topology(
     nodes: NodeMap,
     bars: List[dict],
@@ -1781,6 +1921,7 @@ def inspect_model_topology(
         roles = {}
     crossarm_tip = 0
     genuine_dangling = 0
+    genuine_detail: List[Dict[str, object]] = []
     # 预建杆件线段表（T 形接头判定：degree=1 节点落在其它杆件身上）
     seg_list = []
     for b in bars:
@@ -1794,9 +1935,11 @@ def inspect_model_topology(
             continue
         # 找到该节点的唯一杆件
         bar_role = None
+        bar_id = None
         for b in bars:
             if b.get("from") == nid or b.get("to") == nid:
                 bar_role = roles.get(b.get("id")) or b.get("role")
+                bar_id = b.get("id")
                 break
         p = nodes.get(nid)
         radial = float(np.hypot(p[0], p[1])) if p is not None else 0.0
@@ -1827,6 +1970,14 @@ def inspect_model_topology(
             pass  # T 形接头：不计悬空、不计横担端头
         else:
             genuine_dangling += 1
+            genuine_detail.append({
+                "id": nid,
+                "z": round(z, 1),
+                "radial": round(radial, 1),
+                "body_half_width": round(body_hw_at_z, 1),
+                "role": bar_role,
+                "bar_id": bar_id,
+            })
 
     # 连通分量
     adj: Dict[str, set] = {nid: set() for nid in nodes}
@@ -1850,11 +2001,23 @@ def inspect_model_topology(
                     stack.append(nb)
         components += 1
 
+    # Phase 3：物理位置去重——四面展开把同一物理断裂复制成 4 个面实例
+    # （bar_id 仅尾部 _F/_B/_L/_R 不同）。门禁应度量「物理缺陷数」而非
+    # 「面实例数」：一处断裂镜像 4 次仍是 1 处缺陷。
+    _face_suffix = ("_F", "_B", "_L", "_R")
+    physical_stems = set()
+    for g in genuine_detail:
+        bid = str(g.get("bar_id") or "")
+        stem = bid[:-2] if bid.endswith(_face_suffix) else bid
+        physical_stems.add(stem)
+
     return {
         "degree_histogram": {str(k): v for k, v in sorted(hist.items())},
         "dangling_degree1": hist.get(1, 0),
         "crossarm_tip_count": crossarm_tip,
         "genuine_dangling_degree1": genuine_dangling,
+        "genuine_dangling_detail": genuine_detail,
+        "genuine_dangling_physical": len(physical_stems),
         "max_degree": max(hist) if hist else 0,
         "components": components,
         "total_nodes": len(nodes),
