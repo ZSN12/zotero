@@ -2,14 +2,43 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<title>35A1-JC1 完整塔 vs DXF 对比</title>
+<title>35A1-JC1 三维模型 · diff / 分层 / 统计（Phase 6）</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #0e1116; color: #e8eaed; font-family: system-ui, sans-serif; }
-  #info { position: fixed; left: 12px; top: 12px; z-index: 2; background: rgba(0,0,0,.75); padding: 12px 16px; border-radius: 8px; font-size: 13px; max-width: 480px; line-height: 1.5; }
+  html, body { margin: 0; height: 100%; background: #0e1116; color: #e8eaed; font-family: system-ui, sans-serif; overflow: hidden; }
   #viewer { width: 100%; height: 100%; }
-  button { margin: 4px 4px 4px 0; padding: 6px 12px; cursor: pointer; border-radius: 4px; border: 1px solid #555; background: #1a1d24; color: #e8eaed; }
+
+  /* 顶部：模式切换 */
+  #topbar { position: fixed; left: 12px; top: 12px; z-index: 3; background: rgba(0,0,0,.75); padding: 10px 14px; border-radius: 8px; font-size: 13px; max-width: 620px; line-height: 1.6; }
+  button { margin: 2px 4px 2px 0; padding: 6px 12px; cursor: pointer; border-radius: 4px; border: 1px solid #555; background: #1a1d24; color: #e8eaed; font-size: 12px; }
   button.active { background: #3b6ef5; border-color: #3b6ef5; }
-  a { color: #8ab4f8; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  a { color: #8ab4f8; font-size: 12px; }
+  #desc { color: #9aa4b2; font-size: 12px; }
+
+  /* 右侧：分层面板 */
+  #layers { position: fixed; right: 12px; top: 12px; bottom: 12px; width: 216px; z-index: 3; background: rgba(0,0,0,.75); border-radius: 8px; padding: 12px 14px; font-size: 12px; overflow-y: auto; }
+  #layers h4 { margin: 10px 0 4px; font-size: 12px; color: #9aa4b2; font-weight: 600; border-bottom: 1px solid #2a2f3a; padding-bottom: 2px; }
+  #layers h4:first-child { margin-top: 0; }
+  #layers label { display: block; padding: 2px 0; cursor: pointer; white-space: nowrap; }
+  #layers input { margin-right: 6px; vertical-align: middle; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  #visibleCount { color: #8ab4f8; }
+  #layers.disabled { opacity: .35; pointer-events: none; }
+
+  /* 左下：统计面板 */
+  #stats { position: fixed; left: 12px; bottom: 12px; z-index: 3; background: rgba(0,0,0,.78); border-radius: 8px; padding: 10px 14px; font-size: 12px; line-height: 1.7; max-width: 560px; font-variant-numeric: tabular-nums; }
+  #stats b { color: #fff; }
+  #stats .dim { color: #9aa4b2; }
+  #stats .warn { color: #f0b429; }
+
+  /* 右下：图例 */
+  #legend { position: fixed; right: 240px; bottom: 12px; z-index: 3; background: rgba(0,0,0,.75); border-radius: 8px; padding: 8px 12px; font-size: 12px; }
+  #legend .item { display: inline-block; margin: 2px 8px 2px 0; cursor: pointer; padding: 2px 6px; border-radius: 4px; border: 1px solid transparent; }
+  #legend .item:hover { border-color: #555; }
+  #legend .item.off { opacity: .35; text-decoration: line-through; }
+  #legend .note { color: #9aa4b2; }
+
+  #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); z-index: 5; background: rgba(0,0,0,.8); padding: 14px 22px; border-radius: 8px; font-size: 14px; display: none; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -19,19 +48,38 @@
 </script>
 </head>
 <body>
-<div id="info">
-  <b>35A1-JC1 三维模型预览</b><br>
-  <button id="btn-gt" class="active">国网官方 35A1 完整铁塔 (575 杆 · 高 36.6m)</button>
-  <button id="btn-dxf">DXF 管线重构骨架 (106 杆)</button><br>
-  <span id="desc">国网官方标准 30m 呼高全塔（塔腿 + 塔身 + 曲臂横担 + 地线支架）</span><br>
-  <a href="/">返回主控制台</a>
+<div id="topbar">
+  <b>35A1-JC1 三维模型</b>
+  <button id="btn-model" class="active">当前模型</button>
+  <button id="btn-diff">新旧 diff</button>
+  <button id="btn-gt">GT 官方</button><br>
+  <span id="desc">DXF 管线重建骨架（provenance 五色）</span>
+  <a href="/" style="margin-left:8px">返回主控制台</a>
 </div>
+
+<div id="layers">
+  <h4>按来源 <span id="visibleCount"></span></h4>
+  <div id="originFilters"></div>
+  <h4>按分册</h4>
+  <div id="sheetFilters"></div>
+  <h4>按角色</h4>
+  <div id="roleFilters"></div>
+  <h4>标记</h4>
+  <div id="markFilters"></div>
+  <button id="btn-reset" style="margin-top:10px">全部显示</button>
+</div>
+
 <div id="viewer"></div>
+<div id="stats">统计加载中…</div>
+<div id="legend"></div>
+<div id="loading">加载中…</div>
+
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
+// ---------------------------------------------------------------- 渲染骨架
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1b2028);
 const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 10, 500000);
@@ -42,47 +90,434 @@ renderer.setPixelRatio(window.devicePixelRatio || 1);
 renderer.setSize(innerWidth, innerHeight);
 document.getElementById('viewer').appendChild(renderer.domElement);
 
-const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 1.6);
-scene.add(hemi);
-const dir1 = new THREE.DirectionalLight(0xffffff, 1.8);
-dir1.position.set(2, 4, 3);
-scene.add(dir1);
-const dir2 = new THREE.DirectionalLight(0xffffff, 1.2);
-dir2.position.set(-2, -3, -2);
-scene.add(dir2);
-
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.6));
+const dir1 = new THREE.DirectionalLight(0xffffff, 1.8); dir1.position.set(2, 4, 3); scene.add(dir1);
+const dir2 = new THREE.DirectionalLight(0xffffff, 1.2); dir2.position.set(-2, -3, -2); scene.add(dir2);
 const controls = new OrbitControls(camera, renderer.domElement);
 
-let current = null;
 const loader = new GLTFLoader();
+const BASE = 'latest_deliver/';
 
-function load(url, desc) {
-  if (current) scene.remove(current);
-  loader.load(url, (gltf) => {
-    current = gltf.scene;
-    scene.add(current);
-    const box = new THREE.Box3().setFromObject(current);
-    const c = box.getCenter(new THREE.Vector3());
-    const s = box.getSize(new THREE.Vector3()).length() / 2 || 1;
-    // Z 轴为高度：默认正面对焦（相机放 +X 侧、高度居中），塔身竖直向上
-    camera.position.copy(c).add(new THREE.Vector3(s * 1.0, s * 0.25, s * 0.7));
-    controls.target.copy(c);
-    document.getElementById('desc').textContent = desc;
+// ---------------------------------------------------------------- 数据资产
+const DATA = {};   // barMap / model / multi / byRole / byOrigin / review / diffReport
+const MESHES = {}; // skeleton | diff | gt → THREE.Group
+let currentKey = null;
+let reviewGroupObj = null;   // 复核红球组（常驻场景，不随模式移除）
+
+async function fetchJSON(name) {
+  const r = await fetch(BASE + name);
+  if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
+  return r.json();
+}
+function loadGLB(url) {
+  return new Promise((res, rej) => loader.load(url, g => res(g.scene), undefined, rej));
+}
+const $ = id => document.getElementById(id);
+function setLoading(on, text) { $('loading').style.display = on ? 'block' : 'none'; if (text) $('loading').textContent = text; }
+
+// ------------------------------------------------- component_id → 属性映射
+// 来源分组（与 skeleton.glb provenance 五色一致）
+const ORIGIN_GROUPS = {
+  recognized: { label: '识别',   color: '#28b428', origins: ['dxf_geom'] },
+  assisted:   { label: '辅助重建', color: '#2878e6', origins: ['diaphragm_reconstructed', 'panel_subdivision'] },
+  stitch:     { label: '拼接',   color: '#e6c828', origins: ['collinear_stitch'] },
+  derived:    { label: '派生',   color: '#969696', origins: ['derived_4face'] },
+};
+const originToGroup = {};
+for (const [g, def] of Object.entries(ORIGIN_GROUPS))
+  for (const o of def.origins) originToGroup[o] = g;
+
+const ROLE_LABELS = { LEG: '主腿', DIAG: '斜材', HORIZ: '水平材', CROSS: '横担', DIA: '横隔' };
+
+function sheetOf(cid) {
+  const m = String(cid).match(/35A1-JC1-(\d{2})/);
+  if (m) return m[1];
+  if (String(cid).startsWith('4f_diaphragm')) return 'dia';
+  return 'other';
+}
+function roleKeyOf(attrs, cid) {
+  if (String(cid).startsWith('4f_diaphragm')) return 'DIA';
+  return attrs && attrs.role ? attrs.role : null;
+}
+
+// bar_map.json 是权威映射：component_id → {role, origin, group, sheet, isReview}
+function buildAttrs(barMap) {
+  const attrs = {};
+  for (const e of barMap) {
+    const cid = String(e.component_id);
+    attrs[cid] = {
+      role: e.role, origin: e.geometry_origin,
+      group: originToGroup[e.geometry_origin] || null,
+      sheet: sheetOf(cid),
+      isReview: cid.startsWith('review_'),
+    };
+  }
+  return attrs;
+}
+
+// ---------------------------------------------------------------- 过滤状态
+const state = {
+  mode: 'model',           // model | diff | gt
+  origins: new Set(Object.keys(ORIGIN_GROUPS)),
+  sheets: new Set(),       // 数据加载后填充
+  roles: new Set(Object.keys(ROLE_LABELS)),
+  review: true,
+  diffGroups: new Set(['added', 'removed', 'unchanged']),
+};
+let ATTRS = {};
+let SHEETS = [];           // 排序后的分册键
+
+function meshNameOf(obj) {
+  // GLTFLoader 的 sanitizeNodeName 会剥掉点号等保留字符（横隔 id "…06500.0_00" 被改坏），
+  // 但原始 node 名保留在 obj.userData.name —— 优先用它，兜底向上找父级。
+  let o = obj;
+  while (o) {
+    const raw = (o.userData && o.userData.name) || o.name;
+    if (raw && ATTRS[raw]) return raw;
+    o = o.parent;
+  }
+  return (obj.userData && obj.userData.name) || obj.name || '';
+}
+
+function applyModelFilters() {
+  const grp = MESHES.skeleton;
+  if (!grp) return;
+  let visible = 0, total = 0;
+  grp.traverse(obj => {
+    if (!obj.isMesh) return;
+    const name = meshNameOf(obj);
+    const a = ATTRS[name];
+    if (!a) { obj.visible = true; return; }
+    total++;
+    if (a.isReview) { obj.visible = false; return; }   // 红球由 reviewGroup 统一画
+    let v = true;
+    if (a.group) v = v && state.origins.has(a.group);
+    if (a.sheet === 'other') v = v && state.sheets.has('other');
+    else if (a.sheet !== 'dia') v = v && state.sheets.has(a.sheet);
+    else v = v && state.sheets.has('dia');
+    const rk = roleKeyOf(a, name);
+    if (rk) v = v && state.roles.has(rk);
+    obj.visible = v;
+    if (v) visible++;
+  });
+  $('visibleCount').textContent = `可见 ${visible}/${total - countReviewAttrs()}`;
+}
+function countReviewAttrs() { return Object.values(ATTRS).filter(a => a.isReview).length; }
+
+const DIFF_LABELS = { added: '新增', removed: '删除', unchanged: '未变' };
+function applyDiffFilters() {
+  const grp = MESHES.diff;
+  if (!grp || !DATA.diffReport) return;
+  const added = new Set(DATA.diffReport.added || []);
+  const removed = new Set(DATA.diffReport.removed || []);
+  grp.traverse(obj => {
+    if (!obj.isMesh) return;
+    const name = (obj.userData && obj.userData.name) || obj.name || meshNameOf(obj);
+    let g = 'unchanged';
+    if (added.has(name)) g = 'added';
+    else if (removed.has(name)) g = 'removed';
+    obj.userData.diffGroup = g;
+    obj.visible = state.diffGroups.has(g);
+    if (g === 'unchanged' && !obj.userData.alphaApplied) {   // 灰色半透明（GLB 顶点色 alpha 不可靠，材质兜底）
+      obj.material = obj.material.clone ? obj.material.clone() : obj.material;
+      obj.material.transparent = true;
+      obj.material.opacity = 0.45;
+      obj.userData.alphaApplied = true;
+    }
   });
 }
 
-document.getElementById('btn-gt').onclick = () => {
-  document.getElementById('btn-gt').classList.add('active');
-  document.getElementById('btn-dxf').classList.remove('active');
-  load('/demo/35A1-JC1/gt_reference.glb', '国网官方 GIM .mod → GT JSON → GLB（完整铁塔）');
-};
-document.getElementById('btn-dxf').onclick = () => {
-  document.getElementById('btn-dxf').classList.add('active');
-  document.getElementById('btn-gt').classList.remove('active');
-  load('/demo/35A1-JC1/tower_from_dxf.glb', '咸鱼 DXF + overlay 管线输出（碎片半塔）');
-};
+function applyFilters() {
+  if (state.mode === 'model') applyModelFilters();
+  else if (state.mode === 'diff') applyDiffFilters();
+  if (reviewGroupObj) reviewGroupObj.visible = state.review && state.mode !== 'gt';
+  renderLegend();
+}
 
-load('/demo/35A1-JC1/gt_reference.glb', '国网官方 GIM .mod → GT JSON → GLB（完整铁塔）');
+// ---------------------------------------------------------------- 复核红球
+// review_queue.json 残留节点：r=80mm 红球 + 屏幕恒定大小提示点（远看也可见）
+function buildReviewSpheres(review) {
+  const grp = new THREE.Group();
+  grp.name = 'reviewGroup';
+  const seen = new Set();
+  const dotTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(32, 32, 2, 32, 32, 30);
+    grad.addColorStop(0, 'rgba(255,60,60,1)'); grad.addColorStop(1, 'rgba(255,60,60,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+  })();
+  for (const grpEntry of (review.groups || [])) {
+    for (const ent of (grpEntry.entries || [])) {
+      const xyz = ent.xyz_mm;
+      if (!xyz || xyz.length !== 3) continue;
+      const key = ent.node_id || xyz.join(',');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const pos = new THREE.Vector3(xyz[0], xyz[1], xyz[2]);
+      const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(80, 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0xff2828 }));
+      ball.position.copy(pos);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: dotTex, sizeAttenuation: false, depthTest: false, transparent: true }));
+      sprite.position.copy(pos);
+      sprite.scale.set(0.02, 0.02, 1);   // 屏幕恒定大小
+      grp.add(ball); grp.add(sprite);
+    }
+  }
+  return grp;
+}
+
+// ---------------------------------------------------------------- 面板构建
+function checkbox(parentId, key, label, checked, onChange, swColor) {
+  const lab = document.createElement('label');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox'; cb.checked = checked; cb.dataset.key = key;
+  cb.addEventListener('change', () => onChange(key, cb.checked));
+  lab.appendChild(cb);
+  if (swColor) {
+    const sw = document.createElement('span');
+    sw.className = 'sw'; sw.style.background = swColor;
+    lab.appendChild(sw);
+  }
+  lab.appendChild(document.createTextNode(label));
+  document.getElementById(parentId).appendChild(lab);
+  return cb;
+}
+
+function buildLayerPanel() {
+  const of = $('originFilters'); of.innerHTML = '';
+  for (const [g, def] of Object.entries(ORIGIN_GROUPS))
+    checkbox('originFilters', g, def.label, true, (k, v) => {
+      v ? state.origins.add(k) : state.origins.delete(k); applyFilters();
+    }, def.color);
+
+  const sf = $('sheetFilters'); sf.innerHTML = '';
+  for (const s of SHEETS)
+    checkbox('sheetFilters', s, s === 'dia' ? '横隔（无分册）' : (s === 'other' ? '其它' : `${s} 分册`), true, (k, v) => {
+      v ? state.sheets.add(k) : state.sheets.delete(k); applyFilters();
+    });
+
+  const rf = $('roleFilters'); rf.innerHTML = '';
+  for (const [r, label] of Object.entries(ROLE_LABELS))
+    checkbox('roleFilters', r, label, true, (k, v) => {
+      v ? state.roles.add(k) : state.roles.delete(k); applyFilters();
+    });
+
+  checkbox('markFilters', 'review', '复核红球', true, (k, v) => {
+    state.review = v; applyFilters();
+  }, '#ff2828');
+
+  $('btn-reset').onclick = () => {
+    state.origins = new Set(Object.keys(ORIGIN_GROUPS));
+    state.sheets = new Set(SHEETS);
+    state.roles = new Set(Object.keys(ROLE_LABELS));
+    state.review = true;
+    state.diffGroups = new Set(['added', 'removed', 'unchanged']);
+    document.querySelectorAll('#layers input').forEach(cb => cb.checked = true);
+    applyFilters();
+  };
+}
+
+// ---------------------------------------------------------------- 图例
+function renderLegend() {
+  const el = $('legend'); el.innerHTML = '';
+  const item = (label, color, on, toggle) => {
+    const d = document.createElement('span');
+    d.className = 'item' + (on ? '' : ' off');
+    const sw = document.createElement('span');
+    sw.className = 'sw'; sw.style.background = color;
+    d.appendChild(sw); d.appendChild(document.createTextNode(label));
+    d.onclick = toggle;
+    el.appendChild(d);
+  };
+  if (state.mode === 'model') {
+    for (const [g, def] of Object.entries(ORIGIN_GROUPS))
+      item(def.label, def.color, state.origins.has(g), () => {
+        state.origins.has(g) ? state.origins.delete(g) : state.origins.add(g);
+        syncCheckboxes(); applyFilters();
+      });
+    item('复核', '#ff2828', state.review, () => {
+      state.review = !state.review; syncCheckboxes(); applyFilters();
+    });
+  } else if (state.mode === 'diff') {
+    item('新增', '#28c828', state.diffGroups.has('added'), () => toggleDiff('added'));
+    item('删除', '#e63c3c', state.diffGroups.has('removed'), () => toggleDiff('removed'));
+    item('未变', '#969696', state.diffGroups.has('unchanged'), () => toggleDiff('unchanged'));
+    item('复核', '#ff2828', state.review, () => { state.review = !state.review; applyFilters(); });
+  } else {
+    el.innerHTML = '<span class="note">GT 官方塔（575 杆）· 无分层数据</span>';
+  }
+}
+function toggleDiff(g) {
+  state.diffGroups.has(g) ? state.diffGroups.delete(g) : state.diffGroups.add(g);
+  applyFilters();
+}
+function syncCheckboxes() {
+  document.querySelectorAll('#originFilters input').forEach(cb => cb.checked = state.origins.has(cb.dataset.key));
+  const rv = document.querySelector('#markFilters input');
+  if (rv) rv.checked = state.review;
+}
+
+// ---------------------------------------------------------------- 统计面板
+function fmtPct(x, digits = 1) { return x == null ? '—' : (x * 100).toFixed(digits) + '%'; }
+function sweepAt(cal, tol) {
+  const c = DATA.multi?.calibers?.[cal];
+  if (!c) return null;
+  return (c.sweep || []).find(s => Math.abs(s.tol - tol) < 1e-6) || null;
+}
+function renderStats() {
+  const lines = [];
+  // 模型规模：model.json 现算
+  if (DATA.model) {
+    let bars = 0, nodes = 0, zmin = Infinity, zmax = -Infinity;
+    for (const c of Object.values(DATA.model.components)) {
+      if (c.kind === 'tower_bar') bars++;
+      else if (c.kind === 'tower_node') {
+        nodes++;
+        const z = Number(c.properties?.z || 0);
+        if (z < zmin) zmin = z; if (z > zmax) zmax = z;
+      }
+    }
+    lines.push(`<b>杆件 ${bars}</b> | 节点 ${nodes} | Z [${Math.round(zmin)}, ${Math.round(zmax)}]`);
+  }
+  // 来源计数：bar_map.json 现算
+  if (DATA.barMap) {
+    const cnt = { recognized: 0, assisted: 0, stitch: 0, derived: 0 };
+    for (const e of DATA.barMap) {
+      const g = originToGroup[e.geometry_origin];
+      if (g) cnt[g]++;
+    }
+    const reviewN = DATA.review?.gate?.genuine_dangling_physical
+      ?? (DATA.review?.groups || []).length ?? 0;
+    lines.push(`识别 ${cnt.recognized} | 辅助 ${cnt.assisted} | 拼接 ${cnt.stitch} | 派生 ${cnt.derived} | 复核 ${reviewN}`);
+  }
+  // A2 指标：metrics_multi_caliber.json 现算
+  if (DATA.multi) {
+    const pure = sweepAt('pure', 500), full = sweepAt('full', 500);
+    const seg = [];
+    if (pure) seg.push(`A2-pure TP@500=${pure.tp} (P=${fmtPct(pure.precision)})`);
+    if (full) seg.push(`A2-full TP@500=${full.tp} (P=${fmtPct(full.precision)})`);
+    const ceil = DATA.multi.ceiling;
+    if (ceil?.ceiling_rate != null) seg.push(`front 上限 ${fmtPct(ceil.ceiling_rate)}`);
+    if (seg.length) lines.push(seg.join(' | '));
+    lines.push(`<span class="dim">A1 件号：交付 JSON 无该指标（—）</span>`);
+    const zmin = DATA.multi.effective?.z_min_mm;
+    if (zmin != null) lines.push(`<span class="warn">缺失区间: z &lt; ${zmin}（底段无图源，A2-effective 已剔除）</span>`);
+  }
+  // 分角色召回：metrics_by_role.json 现算
+  if (DATA.byRole) {
+    const parts = Object.entries(DATA.byRole)
+      .map(([r, v]) => `${r} ${fmtPct(v.recall, 1)}`);
+    if (parts.length) lines.push(`<span class="dim">分角色召回: ${parts.join(' · ')}</span>`);
+  }
+  // diff 摘要
+  if (state.mode === 'diff' && DATA.diffReport) {
+    const s = DATA.diffReport.summary || {};
+    lines.push(`<b>diff（tol=${DATA.diffReport.tol_mm}mm）</b>：新增 ${s.added ?? 0} · 删除 ${s.removed ?? 0} · 未变 ${s.unchanged ?? 0}`);
+  }
+  $('stats').innerHTML = lines.join('<br>') || '无数据';
+}
+
+// ---------------------------------------------------------------- 模式切换
+function setMode(mode) {
+  state.mode = mode;
+  for (const [id, m] of [['btn-model', 'model'], ['btn-diff', 'diff'], ['btn-gt', 'gt']])
+    $(id).classList.toggle('active', m === mode);
+  $('layers').classList.toggle('disabled', mode === 'gt');
+  const descs = {
+    model: 'DXF 管线重建骨架（provenance 五色：绿识别/蓝辅助/黄拼接/灰派生）',
+    diff: '基线 vs 当前模型几何 diff（绿=新增 / 红=删除 / 灰半透=未变或微调）',
+    gt: '国网官方 35A1 完整铁塔（GT 参考）',
+  };
+  $('desc').textContent = descs[mode];
+  showMode(mode);
+  renderStats();
+}
+
+function attach(key, group) {
+  if (MESHES[key]) scene.remove(MESHES[key]);
+  MESHES[key] = group;
+}
+function showMode(mode) {
+  if (currentKey) scene.remove(MESHES[currentKey]);
+  if (mode === 'gt') {
+    if (!MESHES.gt) {
+      setLoading(true, '加载 GT 官方塔…');
+      loadGLB('gt_reference.glb').then(g => { attach('gt', g); finishShow(mode); })
+        .catch(e => { $('desc').textContent = 'GT 加载失败：' + e.message; setLoading(false); });
+      return;
+    }
+    finishShow(mode); return;
+  }
+  if (mode === 'diff') {
+    if (!MESHES.diff) {
+      setLoading(true, '加载 diff.glb…');
+      Promise.all([loadGLB(BASE + 'diff.glb'),
+                   fetchJSON('diff_report.json').catch(() => null)])
+        .then(([g, rep]) => {
+          DATA.diffReport = rep; attach('diff', g); finishShow(mode);
+        })
+        .catch(() => { $('desc').textContent = 'diff.glb 缺失：先跑 scripts/generate_diff_glb.py + sync'; setLoading(false); });
+      return;
+    }
+    finishShow(mode); return;
+  }
+  finishShow(mode);
+}
+function finishShow(mode) {
+  const key = mode === 'gt' ? 'gt' : mode === 'diff' ? 'diff' : 'skeleton';
+  const grp = MESHES[key];
+  if (grp) {
+    scene.add(grp);
+    currentKey = key;
+    const box = new THREE.Box3().setFromObject(grp);
+    const c = box.getCenter(new THREE.Vector3());
+    const s = box.getSize(new THREE.Vector3()).length() / 2 || 1;
+    camera.position.copy(c).add(new THREE.Vector3(s * 1.0, s * 0.25, s * 0.7));
+    controls.target.copy(c);
+  }
+  setLoading(false);
+  applyFilters();
+  renderStats();
+}
+
+// ---------------------------------------------------------------- 启动
+(async function init() {
+  setLoading(true, '加载数据资产…');
+  try {
+    const [barMap, model, multi, byRole, byOrigin, review] = await Promise.all([
+      fetchJSON('bar_map.json'),
+      fetchJSON('model.json'),
+      fetchJSON('metrics_multi_caliber.json').catch(() => null),
+      fetchJSON('metrics_by_role.json').catch(() => null),
+      fetchJSON('metrics_by_origin.json').catch(() => null),
+      fetchJSON('review_queue.json').catch(() => null),
+    ]);
+    Object.assign(DATA, { barMap, model, multi, byRole, byOrigin, review });
+    ATTRS = buildAttrs(barMap);
+    SHEETS = [...new Set(Object.values(ATTRS).filter(a => !a.isReview).map(a => a.sheet))]
+      .sort((a, b) => (a === 'dia' || a === 'other') - (b === 'dia' || b === 'other') || String(a).localeCompare(String(b)));
+    state.sheets = new Set(SHEETS);
+    buildLayerPanel();
+
+    const skel = await loadGLB(BASE + 'skeleton.glb');
+    attach('skeleton', skel);
+    reviewGroupObj = buildReviewSpheres(review || { groups: [] });
+    scene.add(reviewGroupObj);
+
+    $('btn-model').onclick = () => setMode('model');
+    $('btn-diff').onclick = () => setMode('diff');
+    $('btn-gt').onclick = () => setMode('gt');
+
+    finishShow('model');
+  } catch (e) {
+    setLoading(false);
+    $('stats').innerHTML = `<span class="warn">资产加载失败：${e.message}<br>请用 python3 -m http.server 8000 从仓库根启动，并先跑 scripts/sync_demo_assets.py</span>`;
+  }
+})();
 
 function animate() {
   requestAnimationFrame(animate);
