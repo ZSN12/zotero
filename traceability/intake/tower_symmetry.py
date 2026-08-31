@@ -531,6 +531,7 @@ def expand_4_face_symmetry_model(
             reconstruct_diagonal_topology,
         )
         _dt_sheets = spec.get("diagonal_topology_sheets") or ["35A1-JC1-06"]
+        _dt_sel_mode = str(spec.get("diagonal_topology_selection_mode") or "p11")
         _use_multi = (
             len(_dt_sheets) > 1
             or bool(spec.get("diagonal_topology_sheet_config"))
@@ -542,6 +543,7 @@ def expand_4_face_symmetry_model(
                 level_source_label=(
                     "gt_canonical" if level_source == "gt" else "dxf_derived"
                 ),
+                selection_mode=_dt_sel_mode,
             )
         else:
             _dt_window = spec.get("diagonal_topology_z_window") or (11000.0, 17500.0)
@@ -555,6 +557,7 @@ def expand_4_face_symmetry_model(
                     "gt_canonical" if level_source == "gt" else "dxf_derived"
                 ),
                 twist_faces=list(_dt_twist_faces),
+                selection_mode=_dt_sel_mode,
             )
         roles = classify_members(face_nodes, face_bars)
         _dt_df = model.components.get("drawing_file")

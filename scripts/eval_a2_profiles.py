@@ -27,6 +27,7 @@ from traceability.eval.metrics import (  # noqa: E402
     eval_a2_dual_caliber,
     eval_a2_dual_view,
     eval_a2_multi_caliber,
+    front_view_ceiling,
 )
 
 
@@ -39,10 +40,11 @@ def _sha(path: Optional[Path]) -> Optional[str]:
 
 
 def _pick_tol(result: dict, tol: float = 500.0) -> dict:
-    for row in result.get("by_tolerance") or []:
-        if abs(float(row.get("tolerance_mm", 0)) - tol) < 1e-6:
+    rows = result.get("by_tolerance") or result.get("sweep") or []
+    for row in rows:
+        t = row.get("tolerance_mm", row.get("tol", 0))
+        if abs(float(t) - tol) < 1e-6:
             return row
-    rows = result.get("by_tolerance") or []
     return rows[-1] if rows else {}
 
 
@@ -75,8 +77,11 @@ def main() -> int:
     multi = eval_a2_multi_caliber(gt, model, view="front", tols=(args.tol,))
     dual_cal = eval_a2_dual_caliber(gt, model, view="front", tols=(args.tol,))
     dual_view = eval_a2_dual_view(gt, model, tols=(args.tol,))
+    ceiling = front_view_ceiling(gt)
+    cal = multi.get("calibers") or {}
 
-    front_pure = _pick_tol(multi.get("pure_dxf") or {}, args.tol)
+    front_pure = _pick_tol(cal.get("pure_dxf") or {}, args.tol)
+    full_front = _pick_tol(cal.get("full") or {}, args.tol)
     dual_pure_row = (dual_cal.get("pure_dxf") or {}).get("sweep") or []
     dual_pure = dual_pure_row[0] if dual_pure_row else {}
     full_sweep = ((dual_view.get("calibers") or {}).get("full") or {}).get("sweep") or []
@@ -102,9 +107,26 @@ def main() -> int:
             "R_pct": round(100 * float(dual_full.get("recall", 0)), 1),
             "note": "full 池含 level-assisted；仅内部归因，不得对外作 pure 能力",
         },
+        "A2-front-full": {
+            "TP": full_front.get("tp", 0),
+            "FP": full_front.get("fp", 0),
+            "P_pct": round(100 * float(full_front.get("precision", 0)), 1),
+            "R_pct": round(100 * float(full_front.get("recall", 0)), 1),
+            "note": "front 单视图 full 池（含 level-assisted），内部归因",
+        },
     }
 
-    out = {"eval_binding": binding, "profiles": profiles}
+    observability = {
+        "front_only_unobservable": int(ceiling.get("y_member_unmeasurable", 0))
+            + int(ceiling.get("depth_diag_overlap_loss", 0)),
+        "front_ceiling_rate_pct": round(100 * float(ceiling.get("ceiling_rate", 0)), 1),
+        "y_member_unmeasurable": ceiling.get("y_member_unmeasurable", 0),
+        "depth_diag_overlap_loss": ceiling.get("depth_diag_overlap_loss", 0),
+        "multi_view_tp_gain_vs_front_pure": int(dual_full.get("tp", 0))
+            - int(front_pure.get("tp", 0)),
+    }
+
+    out = {"eval_binding": binding, "profiles": profiles, "observability": observability}
     print(json.dumps(out, ensure_ascii=False, indent=2))
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)

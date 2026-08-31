@@ -1175,6 +1175,7 @@
   "parametric_base_extrapolation": true,
   "parametric_base_z_top": 6500.0,
   "diagonal_topology_reconstruct": true,
+  "diagonal_topology_selection_mode": "p11",
   "diagonal_topology_sheets": [
     "35A1-JC1-05",
     "35A1-JC1-06",

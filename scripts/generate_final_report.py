@@ -131,6 +131,19 @@ def main() -> int:
     df_props = model["components"]["drawing_file"]["properties"]
     repair = df_props.get("dangling_repair_report", {})
 
+    profiles_doc = {}
+    prof_path = OUT / "eval_a2_profiles.json"
+    if prof_path.exists():
+        profiles_doc = json.loads(prof_path.read_text(encoding="utf-8"))
+
+    gen_status = {}
+    gen_path = OUT / "generation_status.json"
+    if gen_path.exists():
+        gen_status = json.loads(gen_path.read_text(encoding="utf-8"))
+    else:
+        from traceability.eval.generation_status import collect_generation_status
+        gen_status = collect_generation_status(model)
+
     rq = {}
     rq_path = OUT / "review_queue.json"
     if rq_path.exists():
@@ -140,6 +153,13 @@ def main() -> int:
     full = a2["full"]
     ceil = a2.get("ceiling", {})
     tp500 = next(s for s in full["sweep"] if s["tol"] == 500)
+
+    headline = profiles_doc.get("profiles") or {}
+    obs = profiles_doc.get("observability") or {}
+    dual_recon = headline.get("A2-dual-view-reconstructed") or {}
+    front_pure_h = headline.get("A2-front-pure") or {}
+    dt_totals = (gen_status.get("diagonal_topology") or {}).get("totals") or {}
+    dt_sheets = (gen_status.get("diagonal_topology") or {}).get("per_sheet") or []
 
     # 来源分类计数（GLB provenance 着色同口径）
     from collections import Counter
@@ -158,6 +178,30 @@ def main() -> int:
 
 > 运行基准：{run_rep.get('run_id', 'N/A')}；门禁：{'通过' if gate['ok'] else '失败'}
 > 生成：scripts/generate_final_report.py（全部指标现算，不硬编码）
+
+## 0. Headline KPI（development，tol=500，d1+d2）
+
+| 口径 | TP | FP | Precision | Recall | 说明 |
+|---|---:|---:|---:|---:|---|
+| A2-front-pure | {front_pure_h.get('TP', pure['sweep'][0]['tp'] if pure.get('sweep') else '?')} | {front_pure_h.get('FP', '?')} | {front_pure_h.get('P_pct', '?')}% | {front_pure_h.get('R_pct', '?')}% | 对外主口径 |
+| A2-dual-view-pure | {(headline.get('A2-dual-view-pure') or {}).get('TP', '—')} | {(headline.get('A2-dual-view-pure') or {}).get('FP', '—')} | {(headline.get('A2-dual-view-pure') or {}).get('P_pct', '—')}% | {(headline.get('A2-dual-view-pure') or {}).get('R_pct', '—')}% | front∪side |
+| A2-dual-view-reconstructed | {dual_recon.get('TP', '—')} | {dual_recon.get('FP', '—')} | {dual_recon.get('P_pct', '—')}% | {dual_recon.get('R_pct', '—')}% | full 池，含 level-assisted |
+
+front 不可达（投影结构性）：{obs.get('front_only_unobservable', '—')} 根；
+双视图相对 front-pure TP 增益：+{obs.get('multi_view_tp_gain_vs_front_pure', '—')}
+
+## 0b. generation_status（分册候选审计）
+
+斜材拓扑合计生成：**{dt_totals.get('generated', '—')}** 杆
+（fan_pairs={dt_totals.get('fan_pairs', '—')}，twist_pairs={dt_totals.get('twist_pairs', '—')}）
+
+| 分册 | generated | fan | rejected | reasons |
+|---|---:|---:|---:|---|
+""" + "\n".join(
+        f"| {s.get('sheet', '?')} | {s.get('generated', 0)} | {s.get('fan_pairs', 0)} | "
+        f"{s.get('selection_rejected', 0)} | {','.join(s.get('reject_reasons') or []) or '—'} |"
+        for s in dt_sheets
+    ) + f"""
 
 ## 1. A2-pure（对外汇报口径）——纯 DXF 识别能力
 

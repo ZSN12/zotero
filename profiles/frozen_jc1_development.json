@@ -7,6 +7,7 @@
     "use_gt_platform_levels": true,
     "use_gt_half_width": false,
     "diagonal_topology_reconstruct": true,
+    "diagonal_topology_selection_mode": "p11",
     "diagonal_topology_sheets": ["35A1-JC1-05", "35A1-JC1-06", "35A1-JC1-07"],
     "diagonal_topology_sheet_config": {
       "35A1-JC1-06": {"z_window": [11000.0, 17500.0], "auto_z_window": false},

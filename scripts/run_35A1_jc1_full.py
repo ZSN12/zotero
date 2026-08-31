@@ -144,11 +144,21 @@ def main() -> int:
                              "use_gt_platform_levels=true——level-assisted TP 主要来源）；"
                              "production_dxf（生产真实能力，纯 DXF 平台层证据推导，"
                              "写独立目录 out/35A1-JC1-production/）")
+    parser.add_argument("--dxf-dir", type=Path, default=None,
+                        help="DXF 批次目录（默认 out/xianyu-acceptance/batch-jc1/dxf）")
+    parser.add_argument("--out-dir", type=Path, default=None,
+                        help="交付输出目录（默认随 profile 变化）")
+    parser.add_argument("--selection-mode", choices=["none", "p11", "relaxed"],
+                        default=None,
+                        help="06 斜材解释择优模式（覆盖 overlay diagonal_topology_selection_mode）")
+    parser.add_argument("--skip-sync", action="store_true",
+                        help="跳过 demo 资产同步（A/B 跑批时使用）")
     args = parser.parse_args()
 
     overlay = full_overlay()
     overlay_path = OVERLAY_PATH
     out_dir = OUT
+    dxf_batch = args.dxf_dir or DXF_BATCH
     if args.gt_align:
         # gt_align 只在脚本层开启，不改共享 overlay 文件，避免污染测试/其它调用方。
         overlay["gt_align"] = True
@@ -174,19 +184,31 @@ def main() -> int:
         print("Profile: production_dxf（panel_level_source=dxf，GT 平台层注入关闭）")
     else:
         print("Profile: canonical_assisted（use_gt_platform_levels=true，研究对照口径）")
+
+    if args.out_dir is not None:
+        out_dir = args.out_dir
+
+    if args.selection_mode:
+        overlay["diagonal_topology_selection_mode"] = args.selection_mode
+        out_dir.mkdir(parents=True, exist_ok=True)
+        tmp_sel = out_dir / f"_overlay_sel_{args.selection_mode}.json"
+        tmp_sel.write_text(json.dumps(overlay, ensure_ascii=False, indent=2), encoding="utf-8")
+        overlay_path = tmp_sel
+        print(f"selection_mode: {args.selection_mode}")
+
     spatial_stems = sorted(cross_file_merge_stems(overlay))
-    print("JC1 全册 DXF 目录:", DXF_BATCH)
+    print("JC1 全册 DXF 目录:", dxf_batch)
     print("全册解析: parse_all_project_sheets=True")
     print("空间 3D 合并 stems:", ", ".join(spatial_stems))
     print("agent_mode:", args.agent_mode)
 
-    if not DXF_BATCH.exists():
-        print(f"DXF 目录不存在: {DXF_BATCH}", file=sys.stderr)
+    if not dxf_batch.exists():
+        print(f"DXF 目录不存在: {dxf_batch}", file=sys.stderr)
         return 1
 
     out_dir.mkdir(parents=True, exist_ok=True)
     pd = deliver_project(
-        DXF_BATCH,
+        dxf_batch,
         layer_map_path=str(overlay_path),
         bom_path=str(REPO / "examples/external/guowang_35A1/guowang_merged_bom.csv"),
         project_id="35A1-JC1-full",
@@ -197,6 +219,12 @@ def main() -> int:
     model = load_model(str(out_dir / "model.json"))
     stats = bar_stats(model)
     gate = tower_geometry_gate(model, str(OVERLAY_PATH))
+
+    from traceability.eval.generation_status import collect_generation_status
+    _model_dict = json.loads((out_dir / "model.json").read_text(encoding="utf-8"))
+    gen_status = collect_generation_status(_model_dict)
+    (out_dir / "generation_status.json").write_text(
+        json.dumps(gen_status, ensure_ascii=False, indent=2), encoding="utf-8")
 
     sheet_rows = sheet_bar_summary(out_dir / "cross_file")
     total_sheet_bars = sum(b for _, b in sheet_rows)
@@ -276,7 +304,8 @@ def main() -> int:
     # ------------------------------------------------------------------
     postprocess = run_postprocess(
         out_dir, REPO, overlay_path,
-        DEMO_DIR if args.profile == "canonical_assisted" else (out_dir / "_no_demo_sync"))
+        DEMO_DIR if args.profile == "canonical_assisted" and not args.skip_sync
+        else (out_dir / "_no_demo_sync"))
     report["postprocess"] = postprocess
     report["profile"] = args.profile
     (out_dir / "full_run_report.json").write_text(
