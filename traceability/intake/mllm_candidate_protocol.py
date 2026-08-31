@@ -250,6 +250,38 @@ def apply_confidence_gate(
     return accepted, rejected, counts
 
 
+def filter_mllm_bars_for_inject(
+    mllm_bars: Sequence[Dict[str, Any]],
+    dxf_bars_px: Sequence[Dict[str, Any]],
+    *,
+    model_name: Optional[str] = None,
+    image_ref: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], List[CandidateRecord], Dict[str, Any]]:
+    """P2.5：低置信 MLLM 候选阻断注入（accepted 才返回）。
+
+    返回 (filtered_bars, rejected_records, audit)。
+    """
+    records, cv_report = cross_validate(
+        mllm_bars, dxf_bars_px, model_name=model_name, image_ref=image_ref)
+    accepted, rejected, gate_counts = apply_confidence_gate(records)
+    accepted_uids = {r.bar_uid for r in accepted}
+    # bar_uid 缺省时按序 C001 与 cross_validate 一致
+    filtered: List[Dict[str, Any]] = []
+    for i, b in enumerate(mllm_bars):
+        uid = str(b.get("bar_uid") or f"mllm_{i:04d}")
+        if uid in accepted_uids:
+            filtered.append(b)
+    audit = {
+        "block_inject": True,
+        "confidence_gate": gate_counts,
+        "cross_validation": cv_report,
+        "n_in": len(mllm_bars),
+        "n_out": len(filtered),
+        "n_rejected": len(rejected),
+    }
+    return filtered, rejected, audit
+
+
 def records_to_evidence(
     records: Sequence[CandidateRecord],
     report: Dict[str, Any],

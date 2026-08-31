@@ -18,6 +18,7 @@
     "collinear_stitch": true,
     "collinear_stitch_max_single_len_mm": 800.0,
     "collinear_stitch_max_segments": 2,
+    "multiview_hypothesis_sheets": ["35A1-JC1-06"],
     "mllm_confidence_gate_block_inject": false
   },
   "eval": {

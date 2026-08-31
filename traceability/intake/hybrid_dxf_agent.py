@@ -809,6 +809,30 @@ def run_hybrid_dxf_agent_pipeline(
                 )
 
             if mllm_bars_px and geom_method in ("auto", "mllm"):
+                spec = load_tower_spec(layer_map_path)
+                # P2.5：overlay 显式开启时，低置信 MLLM 候选不入模（进 review 证据链）
+                if bool(spec.get("mllm_confidence_gate_block_inject")):
+                    from .mllm_candidate_protocol import filter_mllm_bars_for_inject
+                    dxf_px_gate: List[Dict[str, Any]] = []
+                    if mapping:
+                        for vb in ezdxf_bars:
+                            try:
+                                px1, py1 = drawing_xy_to_px(
+                                    float(vb["x1"]), float(vb["y1"]), mapping)
+                                px2, py2 = drawing_xy_to_px(
+                                    float(vb["x2"]), float(vb["y2"]), mapping)
+                                dxf_px_gate.append({
+                                    "component_id": vb.get("component_id"),
+                                    "x1": px1, "y1": py1, "x2": px2, "y2": py2,
+                                })
+                            except (KeyError, TypeError, ValueError):
+                                continue
+                    mllm_bars_px, _rej, gate_audit = filter_mllm_bars_for_inject(
+                        mllm_bars_px, dxf_px_gate,
+                        model_name=str(mllm_geom_meta.get("model") or ""),
+                        image_ref=str(png_path),
+                    )
+                    mllm_geom_meta["confidence_gate_block"] = gate_audit
                 bars = _bars_px_to_drawing(mllm_bars_px, mapping, view_type)
                 # 斜材共线拼接：把 MLLM 碎片化的通长斜材拼回整根（降低 FP、提升斜材长度）
                 bars, stitched = _stitch_mllm_diagonals(bars)

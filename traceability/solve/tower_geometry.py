@@ -979,7 +979,15 @@ def generate_diaphragms(
     corner_ids_by_z: Dict[float, List[Optional[str]]] = {}
     if levels:
         pick_window = 800.0
+        # P3.1：canonical 层去重（±level_collapse_mm 内合并，防同 z 重复横隔）
+        collapse = 80.0
+        collapsed: List[float] = []
         for lv in sorted(float(z) for z in levels):
+            if collapsed and abs(lv - collapsed[-1]) <= collapse:
+                collapsed[-1] = (collapsed[-1] + lv) / 2.0
+            else:
+                collapsed.append(lv)
+        for lv in collapsed:
             cids: List[Optional[str]] = [None, None, None, None]
             new_corn: List[Optional[str]] = [None, None, None, None]
             for ci, (sx, sy) in enumerate(quadrants):

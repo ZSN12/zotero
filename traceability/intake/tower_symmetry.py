@@ -540,6 +540,34 @@ def expand_4_face_symmetry_model(
                 if k in _dt_rep
             }
 
+    # Phase 5：多视图 3D 假设（06 段试点）——front (x,z) + side (y,z) 关联。
+    _mv_sheets = spec.get("multiview_hypothesis_sheets") or []
+    if _mv_sheets:
+        from ..solve.multiview_hypothesis import apply_multiview_hypotheses
+        from ..solve.diagonal_topology import resolve_diagonal_sheet_configs
+        _mv_reports: List[dict] = []
+        _sheet_cfg = {c["sheet"]: c for c in resolve_diagonal_sheet_configs(spec)}
+        for _sh in _mv_sheets:
+            _cfg = _sheet_cfg.get(_sh) or {}
+            _zw = _cfg.get("z_window")
+            face_nodes, face_bars, _mv_rep = apply_multiview_hypotheses(
+                face_nodes, face_bars, half_width_fn,
+                sheet=_sh,
+                z_window=(float(_zw[0]), float(_zw[1])) if _zw else None,
+                level_source_label=(
+                    "gt_canonical" if level_source == "gt" else "dxf_derived"
+                ),
+            )
+            _mv_reports.append(_mv_rep)
+        roles = classify_members(face_nodes, face_bars)
+        _mv_df = model.components.get("drawing_file")
+        if _mv_df is not None:
+            _mv_df.properties["multiview_hypothesis_report"] = {
+                "sheets": list(_mv_sheets),
+                "per_sheet": _mv_reports,
+                "n_generated": sum(r.get("n_generated", 0) for r in _mv_reports),
+            }
+
     # S4 贪心共线拼接（Phase 2）：把断裂碎片杆拼回整杆。
     # 关键教训（2026-08-31 实测，三轮复核）：
     #   1. 必须在 classify_members 之后挂——否则 face_bars 无 role，

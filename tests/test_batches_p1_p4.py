@@ -91,7 +91,8 @@ class TestFrozenProfile(unittest.TestCase):
             (REPO / "examples/external/guowang_35A1/layer_overlay.json").read_text(encoding="utf-8"))
         keys = frozen["overlay_keys"]
         for k in ("diagonal_topology_sheets", "diaphragm_max_z_mm",
-                  "collinear_stitch_max_single_len_mm"):
+                  "collinear_stitch_max_single_len_mm",
+                  "multiview_hypothesis_sheets"):
             self.assertEqual(overlay.get(k), keys.get(k), k)
 
 
