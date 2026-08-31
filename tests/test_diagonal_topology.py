@@ -227,12 +227,13 @@ class TestSelectionP11(unittest.TestCase):
         self.assertEqual(len([r for r in kept if r["kind"] == "fan"]), 2)
 
     def test_panel_crossing_rejected(self):
-        # h 更大却扇向更低平台 → 区域交叉
+        # h 更大却扇向更低平台 → 区域交叉；按 h 升序先到者保留
         interps = [self._fan(12000, 16000, 100), self._fan(13000, 14000, 200)]
         kept, audit = select_interpretations(
             interps, [11000, 12000, 13000, 14000, 16000, 17000, 19000])
         pairs = {(round(r["z_lo"]), round(r["z_hi"])) for r in kept if r["kind"] == "fan"}
-        self.assertIn((13000.0, 14000.0), pairs)  # h 序靠前保留
+        self.assertIn((12000.0, 16000.0), pairs)
+        self.assertNotIn((13000.0, 14000.0), pairs)
         reasons = [x["reason"] for x in audit["rejected"]]
         self.assertIn("panel_crossing", reasons)
 
