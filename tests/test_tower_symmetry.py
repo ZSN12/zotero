@@ -249,3 +249,69 @@ class AppliesToRetargetTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShortDiagFilterOrphanLabelsTest(unittest.TestCase):
+    """Phase 2：短斜材过滤删除几何时，杆上件号必须进 orphan 登记簿。
+
+    A1 语义是「件号文字是否被识别」——几何被结构规则清除（GT 不统计
+    节点板连接件）不等于件号识别失败。证据链不许随几何消亡。
+    """
+
+    def test_short_diag_labels_collected(self):
+        from traceability.intake.tower_symmetry import expand_4_face_symmetry_model
+        from traceability.model import EngineeringModel, Component
+        from traceability.model import SourceRef, SourceType
+
+        m = EngineeringModel(name="t")
+        m.add_component(Component(
+            id="drawing_file", name="t", kind="drawing_file",
+            source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+            properties={"drawing_view": "t", "view_mode": "single"},
+        ))
+        # 主腿（长竖杆，不受过滤影响）
+        m.add_component(Component(id="n1", name="n1", kind="tower_node",
+            source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+            properties={"x": 1000.0, "y": 0.0, "z": 0.0, "view_type": "front",
+                        "drawing_view": "t", "source_file": "t"}))
+        m.add_component(Component(id="n2", name="n2", kind="tower_node",
+            source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+            properties={"x": 800.0, "y": 0.0, "z": 2000.0, "view_type": "front",
+                        "drawing_view": "t", "source_file": "t"}))
+        m.add_component(Component(id="b_leg", name="b_leg", kind="tower_bar",
+            source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+            properties={"bar_id": "201", "from_node": "n1", "to_node": "n2",
+                        "section": "L63X5", "view_type": "front",
+                        "drawing_view": "t", "source_file": "t"}))
+        # 短斜材（300mm、45°倾角 < min_diag_len_mm=500）：几何应被过滤，
+        # 但 bar_id=105 必须收进登记簿
+        m.add_component(Component(id="n3", name="n3", kind="tower_node",
+            source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+            properties={"x": 300.0, "y": 0.0, "z": 1000.0, "view_type": "front",
+                        "drawing_view": "t", "source_file": "t"}))
+        m.add_component(Component(id="n4", name="n4", kind="tower_node",
+            source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+            properties={"x": 500.0, "y": 0.0, "z": 1200.0, "view_type": "front",
+                        "drawing_view": "t", "source_file": "t"}))
+        m.add_component(Component(id="b_short", name="b_short", kind="tower_bar",
+            source=SourceRef(SourceType.DRAWING, "x.dxf", confidence=1.0),
+            properties={"bar_id": "105", "from_node": "n3", "to_node": "n4",
+                        "section": "L40X3", "view_type": "front",
+                        "drawing_view": "t", "source_file": "t"}))
+        spec = {
+            "enable_4_face_expansion": True,
+            "use_gt_half_width": False,
+            "min_diag_len_mm": 500.0,   # 开启短斜材过滤
+            "max_stub_len_mm": 0.0,     # 隔离：只测短斜材路径
+        }
+        expand_4_face_symmetry_model(m, spec)
+        df = m.components["drawing_file"]
+        orphans = df.properties.get("orphan_label_ids") or []
+        self.assertIn("105", orphans,
+                      "被过滤短斜材的件号必须进 orphan 登记簿（A1 证据不随几何消亡）")
+        # 主腿不受影响
+        self.assertNotIn("201", orphans)
+
+
+if __name__ == "__main__":
+    unittest.main()

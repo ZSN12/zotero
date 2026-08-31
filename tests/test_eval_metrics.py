@@ -438,7 +438,7 @@ class FourMetricsIndependentTest(unittest.TestCase):
         self.assertEqual(r["orphan_inventory"]["total"], 0)
 
     def test_a1_filters_label_pollution(self):
-        """P1：几何 ID / 标注数字污染必须被挡在 prediction 之外。"""
+        """Phase 2：污染挡在 prediction 外；BOM-valid orphan 并入 prediction。"""
         from traceability.eval.metrics import eval_a1_labels, _looks_like_bar_label
 
         # 形态判据：工程件号放行，污染剔除
@@ -452,7 +452,7 @@ class FourMetricsIndependentTest(unittest.TestCase):
         self.assertFalse(_looks_like_bar_label("1078"))
         self.assertFalse(_looks_like_bar_label("corner_leg_1_06"))  # 几何 ID
 
-        # 集成：污染件号不进 prediction，orphan 只进 inventory
+        # 集成：污染件号不进 prediction；BOM-valid orphan（616）进 prediction
         gt = self._gt()
         model = self._model(["101", "corner_leg_1_06", "4477", "0"])
         model["components"]["df1"] = {
@@ -460,10 +460,27 @@ class FourMetricsIndependentTest(unittest.TestCase):
             "properties": {"orphan_label_ids": ["616", "999noise_x"]},
         }
         r = eval_a1_labels(gt, model, gt_label_ids={"101", "616"})
-        self.assertEqual(r["n_model"], 1)  # 只有 '101' 进 prediction
-        self.assertEqual(r["tp"], 1)
-        # orphan 616 是 BOM-valid 证据但不进 prediction
+        # Phase 2：predicted = recognized('101') ∪ bom_valid_orphan('616')
+        self.assertEqual(r["n_model"], 2)
+        self.assertEqual(r["tp"], 2)
+        # TP 来源分解：几何在模 1 + 登记簿 1
+        self.assertEqual(r["tp_by_source"]["attached_geometry"], 1)
+        self.assertEqual(r["tp_by_source"]["orphan_inventory"], 1)
+        # 七集计数呈报
+        self.assertEqual(r["label_set_counts"]["attached"], 4)
+        self.assertEqual(r["label_set_counts"]["recognized"], 1)
+        self.assertEqual(r["label_set_counts"]["orphan_inventory"], 2)
+        self.assertEqual(r["label_set_counts"]["bom_valid_orphan"], 1)
+        self.assertEqual(r["label_set_counts"]["invalid"], 3)
+        # orphan 登记簿仍有噪声（999noise_x 非 BOM）
         self.assertEqual(r["orphan_inventory"]["bom_valid"], 1)
+        self.assertEqual(r["orphan_inventory"]["non_bom"], 1)
+        # P 保持 100%：并入的 orphan 是 BOM 确认的，不引入 FP
+        self.assertEqual(r["precision"], 1.0)
+
+        # 无 gt_label_ids（调试回退）：bom_valid_orphan 退化为空，回到 P1 行为
+        r2 = eval_a1_labels(gt, model)
+        self.assertEqual(r2["tp_by_source"]["orphan_inventory"], 0)
 
     def test_a1_with_id_mapping(self):
         from traceability.eval.metrics import eval_a1_labels

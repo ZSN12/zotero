@@ -147,9 +147,16 @@ def expand_4_face_symmetry_model(
     # （guowang_35A1 生产 overlay 配 500mm），避免误杀测试/其它调用方的合法短斜材。
     min_diag_len_mm = float(spec.get("min_diag_len_mm", 0.0))
     min_diag_incl = float(spec.get("min_diag_incl_deg", 20.0))
+    # S1c/Phase 2 件号登记簿：几何被规则清除的杆（短斜材过滤/残根剪除）
+    # 携带的图纸件号收进这里——几何清除噪声，A1 文字识别证据不丢。
+    orphan_label_ids: List[str] = []
     if min_diag_len_mm > 0:
         kept_bars: List[dict] = []
         dropped_short_diag = 0
+        # Phase 2（2026-08-31）：被过滤短斜材携带的真实件号收进登记簿——
+        # 几何按结构规则清除（GT 不统计节点板连接件），但图纸件号文字是
+        # A1 证据，不许随几何消亡。与残根剪除的 orphan_label_ids 同语义。
+        dropped_diag_labels: List[str] = []
         for b in src_bars:
             f, t = src_nodes.get(b["from"]), src_nodes.get(b["to"])
             if f is None or t is None:
@@ -163,10 +170,14 @@ def expand_4_face_symmetry_model(
                 incl = abs(math.degrees(math.atan2(abs(dz), abs(dx))))
                 if min_diag_incl <= incl <= 90.0 - min_diag_incl:
                     dropped_short_diag += 1
+                    _bid = b.get("bar_id")
+                    if _bid and not str(_bid).startswith("UNLABELED"):
+                        dropped_diag_labels.append(str(_bid))
                     continue
             kept_bars.append(b)
         if dropped_short_diag:
             src_bars = kept_bars
+            orphan_label_ids.extend(dropped_diag_labels)
 
     if not src_bars:
         return model
@@ -248,13 +259,13 @@ def expand_4_face_symmetry_model(
     # 件号保全：被剪残根若携带真实图纸件号（多为孤立标注残片，无结构附着
     # 点无法转移），收进 orphan_label_ids 登记簿——几何清除噪声，A1 证据不丢。
     max_stub_len = float(spec.get("max_stub_len_mm", 0.0))
-    orphan_label_ids: List[str] = []
     if max_stub_len > 0:
         from ..solve.tower_geometry import prune_short_stub_bars
         snapped_nodes, snapped_bars, stub_rep = prune_short_stub_bars(
             snapped_nodes, snapped_bars, max_stub_len_mm=max_stub_len,
         )
-        orphan_label_ids = list(stub_rep.get("pruned_label_ids") or [])
+        # Phase 2：extend 而非覆盖——上面短斜材过滤已收集的件号不能被冲掉
+        orphan_label_ids.extend(stub_rep.get("pruned_label_ids") or [])
 
     # Phase 2.3（2026-08-31 review）：受约束的局部端点吸附。
     # 与全局 snap_diagonals_to_legs 的区别：只处理 degree=1 长杆悬空端点，

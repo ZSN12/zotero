@@ -149,6 +149,16 @@ def main():
     else:
         print(f"GT 件号: {a1['n_gt']}，模型识别件号: {a1['n_model']}，"
               f"Exact Match: {a1['tp']}（P={a1['precision']:.1%} R={a1['recall']:.1%}）")
+    # Phase 2：TP 来源分解 + 七集计数（回答「R 提升来自哪一层证据」）
+    tbs = a1.get("tp_by_source") or {}
+    lsc = a1.get("label_set_counts") or {}
+    if tbs:
+        print(f"  TP 来源: 几何在模 {tbs.get('attached_geometry', 0)} + "
+              f"登记簿(BOM-valid orphan) {tbs.get('orphan_inventory', 0)}")
+    if lsc:
+        print(f"  证据集: attached {lsc.get('attached', 0)} → recognized {lsc.get('recognized', 0)}"
+              f"（invalid {lsc.get('invalid', 0)}）+ bom_valid_orphan {lsc.get('bom_valid_orphan', 0)}"
+              f" = predicted {lsc.get('predicted', 0)}")
 
     # ------------------------------------------------------------- #
     # Phase 1（P1.1/P1.2/P1.3）：多口径 + 追溯 + 分角色 + 落盘产物

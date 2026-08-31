@@ -1176,8 +1176,12 @@ def _model_label_ids(model: Dict[str, Any]) -> set:
     return split_a1_label_sets(model)["prediction_legacy"]
 
 
-def split_a1_label_sets(model: Dict[str, Any]) -> Dict[str, Any]:
-    """P1（2026-08-31）：把模型件号证据拆为「预测」与「登记簿」两层。
+def split_a1_label_sets(
+    model: Dict[str, Any],
+    *,
+    gt_label_ids: Optional[set] = None,
+) -> Dict[str, Any]:
+    """Phase 2（2026-08-31）：件号证据七集拆分（计划 P2.1/P2.2）。
 
     背景：A1 Precision 曾低至 19.4%（437 预测 vs 197 BOM），根因是
     attached bar_id 混入了三类污染：
@@ -1186,19 +1190,22 @@ def split_a1_label_sets(model: Dict[str, Any]) -> Dict[str, Any]:
           标注文字被件号正则误收；
         * 其他分册/节点详图件号——不属于当前物理模型。
 
-    拆分语义（用户裁定，Phase 1 口径）：
-        * attached_label_prediction：非 derived/canonical 物理杆上的 bar_id，
-          且「形似工程件号」（见 _looks_like_bar_label）。这是 A1 的
-          prediction 唯一来源。
-        * orphan_label_inventory：drawing_file.orphan_label_ids 登记簿——
-          残根剪除时收来的图纸标注证据。默认**不**进 prediction，
-          仅作 inventory 呈报（bom_valid / non_bom 分类由 caller 叠加）。
-        * prediction_legacy：旧口径（attached 全量 + orphan 全量），
-          仅供回归对照，不再用于正式指标。
+    七集语义（Phase 2 裁定）：
+        attached_label_ids        物理杆上的全部 bar_id（未过滤）
+        recognized_label_ids      attached 中「形似工程件号」者（A1 主预测）
+        orphan_label_ids          登记簿：几何被规则清除（短斜材过滤/残根
+                                  剪除）但件号文字已识别的件号
+        bom_valid_orphan_label_ids orphan 中 BOM 有效者（gt_label_ids 提供）——
+                                  这些是「件号识别成功，几何未入模」的证据，
+                                  Phase 2 起并入 A1 预测（R 提升、P 不受损）
+        cross_sheet_label_ids     attached 中属于其他分册 BOM 段的件号
+                                  （gt_label_ids 按分册时呈报用；无分册信息
+                                  时为空集，不猜）
+        invalid_label_ids         attached 中形态非法者（几何 ID/尺寸数字污染）
+        predicted_bar_ids         A1 正式预测集 = recognized + bom_valid_orphan
 
-    返回 dict：
-        {"attached_label_prediction": set, "orphan_label_inventory": set,
-         "prediction_legacy": set}
+    返回全部 set；无 gt_label_ids 时 bom_valid/cross_sheet 退化为空集
+    （可判定性优先，不伪造分类）。
     """
     comps = model.get("components", {})
     attached: set = set()
@@ -1217,9 +1224,22 @@ def split_a1_label_sets(model: Dict[str, Any]) -> Dict[str, Any]:
             for lab in p.get("orphan_label_ids") or []:
                 if lab and not str(lab).startswith("UNLABELED"):
                     orphan.add(str(lab))
-    prediction = {x for x in attached if _looks_like_bar_label(x)}
+    recognized = {x for x in attached if _looks_like_bar_label(x)}
+    invalid = attached - recognized
+    bom_valid_orphan = orphan & set(gt_label_ids) if gt_label_ids is not None else set()
+    # orphan 里 BOM 无效者同样可能是形态非法（几何 ID/尺寸数字被登记簿收走）
+    # ——bom_valid_orphan 只并入「BOM 确认」的，其余保持登记簿呈报不进预测。
+    prediction = recognized | bom_valid_orphan
     return {
-        "attached_label_prediction": prediction,
+        "attached_label_ids": attached,
+        "recognized_label_ids": recognized,
+        "orphan_label_ids": orphan,
+        "bom_valid_orphan_label_ids": bom_valid_orphan,
+        "cross_sheet_label_ids": set(),
+        "invalid_label_ids": invalid,
+        "predicted_bar_ids": prediction,
+        # 兼容旧键（P1 口径，Phase 2 起被 predicted_bar_ids 取代）
+        "attached_label_prediction": recognized,
         "orphan_label_inventory": orphan,
         "prediction_legacy": attached | orphan,
     }
@@ -1280,18 +1300,26 @@ def eval_a1_labels(
         gt_ids = set(gt_label_ids)
     else:
         gt_ids = _label_ids(gt)
-    # P1（2026-08-31）：正式口径改为 attached_label_prediction（过滤几何 ID
-    # 与标注数字污染），orphan 登记簿单独呈报，不再并入 prediction。
-    # prediction_legacy 保留在输出里作回归对照。
-    sets = split_a1_label_sets(model)
-    model_ids = set(sets["attached_label_prediction"])
-    orphan_ids = set(sets["orphan_label_inventory"])
+    # Phase 2（2026-08-31）：正式口径 = predicted_bar_ids
+    #   = recognized（attached 中形态合法者）
+    #   ∪ bom_valid_orphan（登记簿中 BOM 确认者——件号识别成功、几何
+    #     被结构规则清除的图纸证据）。后者是 R 31%→50% 的主来源：
+    #     图纸上件号文字识别到了，只是对应几何没进模型，A1 语义
+    #     （件号是否被识别出来）成立，应计入预测。
+    # 无 gt_label_ids（调试回退）时 bom_valid_orphan 为空集，退化为 P1 行为。
+    sets = split_a1_label_sets(model, gt_label_ids=gt_ids)
+    model_ids = set(sets["predicted_bar_ids"])
+    orphan_ids = set(sets["orphan_label_ids"])
+    recognized_ids = set(sets["recognized_label_ids"])
     if id_mapping:
         mapped = {id_mapping.get(m, m) for m in model_ids}
         model_ids = mapped
     tp = len(gt_ids & model_ids)
     fp = len(model_ids - gt_ids)
     fn = len(gt_ids - model_ids)
+    # 口径内分解：TP 来自几何在模 vs 登记簿（回答「提升来自哪里」）
+    tp_attached = len(gt_ids & recognized_ids)
+    tp_orphan = tp - tp_attached
     result = {
         "n_gt": len(gt_ids),
         "n_model": len(model_ids),
@@ -1301,7 +1329,20 @@ def eval_a1_labels(
         "precision": round(tp / len(model_ids), 4) if model_ids else 0.0,
         "recall": round(tp / len(gt_ids), 4) if gt_ids else 0.0,
         "exact_match_rate": round(tp / len(gt_ids), 4) if gt_ids else 0.0,
-        # P1 分层呈报：orphan 登记簿不进 prediction，但证据保留
+        # Phase 2 七集呈报（P2.1/P2.2）：每集计数 + TP 来源分解
+        "label_set_counts": {
+            "attached": len(sets["attached_label_ids"]),
+            "recognized": len(recognized_ids),
+            "orphan_inventory": len(orphan_ids),
+            "bom_valid_orphan": len(sets["bom_valid_orphan_label_ids"]),
+            "invalid": len(sets["invalid_label_ids"]),
+            "predicted": len(model_ids),
+        },
+        "tp_by_source": {
+            "attached_geometry": tp_attached,
+            "orphan_inventory": tp_orphan,
+        },
+        # 兼容旧键（P1）
         "orphan_inventory": {
             "total": len(orphan_ids),
             "bom_valid": len(orphan_ids & gt_ids),
