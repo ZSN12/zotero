@@ -679,6 +679,31 @@ def double_line_merge_config(
     return dict(v) if isinstance(v, dict) and v else None
 
 
+def exact_overlap_dedup_tolerance(
+    stem: str,
+    overlay: Optional[str | Path | dict] = None,
+) -> Optional[float]:
+    """按 stem 读取精确重合线去重容差（P3.3，LINE+LWPOLYLINE 复制线）。
+
+    overlay 中可配置：
+        exact_overlap_dedup: {"<stem>": {"tolerance_units": 0.5}}
+
+    两端点距离之和 < 2*tolerance_units 的线对视为同一图元的重复绘制，
+    保留先出现者。返回 None 表示该 stem 不启用。
+    """
+    spec = load_tower_spec(overlay)
+    cfg = spec.get("exact_overlap_dedup") or {}
+    if not isinstance(cfg, dict):
+        return None
+    v = cfg.get(stem)
+    if isinstance(v, dict) and v:
+        try:
+            return float(v.get("tolerance_units", 0.5))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def collinear_merge_config(
     stem: str,
     overlay: Optional[str | Path | dict] = None,

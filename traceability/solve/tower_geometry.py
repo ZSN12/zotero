@@ -2672,3 +2672,151 @@ def stitch_segment_boundaries(
         "dedup_bars": dedup_bars,
         "pairs": pairs,
     }
+
+
+def reconstruct_panel_cross_diagonals(
+    nodes: NodeMap,
+    bars: List[dict],
+    panel_levels: List[float],
+    *,
+    crossarm_z_max: Optional[float] = None,
+    min_diag_evidence: int = 2,
+    leg_x_tol_mm: float = 200.0,
+    min_leg_x_mm: float = 400.0,
+    min_level_gap_mm: float = 1500.0,
+    max_level_gap_mm: float = 4500.0,
+    min_ev_len_mm: float = 600.0,
+    ev_incl_lo_deg: float = 20.0,
+    ev_incl_hi_deg: float = 70.0,
+    level_source_label: Optional[str] = None,
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """Phase 3（P3.2）：评分制节间 X 交叉重建（保守）。
+
+    背景：GT 斜材是「腿→对侧腿」的节间大交叉（dz 2500-4500），图纸
+    只画了部分半交叉（中心→腿）。本函数从「平台层 + 腿位」推导缺失的
+    大交叉候选，带评分过滤，只生成图纸有斜线证据的节间。
+
+    评分制（三层过滤，全部通过才生成）：
+        1. 塔身区限定：z_hi < crossarm_z_max（横担区斜线是桁架撑，
+           不是塔身大交叉，误生成 FP 实测 d>800mm）；
+        2. 图纸证据：节间 [z_lo, z_hi]±500mm 内有 >= min_diag_evidence 根
+           dxf_geom 斜杆（倾角 20°~70°，长 >= min_ev_len_mm）——图纸
+           确认该节间有交叉结构；
+        3. 腿位锚定：两端层各有 |x| >= min_leg_x_mm 的腿节点，交叉对
+           连接 (x_lo_max, z_lo)→(-x_hi_max, z_hi) 与镜像。
+
+    语义（P3.3 三类区分）：
+        * geometry_origin = "panel_cross_reconstructed"（B 类 reconstructed）
+        * level_source 跟随层位来源：gt_canonical → level_assisted 口径；
+          dxf_derived → reconstructed 口径（不入 pure）
+        * 与 GT 无任何耦合：层位/腿位/证据全部来自模型自身
+
+    实测收益（35A1-JC1，仅塔身区评分过滤后）：
+        TP@500 211→217（+6），FP 404→412（+8），P 34.3%→34.5%，
+        TP@200 138→140。保守参数默认关闭，须 overlay 显式开启
+        （与 min_diag_len_mm/snap_dangling_endpoints 同纪律）。
+
+    返回 (new_nodes, new_bars, report)：
+        report = {"generated": int, "levels_used": int, "panels": [...]}
+    """
+    if not panel_levels:
+        return dict(nodes), [dict(b) for b in bars], {
+            "generated": 0, "levels_used": 0, "panels": [],
+        }
+
+    lv = sorted(float(z) for z in panel_levels)
+
+    # ---- 图纸斜线证据（dxf_geom 且倾角 20°~70°）----
+    ev_z: List[float] = []
+    for b in bars:
+        if str(b.get("geometry_origin") or "") != "dxf_geom":
+            continue
+        f, t = nodes.get(b.get("from")), nodes.get(b.get("to"))
+        if f is None or t is None:
+            continue
+        dx = abs(float(t[0]) - float(f[0]))
+        dz = abs(float(t[2]) - float(f[2]))
+        if math.hypot(dx, dz) < min_ev_len_mm:
+            continue
+        incl = math.degrees(math.atan2(dz, max(dx, 1e-9)))
+        if ev_incl_lo_deg <= incl <= ev_incl_hi_deg:
+            ev_z.append((float(f[2]) + float(t[2])) / 2.0)
+
+    # ---- 腿节点 x（按层位，容差 leg_x_tol_mm）----
+    def leg_x_at(z: float) -> List[float]:
+        xs: set = set()
+        for p in nodes.values():
+            if abs(float(p[2]) - z) > leg_x_tol_mm:
+                continue
+            x = abs(float(p[0]))
+            if x >= min_leg_x_mm:
+                xs.add(x)
+        return sorted(xs)
+
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = [dict(b) for b in bars]
+    node_seq = max(
+        (int(str(k).split("_")[-1]) for k in nodes if str(k).split("_")[-1].isdigit()),
+        default=200000,
+    )
+    generated = 0
+    panels: List[Dict[str, Any]] = []
+
+    def _find_or_add(x: float, z: float) -> str:
+        nonlocal node_seq
+        for nid, p in new_nodes.items():
+            if (abs(float(p[0]) - x) <= 300.0 and abs(float(p[2]) - z) <= 300.0):
+                return nid
+        node_seq += 1
+        nid = f"pcn_{node_seq}"
+        new_nodes[nid] = (round(x, 3), 0.0, round(z, 3))
+        return nid
+
+    for i in range(len(lv) - 1):
+        z_lo, z_hi = lv[i], lv[i + 1]
+        gap = z_hi - z_lo
+        if gap < min_level_gap_mm or gap > max_level_gap_mm:
+            continue
+        if crossarm_z_max is not None and z_hi >= crossarm_z_max:
+            continue  # 塔身区限定（横担区斜线语义不同）
+        n_ev = sum(1 for z in ev_z if z_lo - 500.0 <= z <= z_hi + 500.0)
+        if n_ev < min_diag_evidence:
+            continue  # 图纸无交叉结构证据
+        x_lo = leg_x_at(z_lo)
+        x_hi = leg_x_at(z_hi)
+        x_lo_max = max(x_lo, default=None)
+        x_hi_max = max(x_hi, default=None)
+        if x_lo_max is None or x_hi_max is None:
+            continue
+        pair_endpoints = [
+            (x_lo_max, z_lo, -x_hi_max, z_hi),
+            (-x_lo_max, z_lo, x_hi_max, z_hi),
+        ]
+        made = 0
+        for (x1, z1, x2, z2) in pair_endpoints:
+            n1 = _find_or_add(x1, z1)
+            n2 = _find_or_add(x2, z2)
+            if n1 == n2:
+                continue
+            new_bars.append({
+                "id": f"panel_cross_{i}_{made}",
+                "from": n1,
+                "to": n2,
+                "role": "DIAG",
+                "geometry_class": "reconstructed",
+                "geometry_origin": "panel_cross_reconstructed",
+                "panel_cross": True,
+                "level_source": level_source_label,
+                "derived_from": "panel_cross_reconstruction",
+            })
+            made += 1
+            generated += 1
+        if made:
+            panels.append({"z_lo": z_lo, "z_hi": z_hi, "evidence": n_ev,
+                           "generated": made})
+
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "levels_used": len(lv),
+        "panels": panels,
+    }

@@ -34,6 +34,7 @@ from .tower_spec import (
     region_scale_ratio,
     region_scale_xy,
     double_line_merge_config,
+    exact_overlap_dedup_tolerance,
     collinear_merge_config,
     canonical_sheet_role,
     sheet_role_for_stem,
@@ -286,6 +287,39 @@ def _merge_double_line_segments(raw_segments: List[Dict], cfg: Optional[dict]) -
         else:
             merged.append(a)
     return merged
+
+
+def _dedup_exact_overlap_segments(
+    raw_segments: List[Dict],
+    tol_units: float,
+) -> List[Dict]:
+    """P3.3：精确重合线去重（LINE + LWPOLYLINE 重复绘制同一根杆）。
+
+    背景（35A1-JC1-05 实测）：同一图元在 DXF 里画了两遍——一次 LINE、
+    一次 LWPOLYLINE，端点坐标差 <1 图纸单位（d≈0.00~0.5），提取器各提
+    一根 = 完全重合的双杆。与 double_line_merge 的「角钢两肢中心线合并」
+    不同：本规则只删**端点近似完全重合**的复制线，不碰任何近平行近距的
+    真实构件（05 图 X 交叉对中点距离可达 <1 单位，double_line_merge 任何
+    offset 参数都会误伤，实测 TP@500 211→208/194）。
+
+    判据（全部满足才算复制对）：
+        * 两端点距离之和 < 2 * tol_units（正序或反序端点对应）
+        * 保留先出现者（handle 链序），删除后出现者
+    """
+    if not raw_segments:
+        return raw_segments
+    kept: List[Dict] = []
+    for seg in raw_segments:
+        dup = False
+        for k in kept:
+            d1 = _dist(seg["start"], k["start"]) + _dist(seg["end"], k["end"])
+            d2 = _dist(seg["start"], k["end"]) + _dist(seg["end"], k["start"])
+            if min(d1, d2) < 2.0 * tol_units:
+                dup = True
+                break
+        if not dup:
+            kept.append(seg)
+    return kept
 
 
 
@@ -1081,6 +1115,14 @@ def extract_tower_from_dxf(
     raw_segments = _merge_double_line_segments(
         raw_segments, double_line_merge_config(stem, overlay=layer_map_path),
     )
+
+    # P3.3：精确重合线去重（05 图 LINE+LWPOLYLINE 同图元画两遍 → d≈0 双杆）。
+    # 只删端点几乎完全重合的复制线；近平行近距的真实构件（X 交叉对）不碰
+    # ——double_line_merge 在 05 图任何 offset 参数都会误伤（实测 TP@500
+    # 211→208/194），故 05 只用本规则。
+    _eo_tol = exact_overlap_dedup_tolerance(stem, overlay=layer_map_path)
+    if _eo_tol is not None:
+        raw_segments = _dedup_exact_overlap_segments(raw_segments, _eo_tol)
 
     # 阶段2.6：共线合并前的碎段预过滤。国网 06 段 layer1 角钢边缘用大量
     # 0.05~0.84 图纸单位的点画碎线（stipple）填充，若不预过滤会被

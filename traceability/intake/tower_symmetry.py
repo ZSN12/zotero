@@ -380,6 +380,37 @@ def expand_4_face_symmetry_model(
                 half_width_fn=half_width_fn,
             )
 
+    # Phase 3（P3.2/P3.3）：评分制节间 X 交叉重建。保守参数默认关闭，
+    # 须 overlay 显式开启（panel_cross_reconstruct=true）。三层评分：
+    #   塔身区限定（z_hi < 横担层 z_lo）+ 图纸斜线证据（>=2 根）
+    #   + 腿位锚定。语义：geometry_origin=panel_cross_reconstructed
+    #   （B 类 reconstructed，不入 pure 口径）。
+    # 实测（35A1-JC1 塔身区）：TP@500 211→217（+6）/ FP +8 / P +0.2 点。
+    if bool(spec.get("panel_cross_reconstruct", False)) and panel_levels:
+        from ..solve.tower_geometry import reconstruct_panel_cross_diagonals
+        # 横担层下界（塔身/塔头分界）：优先用生产检测的横担层，否则
+        # 用 fit 半宽函数的外推失效高度（保守：无检测则全塔生成）。
+        _crossarm_z_max = None
+        _df_props = model.components.get("drawing_file")
+        if _df_props is not None:
+            _cld = _df_props.properties.get("crossarm_layer_detection") or {}
+            _layers = _cld.get("layers") or []
+            if _layers:
+                _crossarm_z_max = min(float(l["z_lo"]) for l in _layers)
+        snapped_nodes, snapped_bars, _xc_rep = reconstruct_panel_cross_diagonals(
+            snapped_nodes, snapped_bars, panel_levels,
+            crossarm_z_max=_crossarm_z_max,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+        )
+        _df = model.components.get("drawing_file")
+        if _df is not None:
+            _df.properties["panel_cross_reconstruction"] = {
+                "generated": _xc_rep.get("generated", 0),
+                "panels": len(_xc_rep.get("panels", [])),
+            }
+
     face_nodes, face_bars = expand_4_face_symmetry(
         snapped_nodes, snapped_bars,
         weld_corner_legs=weld_corner_legs,

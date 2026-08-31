@@ -1161,5 +1161,11 @@
   "collinear_stitch_max_single_len_mm": 800.0,
   "repair_dangling": true,
   "repair_stub_max_len_mm": 250.0,
-  "repair_weld_max_mm": 350.0
+  "repair_weld_max_mm": 350.0,
+  "panel_cross_reconstruct": true,
+  "exact_overlap_dedup": {
+    "35A1-JC1-05": {
+      "tolerance_units": 0.6
+    }
+  }
 }
