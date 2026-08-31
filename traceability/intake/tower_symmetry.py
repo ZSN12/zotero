@@ -597,6 +597,12 @@ def expand_4_face_symmetry_model(
             max_merged_len_mm=float(spec.get("collinear_stitch_max_len_mm", 4500.0)),
             max_segments=int(spec.get("collinear_stitch_max_segments", 2)),
             max_single_len_mm=float(spec.get("collinear_stitch_max_single_len_mm", 0.0)),
+            role_specific=bool(spec.get("collinear_stitch_role_specific", True)),
+            panel_levels=list(panel_levels) if panel_levels else None,
+            platform_tol_mm=float(spec.get("collinear_stitch_platform_tol_mm", 80.0)),
+            horiz_z_tol_mm=float(spec.get("collinear_stitch_horiz_z_tol_mm", 80.0)),
+            horiz_center_tol_mm=float(
+                spec.get("collinear_stitch_horiz_center_tol_mm", 300.0)),
         )
         if _stitch_nodes:
             face_nodes = dict(face_nodes)

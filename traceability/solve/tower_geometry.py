@@ -1669,6 +1669,93 @@ def prune_short_stub_bars(
     }
 
 
+def _stitch_z_mid(seg: Tuple[Vec3T, Vec3T]) -> float:
+    return (float(seg[0][2]) + float(seg[1][2])) / 2.0
+
+
+def _stitch_z_span(seg: Tuple[Vec3T, Vec3T]) -> Tuple[float, float]:
+    z0, z1 = float(seg[0][2]), float(seg[1][2])
+    return (min(z0, z1), max(z0, z1))
+
+
+def _stitch_platform_band(z_mid: float, panel_levels: Sequence[float], tol: float) -> int:
+    """平台标高把主腿 z 轴切成若干段；同段内才允许 LEG 拼接。"""
+    band = 0
+    for lv in sorted(panel_levels):
+        if z_mid >= float(lv) - tol:
+            band += 1
+        else:
+            break
+    return band
+
+
+def _stitch_diag_evidence_key(props: dict) -> Tuple[str, ...]:
+    return (
+        str(props.get("source_file") or props.get("derived_from") or ""),
+        str(props.get("drawing_view") or ""),
+        str(props.get("geometry_origin") or "dxf_geom"),
+    )
+
+
+def _stitch_cross_axis_coord(face: str, pt: Vec3T) -> float:
+    """水平材「跨中心」检测用的横向坐标（face 相关）。"""
+    f = str(face or "f").lower()
+    if f == "l":
+        return float(pt[1])
+    if f == "r":
+        return -float(pt[1])
+    return float(pt[0])
+
+
+def _role_pair_ok_stitch(
+    bi: str,
+    bj: str,
+    cand: Dict[str, Tuple[Vec3T, Vec3T, dict]],
+    face_of: Dict[str, str],
+    *,
+    role_specific: bool,
+    panel_levels: Optional[Sequence[float]],
+    platform_tol_mm: float,
+    horiz_z_tol_mm: float,
+    horiz_center_tol_mm: float,
+) -> Tuple[bool, Optional[str]]:
+    """P2.3：分角色拼接门禁。返回 (allowed, reject_reason)。"""
+    if not role_specific:
+        return True, None
+    pa, pb = cand[bi][2], cand[bj][2]
+    ra = str(pa.get("role") or "").upper()
+    rb = str(pb.get("role") or "").upper()
+    if not ra or not rb or ra in ("?", "") or rb in ("?", ""):
+        return True, None
+    if ra != rb:
+        return False, "role_mismatch"
+    if ra == "LEG":
+        if not panel_levels:
+            return True, None
+        zmi = _stitch_z_mid(cand[bi])
+        zmj = _stitch_z_mid(cand[bj])
+        if _stitch_platform_band(zmi, panel_levels, platform_tol_mm) != _stitch_platform_band(
+                zmj, panel_levels, platform_tol_mm):
+            return False, "leg_platform_break"
+        return True, None
+    if ra == "DIAG":
+        if _stitch_diag_evidence_key(pa) != _stitch_diag_evidence_key(pb):
+            return False, "diag_source_mismatch"
+        return True, None
+    if ra == "HORIZ":
+        zmi = _stitch_z_mid(cand[bi])
+        zmj = _stitch_z_mid(cand[bj])
+        if abs(zmi - zmj) > horiz_z_tol_mm:
+            return False, "horiz_z_mismatch"
+        fn = face_of.get(bi, "?")
+        pts = [cand[bi][0], cand[bi][1], cand[bj][0], cand[bj][1]]
+        xs = [_stitch_cross_axis_coord(fn, p) for p in pts]
+        if min(xs) < -horiz_center_tol_mm and max(xs) > horiz_center_tol_mm:
+            return False, "horiz_cross_center"
+        return True, None
+    return True, None
+
+
 def stitch_collinear_bars(
     nodes: NodeMap,
     bars: List[dict],
@@ -1681,6 +1768,11 @@ def stitch_collinear_bars(
     target_len_mm: float = 2018.0,
     skip_corner_leg: bool = True,
     max_single_len_mm: float = 0.0,
+    role_specific: bool = False,
+    panel_levels: Optional[Sequence[float]] = None,
+    platform_tol_mm: float = 80.0,
+    horiz_z_tol_mm: float = 80.0,
+    horiz_center_tol_mm: float = 300.0,
 ) -> Tuple[List[dict], Dict[str, object]]:
     """S4 贪心共线拼接：把断裂碎片杆拼回整杆（Phase 2 生产化）。
 
@@ -1698,6 +1790,10 @@ def stitch_collinear_bars(
            （防过合并：union-find 全连通曾把 17m 主腿并成一杆，A2-pure
            56→26，已证实不可用）；
         6. 贪心优先级：合成长度最接近 target_len（GT 杆长中位）者优先。
+        7. P2.3 role_specific=True 时分角色附加门禁：
+           LEG — 同平台段（panel_levels 切分，平台层必断）；
+           DIAG — 同 source_file + drawing_view + geometry_origin；
+           HORIZ — 同 z 层（±horiz_z_tol）且不跨塔中心（±horiz_center_tol）。
 
     合成杆语义（透明化）：
         * geometry_class 继承：全部源杆均为 recognized 才 recognized（防止
@@ -1751,27 +1847,66 @@ def stitch_collinear_bars(
     for bid, (_, _, p) in cand.items():
         by_face[str(p.get("face") or "?")].append(bid)
 
-    def _pair_ok(x, y) -> bool:
-        ux, uy = _unit3(_sub3(x[1], x[0])), _unit3(_sub3(y[1], y[0]))
+    face_of = {bid: fid for fid, ids in by_face.items() for bid in ids}
+    role_rejected: Dict[str, int] = {}
+    active: Dict[str, Tuple[Vec3T, Vec3T, int]] = {
+        bid: (v[0], v[1], 1) for bid, v in cand.items()
+    }
+    merged_chains: Dict[str, List[str]] = {}
+    new_id_seq = 0
+
+    def _bar_seg(bid: str) -> Tuple[Vec3T, Vec3T]:
+        if bid in active:
+            a, b, _ = active[bid]
+            return a, b
+        if bid in cand:
+            return cand[bid][0], cand[bid][1]
+        raise KeyError(bid)
+
+    def _bar_props(bid: str) -> dict:
+        if bid in cand:
+            return cand[bid][2]
+        for mid in merged_chains.get(bid) or []:
+            if mid in cand:
+                return cand[mid][2]
+        return {}
+
+    def _pair_ok(bi: str, bj: str) -> bool:
+        try:
+            x0, x1 = _bar_seg(bi)
+            y0, y1 = _bar_seg(bj)
+        except KeyError:
+            return False
+        ux, uy = _unit3(_sub3(x1, x0)), _unit3(_sub3(y1, y0))
         if ux is None or uy is None:
             return False
         if _angle_deg(ux, uy) > ang_deg:
             return False
-        return min(_dist3(x[0], y[0]), _dist3(x[0], y[1]),
-                   _dist3(x[1], y[0]), _dist3(x[1], y[1])) <= gap_mm
-
-    active: Dict[str, Tuple[Vec3T, Vec3T, int]] = {
-        bid: (v[0], v[1], 1) for bid, v in cand.items()
-    }
-    face_of = {bid: fid for fid, ids in by_face.items() for bid in ids}
-    merged_chains: Dict[str, List[str]] = {}
-    new_id_seq = 0
+        if min(_dist3(x0, y0), _dist3(x0, y1),
+               _dist3(x1, y0), _dist3(x1, y1)) > gap_mm:
+            return False
+        pa, pb = _bar_props(bi), _bar_props(bj)
+        if not pa or not pb:
+            return True
+        ok, reason = _role_pair_ok_stitch(
+            bi, bj,
+            {bi: (x0, x1, pa), bj: (y0, y1, pb)},
+            face_of,
+            role_specific=role_specific,
+            panel_levels=panel_levels,
+            platform_tol_mm=platform_tol_mm,
+            horiz_z_tol_mm=horiz_z_tol_mm,
+            horiz_center_tol_mm=horiz_center_tol_mm,
+        )
+        if not ok and reason:
+            role_rejected[reason] = role_rejected.get(reason, 0) + 1
+        return ok
 
     pairs: List[Tuple[float, str, str]] = []
     for _fid, ids in by_face.items():
         for i in range(len(ids)):
             for j in range(i + 1, len(ids)):
-                if _pair_ok(cand[ids[i]], cand[ids[j]]):
+                if _pair_ok(ids[i], ids[j]):
                     L = max(_dist3(cand[ids[i]][0], cand[ids[j]][0]),
                             _dist3(cand[ids[i]][0], cand[ids[j]][1]),
                             _dist3(cand[ids[i]][1], cand[ids[j]][0]),
@@ -1813,7 +1948,7 @@ def stitch_collinear_bars(
                 continue
             if face_of.get(other) != fn:
                 continue
-            if not _pair_ok((p_s, p_e), (ov[0], ov[1])):
+            if not _pair_ok(nid, other):
                 continue
             if active[nid][2] + ov[2] > max_segments:
                 continue
@@ -1858,6 +1993,7 @@ def stitch_collinear_bars(
             "id": nid,
             "from": ns,
             "to": ne,
+            "role": src.get("role"),
             "geometry_class": inherit_cls or src.get("geometry_class"),
             "geometry_origin": "collinear_stitch",
             "stitched_from": list(chain),
@@ -1876,6 +2012,8 @@ def stitch_collinear_bars(
         "merged_groups": n_merged,
         "skipped": skipped,
         "by_role": roles_merged,
+        "role_specific": role_specific,
+        "role_rejected": role_rejected,
         "len_after_median": round(len_after[len(len_after) // 2], 1) if len_after else 0.0,
     }
 
