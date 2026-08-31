@@ -173,7 +173,11 @@ def main() -> int:
     if args.profile == "production_dxf":
         # P0.4：生产 profile 不改共享 overlay 文件（脚本层覆盖 + 独立输出目录）。
         # 纯 DXF 平台层（derive_panel_levels 证据推导），关闭 GT canonical 注入。
-        overlay["panel_level_source"] = "dxf"
+        # 消融实验入口（2026-08-31）：panel_level_source 可被 overlay 显式
+        # 覆盖（例如隔离「GT 层位 vs DXF 层位」对 horiz_x 回归的归因）；
+        # 其余生产语义（GT hw 关闭）不可覆盖。
+        if "panel_level_source" not in overlay:
+            overlay["panel_level_source"] = "dxf"
         overlay["use_gt_platform_levels"] = False
         overlay["use_gt_half_width"] = False
         out_dir = REPO / "out/35A1-JC1-production"
@@ -181,7 +185,7 @@ def main() -> int:
         tmp_overlay.parent.mkdir(parents=True, exist_ok=True)
         tmp_overlay.write_text(json.dumps(overlay, ensure_ascii=False, indent=2), encoding="utf-8")
         overlay_path = tmp_overlay
-        print("Profile: production_dxf（panel_level_source=dxf，GT 平台层注入关闭）")
+        print(f"Profile: production_dxf（panel_level_source={overlay['panel_level_source']}，GT 平台层注入关闭）")
     else:
         print("Profile: canonical_assisted（use_gt_platform_levels=true，研究对照口径）")
 
