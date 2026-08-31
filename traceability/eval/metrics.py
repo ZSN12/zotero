@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import math
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # 2D 线段：(x1, y1, x2, y2, ...metadata)
@@ -287,21 +287,31 @@ def segment_cost(a: Seg2D, b: Seg2D) -> float:
 
     阶段 1.3 重构：先过硬门禁（角度/长度比/端点误差），不过返回 inf；
     过门禁后 cost = 双端点距离（主项），不再用「重叠奖励乘系数」扭曲 cost，
-    避免 tolerance 语义被奖励项污染（tolerance 现在明确等于「每个对应端点的
-    最大允许误差」）。
+    避免 tolerance 语义被奖励项污染。
+
+    P0.3（2026-08-31 语义固化）：cost = d1 + d2（两对应端点误差之**和**，
+    正反顺序取最小）。因此「tol=500mm」的准确含义是
+    ``endpoint_sum_cost_lt_tol``——两端各偏 300mm（和 600mm）不匹配，
+    而非「每端点各允许 500mm」。主指标命名沿用该语义，不改变历史数值
+    的连续性；诊断用途的 max(d1,d2) 口径不作为主指标。
     """
     gates = segment_gates(a, b)
     if not gates["pass"]:
         return float("inf")
-    # 过门禁后代价即端点误差（单位 mm），单调且非负
+    # 过门禁后代价即端点误差和（单位 mm），单调且非负
     return gates["endpoint_error_mm"]
+
+
+# P0.3：代价语义的唯一权威声明（报告/落盘引用此常量，避免各处自行描述）
+COST_SEMANTICS = "endpoint_sum_cost_lt_tol (d1+d2, min over endpoint orderings)"
 
 
 def segment_gates(a: Seg2D, b: Seg2D) -> Dict[str, Any]:
     """阶段 1.3：显式拆分代价与硬门禁。
 
     返回五个几何量 + 是否通过硬门禁：
-        endpoint_error_mm   双端点距离（正反顺序取最小）
+        endpoint_error_mm   双端点距离和 d1+d2（正反顺序取最小；见
+                            COST_SEMANTICS——是「和」不是「每端点最大」）
         midpoint_error_mm   中点距离
         angle_error_deg     无向方向夹角（角度）
         length_ratio        长度比（归一化 >= 1）
@@ -577,6 +587,58 @@ def bars_from_model_2d(
             p["id"] = cid
         out.append((seg, p))
     return out
+
+
+def count_unscorable_bars(model: Dict[str, Any]) -> Dict[str, Any]:
+    """P0.5（2026-08-31）：统计被评测静默跳过的杆件及原因。
+
+    bars_from_model_2d / bars_from_model_3d 对缺节点引用、缺坐标、缺
+    语义分类的杆件直接 continue——此前生成失败/元数据损坏会混入 FN，
+    无法区分「几何能力不足」与「数据管线缺陷」。本函数单独输出这些
+    杆件的分类计数与 cid 样例（每类 ≤50 个），供 unscorable_report。
+
+    分类：
+        missing_node_ref     from_node/to_node 引用的节点不存在
+        missing_coordinate   节点存在但坐标缺失（x/y/z 任一为 None）
+        missing_semantics    杆件缺 geometry_class/evidence_status 语义
+        degenerate           两端点坐标完全相同（长度 0）
+    """
+    nodes = {}
+    bars = []
+    for cid, c in (model.get("components") or {}).items():
+        kind = str(c.get("kind") or "")
+        if kind == "tower_node":
+            nodes[cid] = c.get("properties") or {}
+        elif kind == "tower_bar":
+            bars.append((cid, c.get("properties") or {}))
+    counts: Counter = Counter()
+    samples: Dict[str, List[str]] = defaultdict(list)
+    for cid, p in bars:
+        f, t = nodes.get(p.get("from_node")), nodes.get(p.get("to_node"))
+        if p.get("from_node") not in nodes or p.get("to_node") not in nodes:
+            reason = "missing_node_ref"
+        elif any(f.get(k) is None for k in ("x", "y", "z")) or \
+                any(t.get(k) is None for k in ("x", "y", "z")):
+            reason = "missing_coordinate"
+        elif p.get("geometry_class") is None and p.get("evidence_status") is None:
+            reason = "missing_semantics"
+        elif (f.get("x"), f.get("y"), f.get("z")) == (t.get("x"), t.get("y"), t.get("z")):
+            reason = "degenerate"
+        else:
+            continue
+        counts[reason] += 1
+        if len(samples[reason]) < 50:
+            samples[reason].append(cid)
+    return {
+        "n_total_bars": len(bars),
+        "n_unscorable": sum(counts.values()),
+        "by_reason": dict(counts),
+        "sample_cids": {k: v for k, v in samples.items()},
+        "semantics": (
+            "unscorable 杆件在 A2 评测中被静默跳过：若属生成失败/元数据"
+            "损坏，应计入数据管线缺陷而非几何 FN。此处单列以区分两者。"
+        ),
+    }
 
 
 def bars_from_model_3d(
@@ -1076,6 +1138,7 @@ def eval_a2_multi_caliber(
         effective = eff
 
     return {
+        "cost_semantics": COST_SEMANTICS,
         "calibers": calibers,
         "match_provenance": provenance,
         "by_role": by_role,

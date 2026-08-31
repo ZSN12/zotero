@@ -138,10 +138,17 @@ def main() -> int:
     parser.add_argument("--gt-align", action="store_true",
                         help="GT 权威拓扑对齐：用 .mod/.NODE 的 358 节点 + 1071 杆拓扑"
                              "重建 M3 骨架，使召回对齐 GT（100%）。默认关闭（纯 DXF 语义）。")
+    parser.add_argument("--profile", choices=["canonical_assisted", "production_dxf"],
+                        default="canonical_assisted",
+                        help="P0.4 口径 profile：canonical_assisted（默认，研究对照，"
+                             "use_gt_platform_levels=true——level-assisted TP 主要来源）；"
+                             "production_dxf（生产真实能力，纯 DXF 平台层证据推导，"
+                             "写独立目录 out/35A1-JC1-production/）")
     args = parser.parse_args()
 
     overlay = full_overlay()
     overlay_path = OVERLAY_PATH
+    out_dir = OUT
     if args.gt_align:
         # gt_align 只在脚本层开启，不改共享 overlay 文件，避免污染测试/其它调用方。
         overlay["gt_align"] = True
@@ -152,6 +159,21 @@ def main() -> int:
         print("GT 权威拓扑对齐: 开启（gt_align=True）")
     else:
         print("GT 权威拓扑对齐: 关闭（纯 DXF 提取语义）")
+
+    if args.profile == "production_dxf":
+        # P0.4：生产 profile 不改共享 overlay 文件（脚本层覆盖 + 独立输出目录）。
+        # 纯 DXF 平台层（derive_panel_levels 证据推导），关闭 GT canonical 注入。
+        overlay["panel_level_source"] = "dxf"
+        overlay["use_gt_platform_levels"] = False
+        overlay["use_gt_half_width"] = False
+        out_dir = REPO / "out/35A1-JC1-production"
+        tmp_overlay = out_dir / "_overlay_production.json"
+        tmp_overlay.parent.mkdir(parents=True, exist_ok=True)
+        tmp_overlay.write_text(json.dumps(overlay, ensure_ascii=False, indent=2), encoding="utf-8")
+        overlay_path = tmp_overlay
+        print("Profile: production_dxf（panel_level_source=dxf，GT 平台层注入关闭）")
+    else:
+        print("Profile: canonical_assisted（use_gt_platform_levels=true，研究对照口径）")
     spatial_stems = sorted(cross_file_merge_stems(overlay))
     print("JC1 全册 DXF 目录:", DXF_BATCH)
     print("全册解析: parse_all_project_sheets=True")
@@ -162,21 +184,21 @@ def main() -> int:
         print(f"DXF 目录不存在: {DXF_BATCH}", file=sys.stderr)
         return 1
 
-    OUT.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     pd = deliver_project(
         DXF_BATCH,
         layer_map_path=str(overlay_path),
         bom_path=str(REPO / "examples/external/guowang_35A1/guowang_merged_bom.csv"),
         project_id="35A1-JC1-full",
-        out_dir=OUT,
+        out_dir=out_dir,
         agent_mode=args.agent_mode,
     )
 
-    model = load_model(str(OUT / "model.json"))
+    model = load_model(str(out_dir / "model.json"))
     stats = bar_stats(model)
     gate = tower_geometry_gate(model, str(OVERLAY_PATH))
 
-    sheet_rows = sheet_bar_summary(OUT / "cross_file")
+    sheet_rows = sheet_bar_summary(out_dir / "cross_file")
     total_sheet_bars = sum(b for _, b in sheet_rows)
 
     print()
@@ -209,7 +231,7 @@ def main() -> int:
         bom_file = REPO / "examples/external/guowang_35A1/guowang_merged_bom.csv"
         ev_cmd = [
             sys.executable, str(REPO / "scripts/evaluate_ground_truth.py"),
-            str(GT_PATH), str(OUT / "model.json"), "--view", "front",
+            str(GT_PATH), str(out_dir / "model.json"), "--view", "front",
         ]
         if bom_file.exists():
             ev_cmd.extend(["--bom", str(bom_file)])
@@ -223,7 +245,7 @@ def main() -> int:
             print(ln)
 
     # Phase A3：skeleton.glb 是 M3 骨架主产物（P4 已删除 tower.glb 兼容别名）。
-    skeleton = OUT / "skeleton.glb"
+    skeleton = out_dir / "skeleton.glb"
     glb = skeleton if skeleton.exists() else None
     if glb and glb.exists():
         DEMO_DIR.mkdir(parents=True, exist_ok=True)
@@ -239,20 +261,25 @@ def main() -> int:
         "stats_3d": stats,
         "gate": gate,
     }
-    (OUT / "full_run_report.json").write_text(
+    (out_dir / "full_run_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
-    print(f"报告: {OUT / 'full_run_report.json'}")
+    print(f"报告: {out_dir / 'full_run_report.json'}")
 
     # ------------------------------------------------------------------
     # P0 收口流水线：run full → review queue → diff → version.json → sync。
     # 每步落盘 + 打印，任何一步失败都显式进入 postprocess 状态（不允许无声跳过，
     # 结束码抬到 2），网页资产目录从此只由这条链决定。
+    # P0.4：production_dxf profile 不污染演示资产目录（demo 只跟
+    # canonical_assisted 主线产物）。
     # ------------------------------------------------------------------
-    postprocess = run_postprocess(OUT, REPO, overlay_path, DEMO_DIR)
+    postprocess = run_postprocess(
+        out_dir, REPO, overlay_path,
+        DEMO_DIR if args.profile == "canonical_assisted" else (out_dir / "_no_demo_sync"))
     report["postprocess"] = postprocess
-    (OUT / "full_run_report.json").write_text(
+    report["profile"] = args.profile
+    (out_dir / "full_run_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
@@ -279,8 +306,8 @@ if __name__ == "__main__":
         # 任何未捕获异常都落盘 traceback，避免「无声退出、log 为空」。
         print(tb, flush=True)
         try:
-            (OUT / "crash_traceback.log").write_text(tb, encoding="utf-8")
-            print(f"崩溃 traceback 已写: {OUT / 'crash_traceback.log'}", flush=True)
+            (out_dir / "crash_traceback.log").write_text(tb, encoding="utf-8")
+            print(f"崩溃 traceback 已写: {out_dir / 'crash_traceback.log'}", flush=True)
         except Exception:
             pass
         raise

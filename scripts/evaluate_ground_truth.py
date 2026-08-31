@@ -25,6 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from traceability.eval.metrics import (
     DEFAULT_TOLS,
+    COST_SEMANTICS,
+    count_unscorable_bars,
     eval_a2_geometry_2d,
     eval_a2_dual_caliber,
     eval_a2_multi_caliber,
@@ -44,8 +46,27 @@ def main():
     ap.add_argument("--allow-legacy-semantics", action="store_true",
                     help="兼容旧模型 evidence_status 语义（正式评测应禁用，默认 fail-closed）")
     ap.add_argument("--tol", type=float, default=None,
-                    help="兼容旧参数；评测改用 tolerance sweep，忽略单点 tol")
+                    help="单档容差（mm）：只在该容差评测（覆盖 --tols）")
+    ap.add_argument("--tols", default=None,
+                    help="逗号分隔容差列表（mm），如 50,100,200,500；默认 DEFAULT_TOLS")
     args = ap.parse_args()
+
+    # P0.2（2026-08-31）：--tol/--tols 真实生效。此前 CLI 提供了 --tol 但
+    # 内部固定 DEFAULT_TOLS sweep，参数被静默忽略（同名不同数的诱因之一）。
+    if args.tols:
+        try:
+            tols = tuple(sorted({float(t.strip()) for t in args.tols.split(",")
+                                 if t.strip()}))
+        except ValueError:
+            print("✗ --tols 解析失败：需要逗号分隔的数字（如 50,100,200,500）")
+            sys.exit(2)
+        if not tols:
+            print("✗ --tols 为空")
+            sys.exit(2)
+    elif args.tol is not None:
+        tols = (float(args.tol),)
+    else:
+        tols = DEFAULT_TOLS
 
     gt = json.loads(Path(args.gt).read_text(encoding="utf-8"))
     model = json.loads(Path(args.model).read_text(encoding="utf-8"))
@@ -73,17 +94,21 @@ def main():
             if gids:
                 id_mapping[bid] = gids
 
-    result = eval_a2_geometry_2d(gt, model, view=args.view, tols=DEFAULT_TOLS,
+    result = eval_a2_geometry_2d(gt, model, view=args.view, tols=tols,
                                  allow_legacy=args.allow_legacy_semantics)
 
+    # P0.6（2026-08-31）：评测参数与输入指纹在报告头部声明（绑定语义）。
     print(f"=== A2 几何检测（{args.view} 投影，Hungarian 一对一匹配）===")
-    print(f"GT 投影杆件（去重后）: {result['n_gt']}")
+    print(f"评测参数: cost=d1+d2 (endpoint_sum_cost_lt_tol) | tols={list(tols)} | "
+          f"dataset_split=development（JC1）")
+    print(f"输入指纹: GT={_file_sha256(Path(args.gt))} | model={_file_sha256(Path(args.model))}")
+    print(f"GT 物理杆件 {args.view} 投影: {result['n_gt']}（保留投影重合杆 multiplicity）")
     print(f"模型物理杆件（排除 derived）: {result['n_model']}")
 
     # P0 口径诚实化：physical 口径含「用 GT canonical 标高重建的横隔/节间」，
     # 属借助 GT 的增强成分。对外汇报必须以纯 DXF 口径为主口径，辅助增量单列，
     # 否则等于把抄答案的贡献算成图纸→几何的识别能力。
-    dual = eval_a2_dual_caliber(gt, model, view=args.view, tols=DEFAULT_TOLS,
+    dual = eval_a2_dual_caliber(gt, model, view=args.view, tols=tols,
                                 allow_legacy=args.allow_legacy_semantics)
     print()
     print("【主口径】A2-pure（纯 DXF 识别，排除 GT 标高辅助）——对外可汇报的真实能力")
@@ -96,6 +121,8 @@ def main():
     print()
     print("【增强口径】A2-full（physical，含 GT 标高辅助重建）——仅内部归因用")
     print(f"模型杆件: {dual['n_model_full']}（含辅助 {dual['assisted']}）")
+    print("注：辅助增量为净增益（TP_full − TP_pure，两次独立 Hungarian），"
+          "严格来源归因见五层口径 by_origin。")
     print(f"{'tol(mm)':>8} {'TP':>5} {'FP':>5} {'FN':>5} {'Precision':>10} {'Recall':>10} "
           f"{'其中辅助增量':>12}")
     for s in dual["full"]["sweep"]:
@@ -121,7 +148,8 @@ def main():
     # 客观源缺失不应算进识别能力的分母；双口径并列，全高口径仍为正式指标）
     eff = result.get("effective")
     if eff:
-        print(f"\nA2-effective（z >= {eff['z_min_mm']:.0f}mm，双侧同口径，剔除 GT 无源杆 {eff['gt_excluded']} 根）：")
+        print(f"\nA2-effective（z >= {eff['z_min_mm']:.0f}mm，双侧同口径，剔除 GT 无源杆 {eff['gt_excluded']} 根；"
+              f"z_min=6500 是 JC1 development profile 专用，非通用口径）：")
         for s in eff["sweep"]:
             print(f"{s['tol']:>8.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
                   f"{s['precision']:>10.1%} {s['recall']:>10.1%}")
@@ -163,9 +191,9 @@ def main():
     # ------------------------------------------------------------- #
     # Phase 1（P1.1/P1.2/P1.3）：多口径 + 追溯 + 分角色 + 落盘产物
     # ------------------------------------------------------------- #
-    multi = eval_a2_multi_caliber(gt, model, view=args.view, tols=DEFAULT_TOLS,
+    multi = eval_a2_multi_caliber(gt, model, view=args.view, tols=tols,
                                   allow_legacy=args.allow_legacy_semantics)
-    print(f"\n=== A2 五层口径并列（Phase 1，默认 tol={DEFAULT_TOLS[-1]:.0f}mm）===")
+    print(f"\n=== A2 五层口径并列（Phase 1，默认 tol={tols[-1]:.0f}mm）===")
     print(f"{'口径':<16} {'模型杆':>6} {'TP':>5} {'FP':>5} {'FN':>5} {'P':>8} {'R':>8}")
     for name in ("pure", "reconstructed", "level_assisted", "parametric", "full"):
         cal = multi["calibers"][name]
@@ -182,7 +210,27 @@ def main():
 
     # 计划「五、交付级报告」：metrics 系列产物落盘（与 model.json 同目录）
     out_dir = Path(args.model).parent
+    # P0.6：落盘产物绑定评测参数与输入指纹；P0.5：unscorable 单列。
+    import subprocess as _sp
+    try:
+        _commit = _sp.run(["git", "rev-parse", "--short", "HEAD"],
+                          capture_output=True, text=True,
+                          cwd=str(out_dir.resolve().parent)).stdout.strip()
+    except Exception:
+        _commit = "unknown"
+    eval_binding = {
+        "commit": _commit,
+        "dataset_split": "development",
+        "dataset": "35A1-JC1",
+        "gt_sha256": _file_sha256(Path(args.gt)),
+        "model_sha256": _file_sha256(Path(args.model)),
+        "view": args.view,
+        "tols": list(tols),
+        "cost_semantics": COST_SEMANTICS,
+        "allow_legacy_semantics": bool(args.allow_legacy_semantics),
+    }
     _dump_json(out_dir / "metrics_multi_caliber.json", {
+        "eval_binding": eval_binding,
         "calibers": {k: {"n_model": v["n_model"], "sweep": v["sweep"],
                           "metric_scope": v["metric_scope"]}
                      for k, v in multi["calibers"].items()},
@@ -192,7 +240,9 @@ def main():
     })
     _dump_json(out_dir / "metrics_by_role.json", multi["by_role"])
     _dump_json(out_dir / "metrics_by_origin.json", multi["by_origin"])
+    _dump_json(out_dir / "unscorable_report.json", count_unscorable_bars(model))
     _dump_json(out_dir / "evidence_report.json", {
+        "eval_binding": eval_binding,
         "description": "每个匹配对/FP 的来源追溯（Phase 1 P1.1，默认 tol）",
         "match_provenance": multi["match_provenance"],
         "counts": {
@@ -207,6 +257,15 @@ def _dump_json(path: Path, obj) -> None:
         path.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
     except OSError as exc:
         print(f"⚠ 指标落盘失败 {path.name}: {exc}", file=sys.stderr)
+
+
+def _file_sha256(path: Path) -> str:
+    """输入指纹（P0.6）：GT/模型/overlay 等评测输入的 SHA-256 前 12 位。"""
+    import hashlib
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    except OSError:
+        return "unavailable"
 
 
 if __name__ == "__main__":
