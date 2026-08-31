@@ -19,7 +19,13 @@
     "collinear_stitch_max_single_len_mm": 800.0,
     "collinear_stitch_max_segments": 2,
     "multiview_hypothesis_sheets": ["35A1-JC1-06"],
-    "mllm_confidence_gate_block_inject": false
+    "mllm_confidence_gate_block_inject": false,
+    "mllm_keep_drop_sheets": [
+      "35A1-JC1-02",
+      "35A1-JC1-04",
+      "35A1-JC1-05",
+      "35A1-JC1-07"
+    ]
   },
   "eval": {
     "tolerance_mm": 500.0,

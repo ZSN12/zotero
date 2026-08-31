@@ -296,12 +296,15 @@ def _build_hybrid_project(
             # 降级：跳过 MLLM 几何+件号，只用 ezdxf 矢量 + DXF TEXT 件号（秒级），
             # 避免 dpi=800 下 detail 详图 MLLM 检测耗时数分钟却对塔身无贡献。
             mergeable = sheet_is_spatial_mergeable(stem, overlay=layer_map_path)
+            from ..intake.tower_spec import resolve_geom_method_for_sheet
+            sheet_geom = resolve_geom_method_for_sheet(
+                stem, layer_map_path, mergeable=mergeable)
             pipe_info = run_hybrid_dxf_agent_pipeline(
                 dxf, sheet_out,
                 layer_map_path=str(layer_map_path) if layer_map_path else None,
                 mllm=mllm,
                 use_ocr_fallback=False,
-                geom_method="ezdxf" if not mergeable else "auto",
+                geom_method=sheet_geom,
                 skip_mllm=not mergeable,
             )
             pipelines[stem] = {

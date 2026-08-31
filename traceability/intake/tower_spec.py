@@ -781,3 +781,28 @@ def assembly_split_min_gap_ratio(overlay: Optional[str | Path | dict] = None) ->
     manifest = cross_file_view_manifest(overlay)
     val = manifest.get("assembly_split_min_gap_ratio")
     return float(val) if val is not None else 0.5
+
+
+def resolve_geom_method_for_sheet(
+    stem: str,
+    overlay: Optional[str | Path | dict] = None,
+    *,
+    mergeable: bool = True,
+    default: str = "auto",
+) -> str:
+    """按 overlay 解析单张 sheet 的 A2 geom_method。
+
+    P2.4：``mllm_keep_drop_sheets`` 内的空间分册走 centerline（DXF 候选 +
+    MLLM keep/drop，坐标仍来自 DXF）。``geom_method_by_stem`` 可显式覆盖。
+    非空间段（mergeable=False）固定 ezdxf。
+    """
+    if not mergeable:
+        return "ezdxf"
+    spec = load_tower_spec(overlay)
+    by_stem = spec.get("geom_method_by_stem") or {}
+    if isinstance(by_stem, dict) and stem in by_stem:
+        return str(by_stem[stem])
+    keep_drop = spec.get("mllm_keep_drop_sheets") or []
+    if stem in keep_drop:
+        return "centerline"
+    return default

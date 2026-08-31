@@ -136,6 +136,25 @@ def main():
         ],
     }
 
+    # Phase 6 / P2.4：MLLM 拒候选（低置信 / centerline drop）附加分组
+    try:
+        from traceability.intake.candidate_lifecycle import (
+            lifecycle_blocks_from_model,
+            lifecycle_to_review_groups,
+        )
+        lc_blocks = lifecycle_blocks_from_model(model)
+        mllm_rejected = lifecycle_to_review_groups(lc_blocks)
+        if mllm_rejected:
+            queue["mllm_rejected_candidates"] = {
+                "description": "MLLM keep/drop 或置信度门拒候选（不计 FP）",
+                "count": len(mllm_rejected),
+                "entries": mllm_rejected,
+            }
+            cl_totals = (df_props.get("candidate_lifecycle") or {}).get("totals") or {}
+            queue["candidate_lifecycle_totals"] = cl_totals
+    except Exception:
+        pass
+
     out_path = Path(args.out)
     out_path.write_text(json.dumps(queue, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"review_queue.json -> {out_path}")

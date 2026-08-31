@@ -833,6 +833,23 @@ def run_hybrid_dxf_agent_pipeline(
                         image_ref=str(png_path),
                     )
                     mllm_geom_meta["confidence_gate_block"] = gate_audit
+                    if _rej and model is not None:
+                        from .candidate_lifecycle import (
+                            append_lifecycle_to_model,
+                            build_lifecycle_block,
+                            entries_from_confidence_rejects,
+                        )
+                        lc_entries = entries_from_confidence_rejects(_rej, sheet_stem=stem)
+                        lc_block = build_lifecycle_block(
+                            sheet_stem=stem,
+                            geom_method="mllm_geom",
+                            n_in=gate_audit.get("n_in", len(mllm_bars_px) + len(_rej)),
+                            n_accepted=gate_audit.get("n_out", len(mllm_bars_px)),
+                            rejected_entries=lc_entries,
+                            audit={"confidence_gate": gate_audit},
+                        )
+                        append_lifecycle_to_model(model, lc_block)
+                        mllm_geom_meta["candidate_lifecycle_rejected"] = len(_rej)
                 bars = _bars_px_to_drawing(mllm_bars_px, mapping, view_type)
                 # 斜材共线拼接：把 MLLM 碎片化的通长斜材拼回整根（降低 FP、提升斜材长度）
                 bars, stitched = _stitch_mllm_diagonals(bars)
@@ -947,6 +964,24 @@ def run_hybrid_dxf_agent_pipeline(
                     # MLLM 分类成功且有剔除：保留 keep 的矢量杆，删除其余。
                     # keep 集合须同时含保留杆件及其 from_node/to_node，否则
                     # _strip_vector_geometry 会把被保留杆件的节点一并清除。
+                    from .candidate_lifecycle import (
+                        append_lifecycle_to_model,
+                        build_lifecycle_block,
+                        entries_from_centerline_drops,
+                    )
+                    dropped = entries_from_centerline_drops(
+                        cand_px, keep_ids, sheet_stem=stem, cand_ids=cand_ids)
+                    lc_block = build_lifecycle_block(
+                        sheet_stem=stem,
+                        geom_method="centerline",
+                        n_in=len(cand_px),
+                        n_accepted=len(keep_ids),
+                        rejected_entries=dropped,
+                        audit={"centerline_classify": cl_meta},
+                    )
+                    if model is not None:
+                        append_lifecycle_to_model(model, lc_block)
+                    cl_meta["candidate_lifecycle_rejected"] = len(dropped)
                     keep_component = set()
                     for b in ezdxf_bars:
                         if b.get("bar_uid") not in keep_ids:

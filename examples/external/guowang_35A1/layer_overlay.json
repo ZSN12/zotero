@@ -1195,5 +1195,11 @@
   "diagonal_topology_twist_faces": ["f", "l", "r"],
   "diaphragm_max_z_mm": 30000.0,
   "multiview_hypothesis_sheets": ["35A1-JC1-06"],
-  "mllm_confidence_gate_block_inject": false
+  "mllm_confidence_gate_block_inject": false,
+  "mllm_keep_drop_sheets": [
+    "35A1-JC1-02",
+    "35A1-JC1-04",
+    "35A1-JC1-05",
+    "35A1-JC1-07"
+  ]
 }
