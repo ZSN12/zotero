@@ -925,6 +925,7 @@ def expand_4_face_symmetry(
         new_nodes, new_bars = generate_diaphragms(
             new_nodes, new_bars, wall=wall, levels=diaphragm_levels,
             level_source_label=level_source_label,
+            half_width_fn=half_width_fn,
         )
 
     return new_nodes, new_bars
@@ -940,6 +941,9 @@ def generate_diaphragms(
     levels: Optional[List[float]] = None,
     level_source_label: Optional[str] = None,
     dedup_report: Optional[dict] = None,
+    half_width_fn: Optional[Callable[[float], float]] = None,
+    hw_tol_ratio: float = 0.35,
+    level_validation_report: Optional[dict] = None,
 ) -> Tuple[NodeMap, List[dict]]:
     """在各标高平台处生成水平横隔面（内部横隔材）。
 
@@ -977,6 +981,7 @@ def generate_diaphragms(
     # 其 z 对齐到平台标高（生成新角节点，避免移动共享节点坐标）。
     # 回退：levels=None 时走原 2000mm 粗分桶路径（生产兼容）。
     corner_ids_by_z: Dict[float, List[Optional[str]]] = {}
+    skipped_levels: List[Dict[str, object]] = []
     if levels:
         pick_window = 800.0
         # P3.1：canonical 层去重（±level_collapse_mm 内合并，防同 z 重复横隔）
@@ -1003,7 +1008,14 @@ def generate_diaphragms(
                     )
                     new_corn[ci] = (nid, p)
             if all(c is not None for c in new_corn):
-                corner_ids_by_z[lv] = new_corn  # type: ignore[assignment]
+                fixed_ids = [nid for nid, _p in new_corn]
+                ok, reason = _diaphragm_corners_valid(
+                    nodes, fixed_ids, float(lv),
+                    half_width_fn=half_width_fn, tol_ratio=hw_tol_ratio)
+                if ok:
+                    corner_ids_by_z[lv] = new_corn  # type: ignore[assignment]
+                else:
+                    skipped_levels.append({"z": float(lv), "reason": reason})
     else:
         # 先按 min_z_gap 分桶，避免每个中间节点标高都生成横隔面（会爆炸成数百根）。
         buckets: Dict[float, List[float]] = {}
@@ -1185,6 +1197,12 @@ def generate_diaphragms(
             "duplicates_removed": generated_count - len(dedup_survivors),
             "groups": groups,
         })
+    if level_validation_report is not None:
+        level_validation_report.clear()
+        level_validation_report.update({
+            "skipped_levels": skipped_levels,
+            "n_skipped": len(skipped_levels),
+        })
     return new_nodes, new_bars
 
 
@@ -1244,6 +1262,122 @@ def _bar_max_radial(nodes: NodeMap, b: dict) -> float:
             continue
         vals.append(math.hypot(float(p[0]), float(p[1])))
     return max(vals) if vals else 0.0
+
+
+def _point_to_segment_dist(p: Vec3, a: Vec3, b: Vec3) -> float:
+    ax, ay, az = float(a[0]), float(a[1]), float(a[2])
+    bx, by, bz = float(b[0]), float(b[1]), float(b[2])
+    px, py, pz = float(p[0]), float(p[1]), float(p[2])
+    ab = (bx - ax, by - ay, bz - az)
+    ap = (px - ax, py - ay, pz - az)
+    ab2 = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2
+    if ab2 <= 1e-12:
+        return math.sqrt(ap[0] ** 2 + ap[1] ** 2 + ap[2] ** 2)
+    t = max(0.0, min(1.0, (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / ab2))
+    q = (ax + t * ab[0], ay + t * ab[1], az + t * ab[2])
+    return math.sqrt((px - q[0]) ** 2 + (py - q[1]) ** 2 + (pz - q[2]) ** 2)
+
+
+def _diaphragm_corners_valid(
+    nodes: NodeMap,
+    corner_ids: Sequence[str],
+    z: float,
+    *,
+    half_width_fn: Optional[Callable[[float], float]],
+    tol_ratio: float,
+) -> Tuple[bool, Optional[str]]:
+    if half_width_fn is None:
+        return True, None
+    expected = float(half_width_fn(z))
+    if expected <= 1e-6:
+        return True, None
+    for nid in corner_ids:
+        p = nodes.get(nid)
+        if p is None:
+            return False, "missing_corner"
+        radial = max(abs(float(p[0])), abs(float(p[1])))
+        if radial < expected * (1.0 - tol_ratio) or radial > expected * (1.0 + tol_ratio):
+            return False, "half_width_mismatch"
+    return True, None
+
+
+def _endpoint_near_leg(
+    nodes: NodeMap,
+    bars: List[dict],
+    roles: Dict[str, str],
+    nid: str,
+    *,
+    max_dist_mm: float,
+) -> bool:
+    p = nodes.get(nid)
+    if p is None:
+        return False
+    for b in bars:
+        if roles.get(str(b.get("id"))) != "LEG" and str(b.get("role") or "").upper() != "LEG":
+            continue
+        if b.get("diaphragm"):
+            continue
+        fa, fb = nodes.get(b.get("from")), nodes.get(b.get("to"))
+        if fa is None or fb is None:
+            continue
+        if _point_to_segment_dist(p, fa, fb) <= max_dist_mm:
+            return True
+    return False
+
+
+def filter_diaphragm_bars_by_evidence(
+    nodes: NodeMap,
+    bars: List[dict],
+    roles: Dict[str, str],
+    *,
+    half_width_fn: Optional[Callable[[float], float]] = None,
+    leg_attach_mm: float = 500.0,
+    hw_tol_ratio: float = 0.35,
+) -> Tuple[List[dict], Dict[str, object]]:
+    """P3.1 深度：剔除端点不落主腿 / 半宽不符锥线的横隔杆。"""
+    kept: List[dict] = []
+    removed: List[Dict[str, object]] = []
+    for b in bars:
+        if not b.get("diaphragm") and str(b.get("face") or "") != "diaphragm":
+            kept.append(b)
+            continue
+        fn, tn = b.get("from"), b.get("to")
+        pf, pt = nodes.get(fn), nodes.get(tn)
+        if pf is None or pt is None:
+            kept.append(b)
+            continue
+        z_mid = (float(pf[2]) + float(pt[2])) / 2.0
+        reason: Optional[str] = None
+        hw_valid = False
+        if half_width_fn is not None:
+            hw = float(half_width_fn(z_mid))
+            hw_valid = hw > 0
+            for p in (pf, pt):
+                radial = max(abs(float(p[0])), abs(float(p[1])))
+                if hw > 0 and (radial < hw * (1.0 - hw_tol_ratio)
+                               or radial > hw * (1.0 + hw_tol_ratio)):
+                    reason = "endpoint_hw_mismatch"
+                    hw_valid = False
+                    break
+        if reason is None and not hw_valid:
+            if not _endpoint_near_leg(nodes, bars, roles, str(fn), max_dist_mm=leg_attach_mm):
+                reason = "from_not_on_leg"
+            elif not _endpoint_near_leg(nodes, bars, roles, str(tn), max_dist_mm=leg_attach_mm):
+                reason = "to_not_on_leg"
+        if reason:
+            removed.append({
+                "bar_id": b.get("id"),
+                "reason": reason,
+                "z_mid_mm": round(z_mid, 1),
+            })
+            continue
+        kept.append(b)
+    return kept, {
+        "n_in": len(bars),
+        "n_out": len(kept),
+        "n_removed": len(removed),
+        "removed": removed,
+    }
 
 
 def prune_spurious_crossarm_bars(

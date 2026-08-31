@@ -1284,7 +1284,7 @@ def extract_tower_from_dxf(
         # 杆件线段上」的通长杆在交点劈成多段，使主腿按节间节点分段，与 GT 的
         # 面板细分对齐。只按 view_type 各自打断，绝不跨视图。仅当 overlay 显式
         # 启用 subdivide_at_t_junctions 时执行（06 段先验证，其它段保持旧行为）。
-        if coll_cfg and coll_cfg.get("subdivide_at_t_junctions"):
+        if coll_cfg.get("subdivide_at_t_junctions"):
             sub_tol = float(coll_cfg.get("subdivide_snap_tol", 8.0))
             subdivided: List[Dict] = []
             for vk in sorted({seg["view_type"] or "_all" for seg in bar_segments}):
@@ -1298,7 +1298,7 @@ def extract_tower_from_dxf(
         # 阶段2.5（方案A）：按斜材端点 y 聚类导出的节间水平对通长主材做参数化打断。
         # 与 subdivide_at_t_junctions 互斥（端点投影法在斜材端点距主腿 0.84~1.67u
         # 时不稳定）。仅当显式 subdivide_at_levels 时启用。
-        if coll_cfg and coll_cfg.get("subdivide_at_levels"):
+        if coll_cfg.get("subdivide_at_levels"):
             subdivided: List[Dict] = []
             for vk in sorted({seg["view_type"] or "_all" for seg in bar_segments}):
                 view_segs = [s for s in bar_segments if (s["view_type"] or "_all") == vk]
@@ -1310,6 +1310,15 @@ def extract_tower_from_dxf(
                     min_diag_len=float(coll_cfg.get("subdivide_min_diag_len", 35.0)),
                 ))
             bar_segments = subdivided
+
+    # P2.4：keep_drop 分册几何 centerline 滤噪（ezdxf 路径，无需 MLLM）
+    from .centerline_geom_filter import filter_bar_segments, stem_uses_centerline_geom_filter
+    if stem_uses_centerline_geom_filter(stem, layer_map_path):
+        bar_segments, _cgf = filter_bar_segments(
+            bar_segments, stem=stem, overlay=layer_map_path)
+        _df_cgf = model.components.get("drawing_file")
+        if _df_cgf is not None:
+            _df_cgf.properties["centerline_geom_filter"] = _cgf
 
     # ---- 2) 节点：按视图区域各自聚类（视图在图纸上空间分离）----
     # 聚类阈值 eps 是「真实 mm」；而端点坐标是图纸单位。有 scale_ratio 的视图

@@ -959,6 +959,20 @@ def run_hybrid_dxf_agent_pipeline(
                     }
                     cl_meta["kept"] = len(keep_ids)
                     cl_meta["dropped"] = len(cand_px) - len(keep_ids)
+                elif cand_px:
+                    from .centerline_geom_filter import (
+                        filter_drawing_bars,
+                        stem_uses_centerline_geom_filter,
+                    )
+                    if stem_uses_centerline_geom_filter(stem, layer_map_path):
+                        kept_bars, _geo_drop, geo_rep = filter_drawing_bars(
+                            ezdxf_bars, stem=stem, overlay=layer_map_path)
+                        keep_ids = {
+                            str(b.get("bar_uid")) for b in kept_bars if b.get("bar_uid")}
+                        cl_meta["geom_filter"] = geo_rep
+                        cl_meta["kept"] = len(keep_ids)
+                        cl_meta["dropped"] = len(cand_px) - len(keep_ids)
+                        cl_meta["note"] = "MLLM 不可用，几何 centerline filter（P2.4）"
                 a2_method = "centerline"
                 if keep_ids is not None and len(keep_ids) < len(cand_px):
                     # MLLM 分类成功且有剔除：保留 keep 的矢量杆，删除其余。

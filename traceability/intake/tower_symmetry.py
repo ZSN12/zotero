@@ -499,6 +499,20 @@ def expand_4_face_symmetry_model(
     )
     topology = inspect_model_topology(face_nodes, face_bars, half_width_fn=half_width_fn)
     roles = classify_members(face_nodes, face_bars)
+    # P3.1 深度：横隔端点落主腿 + 半宽锥线校验
+    if bool(spec.get("diaphragm_depth_filter", True)) and half_width_fn is not None:
+        from ..solve.tower_geometry import filter_diaphragm_bars_by_evidence
+        face_bars, _dia_depth = filter_diaphragm_bars_by_evidence(
+            face_nodes, face_bars, roles,
+            half_width_fn=half_width_fn,
+            leg_attach_mm=float(spec.get("diaphragm_leg_attach_mm", 500.0)),
+            hw_tol_ratio=float(spec.get("diaphragm_hw_tol_ratio", 0.35)),
+        )
+        if _dia_depth.get("n_removed"):
+            roles = classify_members(face_nodes, face_bars)
+        _df_depth = model.components.get("drawing_file")
+        if _df_depth is not None:
+            _df_depth.properties["diaphragm_depth_filter"] = _dia_depth
     # Phase 3 审计锚点：展开后（未拼接/未修复）的初始门禁值
     _genuine_initial = topology.get("genuine_dangling_degree1")
 

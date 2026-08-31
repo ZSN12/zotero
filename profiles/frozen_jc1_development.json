@@ -17,6 +17,8 @@
     "diaphragm_max_z_mm": 30000.0,
     "crossarm_fp_prune": true,
     "crossarm_zone_z_min_mm": 29000.0,
+    "diaphragm_depth_filter": true,
+    "centerline_geom_filter": true,
     "collinear_stitch": true,
     "collinear_stitch_max_single_len_mm": 800.0,
     "collinear_stitch_max_segments": 2,

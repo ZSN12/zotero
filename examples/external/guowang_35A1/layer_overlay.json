@@ -1202,6 +1202,19 @@
   "crossarm_fp_prune": true,
   "crossarm_zone_z_min_mm": 29000.0,
   "crossarm_radial_ratio": 1.3,
+  "diaphragm_depth_filter": true,
+  "diaphragm_leg_attach_mm": 500.0,
+  "diaphragm_hw_tol_ratio": 0.35,
+  "centerline_geom_filter": true,
+  "centerline_geom_min_len_mm": 80.0,
+  "centerline_geom_dim_max_len_mm": 450.0,
+  "centerline_geom_dim_angle_tol_deg": 8.0,
+  "centerline_geom_filter_by_stem": {
+    "35A1-JC1-05": {
+      "min_len_mm": 100.0,
+      "dim_max_len_mm": 400.0
+    }
+  },
   "multiview_hypothesis_sheets": ["35A1-JC1-06"],
   "mllm_confidence_gate_block_inject": false,
   "mllm_keep_drop_sheets": [
