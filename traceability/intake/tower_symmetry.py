@@ -386,6 +386,45 @@ def expand_4_face_symmetry_model(
     topology = inspect_model_topology(face_nodes, face_bars, half_width_fn=half_width_fn)
     roles = classify_members(face_nodes, face_bars)
 
+    # S4 贪心共线拼接（Phase 2）：把断裂碎片杆拼回整杆。
+    # 关键教训（2026-08-31 实测，三轮复核）：
+    #   1. 必须在 classify_members 之后挂——否则 face_bars 无 role，
+    #      role=="CROSS" 跳过不生效，40 根横担被错拼，TP@500 208→188。
+    #   2. 拼接端点用精确投影极值新建节点（stitch 返回的 new_nodes），
+    #      严禁吸附到现存节点（吸附引入 ≤gap 偏移，实测 TP@500 209→188）。
+    #   3. 【根因修正】旧参数 gap=300/ang=10°/maxLen=4500/maxseg=3 会把
+    #      「本来已单独命中 GT 的中长杆（1100~1500mm）」与短残段并成 ~2000mm
+    #      合成杆（贪心按 |L−2018| 优先，这类对得分最高），毁掉已有匹配：
+    #      TP@500 208→188。离线实验脚本声称的 +1/+9 系「中间合成链重复
+    #      输出」bug 的假增益（760 根源杆输出 465 根含重复几何）。
+    #   4. 修法：max_single_len_mm=800 只允许「短残段」参与拼接（已接近
+    #      GT 杆长 2005 中位的中长杆保护不动）；max_segments=2 只两两拼。
+    #      诚实复测（生产函数离线跑基线模型 + 生产评测器）：
+    #      TP@100 102 持平 / TP@200 138 持平 / TP@500 208→211 (+3) /
+    #      Precision@500 33.1%→34.3% (+1.2点)，无任何口径回退。
+    if bool(spec.get("collinear_stitch", False)):
+        from ..solve.tower_geometry import stitch_collinear_bars
+        for _b in face_bars:
+            if not _b.get("role"):
+                _b["role"] = roles.get(str(_b.get("id")))
+        face_bars, _stitch_nodes, _stitch_rep = stitch_collinear_bars(
+            face_nodes, face_bars,
+            gap_mm=float(spec.get("collinear_stitch_gap_mm", 300.0)),
+            ang_deg=float(spec.get("collinear_stitch_ang_deg", 10.0)),
+            min_merged_len_mm=float(spec.get("collinear_stitch_min_len_mm", 600.0)),
+            max_merged_len_mm=float(spec.get("collinear_stitch_max_len_mm", 4500.0)),
+            max_segments=int(spec.get("collinear_stitch_max_segments", 2)),
+            max_single_len_mm=float(spec.get("collinear_stitch_max_single_len_mm", 0.0)),
+        )
+        if _stitch_nodes:
+            face_nodes = dict(face_nodes)
+            face_nodes.update(_stitch_nodes)
+        # 拼接后杆件集合变了，重新分类 role（新 stitch_* 杆也需要 role）
+        roles = classify_members(face_nodes, face_bars)
+        _df = model.components.get("drawing_file")
+        if _df is not None:
+            _df.properties["collinear_stitch_report"] = dict(_stitch_rep)
+
     # 重建模型组件
     _KEEP_KINDS = frozenset({
         "drawing_file", "bom_row", "gusset_plate", "bolt_group", "detail_view",

@@ -1151,5 +1151,12 @@
   "snap_dangling_endpoints": true,
   "snap_dangling_max_gap_mm": 300.0,
   "half_width_taper": true,
-  "detect_crossarm_layers": true
+  "detect_crossarm_layers": true,
+  "collinear_stitch": true,
+  "collinear_stitch_gap_mm": 400.0,
+  "collinear_stitch_ang_deg": 10.0,
+  "collinear_stitch_min_len_mm": 600.0,
+  "collinear_stitch_max_len_mm": 4500.0,
+  "collinear_stitch_max_segments": 2,
+  "collinear_stitch_max_single_len_mm": 800.0
 }

@@ -279,3 +279,144 @@ class CrossarmPreserveTTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StitchCollinearBarsTest(unittest.TestCase):
+    """S4 贪心共线拼接（Phase 2 生产化）。"""
+
+    def _frag_face(self):
+        # f 面：一根 3000mm 斜杆沿 (0.8, 0, 0.6) 方向切成 3 段（间隙 250mm）
+        def pt(t):
+            return (0.8 * t, 1000.0, 0.6 * t)
+
+        nodes = {
+            "n1": pt(0.0), "n2": pt(1000.0),
+            "n3": pt(1250.0), "n4": pt(2250.0),
+            "n5": pt(2500.0), "n6": pt(3000.0),
+            # b 面：方向相同但平移到 b 面（跨面不拼）
+            "m1": (0.0, -1000.0, 0.0), "m2": (800.0, -1000.0, 600.0),
+            "m3": (1000.0, -1000.0, 750.0), "m4": (1800.0, -1000.0, 1350.0),
+        }
+        bars = [
+            {"id": "f1", "from": "n1", "to": "n2", "face": "f", "geometry_class": "recognized"},
+            {"id": "f2", "from": "n3", "to": "n4", "face": "f", "geometry_class": "recognized"},
+            {"id": "f3", "from": "n5", "to": "n6", "face": "f", "geometry_class": "recognized"},
+            {"id": "b1", "from": "m1", "to": "m2", "face": "b", "geometry_class": "reconstructed"},
+            {"id": "b2", "from": "m3", "to": "m4", "face": "b", "geometry_class": "reconstructed"},
+        ]
+        return nodes, bars
+
+    def test_stitch_same_face_collinear(self):
+        nodes, bars = self._frag_face()
+        out, _nn, rep = g.stitch_collinear_bars(nodes, bars, gap_mm=300.0, ang_deg=10.0)
+        # f 面 3 段拼成 1 根（长度 ~3162 在 [600, 4500] 内）
+        self.assertEqual(rep["merged_groups"], 2)
+        f_bars = [b for b in out if b.get("face") == "f"]
+        self.assertEqual(len(f_bars), 1, "f 面三段应拼成一根")
+        self.assertEqual(f_bars[0]["geometry_origin"], "collinear_stitch")
+        self.assertEqual(f_bars[0]["stitched_n_segments"], 3)
+        self.assertEqual(f_bars[0]["geometry_class"], "recognized")
+
+    def test_cross_face_not_stitched(self):
+        nodes, bars = self._frag_face()
+        out, _nn, rep = g.stitch_collinear_bars(nodes, bars, gap_mm=300.0, ang_deg=10.0)
+        # b 面两段拼成一根（各自面内），但 f 面与 b 面之间不拼
+        b_bars = [b for b in out if b.get("face") == "b"]
+        self.assertEqual(len(b_bars), 1)
+        # b 面合成杆是 reconstructed（源杆非 recognized，不得洗白）
+        self.assertNotEqual(b_bars[0]["geometry_class"], "recognized")
+
+    def test_mirror_not_whitewashed(self):
+        nodes, bars = self._frag_face()
+        # b 面源杆改成 mirrored+recognized 混合（首源是 mirrored）
+        bars[3]["geometry_class"] = "mirrored"
+        out, _nn, _ = g.stitch_collinear_bars(nodes, bars, gap_mm=300.0, ang_deg=10.0)
+        b_bars = [b for b in out if b.get("face") == "b"]
+        self.assertEqual(len(b_bars), 1)
+        self.assertEqual(b_bars[0]["geometry_class"], "mirrored",
+                         "混合类别继承首源类别（mirrored），不得洗白成 recognized")
+        # 反向：首源 recognized + 次源 mirrored → recognized（首源继承）
+        bars[3]["geometry_class"] = "recognized"
+        bars[4]["geometry_class"] = "mirrored"
+        out2, _n2, _ = g.stitch_collinear_bars(nodes, bars, gap_mm=300.0, ang_deg=10.0)
+        b_bars2 = [b for b in out2 if b.get("face") == "b"]
+        self.assertEqual(b_bars2[0]["geometry_class"], "recognized")
+
+    def test_max_segments_guard(self):
+        nodes, bars = self._frag_face()
+        out, _nn, rep = g.stitch_collinear_bars(nodes, bars, gap_mm=300.0, ang_deg=10.0,
+                                           max_segments=2)
+        f_bars = [b for b in out if b.get("face") == "f"]
+        # 3 段受限为 2+1
+        self.assertEqual(len(f_bars), 2)
+
+    def test_short_merge_rejected(self):
+        # 两段共线但合起来仍然太短（< min_merged_len）
+        nodes = {
+            "a1": (0.0, 1000.0, 0.0), "a2": (100.0, 1000.0, 100.0),
+            "a3": (300.0, 1000.0, 300.0),
+        }
+        bars = [
+            {"id": "s1", "from": "a1", "to": "a2", "face": "f", "geometry_class": "recognized"},
+            {"id": "s2", "from": "a3", "to": "a2", "face": "f", "geometry_class": "recognized"},
+        ]
+        out, _nn, rep = g.stitch_collinear_bars(nodes, bars, gap_mm=300.0, ang_deg=10.0,
+                                           min_merged_len_mm=600.0)
+        self.assertEqual(rep["merged_groups"], 0)
+        self.assertEqual(len(out), 2)
+
+    def test_diaphragm_and_crossarm_skipped(self):
+        nodes = {
+            "d1": (0.0, 1000.0, 0.0), "d2": (1000.0, 1000.0, 1000.0),
+            "d3": (1200.0, 1000.0, 1200.0), "d4": (2200.0, 1000.0, 2200.0),
+        }
+        bars = [
+            {"id": "dp1", "from": "d1", "to": "d2", "face": "f", "diaphragm": True},
+            {"id": "dp2", "from": "d3", "to": "d4", "face": "f", "diaphragm": True},
+            {"id": "cr1", "from": "d1", "to": "d2", "face": "f", "role": "CROSS"},
+        ]
+        out, _nn, rep = g.stitch_collinear_bars(nodes, bars, gap_mm=300.0, ang_deg=10.0)
+        self.assertEqual(rep["merged_groups"], 0)
+        self.assertEqual(rep["skipped"].get("diaphragm", 0), 2)
+        self.assertEqual(rep["skipped"].get("crossarm", 0), 1)
+
+
+class TJunctionDanglingTest(unittest.TestCase):
+    """拼接后 T 形接头不计悬空断裂。"""
+
+    def _hw(self, z):
+        return max(600.0, 2649.0 - 0.0687 * z)
+
+    def test_t_junction_not_dangling(self):
+        # 拼接长杆 A-C；中部节点 B 只剩一根腹杆 B-D（D 又连到主杆端 C），
+        # B 落在 A-C 线上 → T 形接头，不算悬空断裂。E 是真悬空。
+        nodes = {
+            "A": (0.0, 1000.0, 0.0),
+            "C": (3000.0, 1000.0, 3000.0),
+            "B": (1500.0, 1000.0, 1500.0),   # 落在 A-C 上
+            "D": (1500.0, 2500.0, 1500.0),   # 腹杆外端
+            "E": (0.0, 2000.0, 0.0),         # 真悬空：度 1 且不在任何杆上
+        }
+        bars = [
+            {"id": "st1", "from": "A", "to": "C"},
+            {"id": "w1", "from": "B", "to": "D"},
+            {"id": "w2", "from": "D", "to": "C"},
+            {"id": "w3", "from": "E", "to": "A"},
+        ]
+        rep = g.inspect_model_topology(nodes, bars, half_width_fn=self._hw)
+        # 度 1 节点：B（挂杆身上，T 形/CROSS 根部，不计悬空）、E（真悬空）
+        self.assertEqual(rep["genuine_dangling_degree1"], 1, "只有 E 真悬空")
+
+    def test_plain_free_end_still_dangling(self):
+        # 对照：不在任何杆身上的度 1 节点仍计悬空（T 判定不吞真断裂）
+        nodes = {
+            "A": (0.0, 1000.0, 0.0),
+            "C": (3000.0, 1000.0, 3000.0),
+            "E": (0.0, 2000.0, 0.0),
+        }
+        bars = [
+            {"id": "st1", "from": "A", "to": "C"},
+            {"id": "w3", "from": "E", "to": "A"},
+        ]
+        rep = g.inspect_model_topology(nodes, bars, half_width_fn=self._hw)
+        self.assertEqual(rep["genuine_dangling_degree1"], 2)  # C、E 都是自由端

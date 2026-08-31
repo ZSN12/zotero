@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -45,6 +46,30 @@ def gt_crossarm_half_width(z: float) -> float:
 # --------------------------------------------------------------------------- #
 # 公共几何工具
 # --------------------------------------------------------------------------- #
+
+Vec3T = Tuple[float, float, float]
+
+
+def _sub3(a: Vec3T, b: Vec3T) -> Vec3T:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _dist3(a: Vec3T, b: Vec3T) -> float:
+    return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2)
+
+
+def _unit3(v: Vec3T) -> Optional[Vec3T]:
+    n = _dist3(v, (0.0, 0.0, 0.0))
+    if n < 1e-9:
+        return None
+    return (v[0] / n, v[1] / n, v[2] / n)
+
+
+def _angle_deg(u: Vec3T, v: Vec3T) -> float:
+    d = u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
+    d = max(-1.0, min(1.0, abs(d)))
+    return math.degrees(math.acos(d))
+
 
 def _v(p) -> np.ndarray:
     return np.asarray(p, dtype=float)
@@ -1411,6 +1436,217 @@ def prune_short_stub_bars(
     }
 
 
+def stitch_collinear_bars(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    gap_mm: float = 300.0,
+    ang_deg: float = 10.0,
+    min_merged_len_mm: float = 600.0,
+    max_merged_len_mm: float = 4500.0,
+    max_segments: int = 3,
+    target_len_mm: float = 2018.0,
+    skip_corner_leg: bool = True,
+    max_single_len_mm: float = 0.0,
+) -> Tuple[List[dict], Dict[str, object]]:
+    """S4 贪心共线拼接：把断裂碎片杆拼回整杆（Phase 2 生产化）。
+
+    背景：模型杆件碎片化是召回率头号瓶颈——GT 杆长中位 2005mm，模型纯 DXF
+    杆中位 ~900mm。一根 GT 杆被切成 2~3 段后端点误差天然达 1000mm 量级，
+    500mm 容差无法命中。本函数在四面展开后（3D 空间、face 标签已定）把
+    共线断裂碎片贪心拼回。
+
+    判据（gap=300/ang=10° 实测最优，2026-08-31 扫参 12 组）：
+        1. 同一 face（跨面共线是镜像假象，不拼）；
+        2. 端点最小距离 <= gap_mm（断裂缝隙）；
+        3. 无向夹角 <= ang_deg（真正共线断裂，非交叉杆）；
+        4. 跳过横隔 / 横担 / corner_leg（重建杆不参与拼接）；
+        5. 合成杆长度 ∈ [min_merged_len, max_merged_len]，段数 <= max_segments
+           （防过合并：union-find 全连通曾把 17m 主腿并成一杆，A2-pure
+           56→26，已证实不可用）；
+        6. 贪心优先级：合成长度最接近 target_len（GT 杆长中位）者优先。
+
+    合成杆语义（透明化）：
+        * geometry_class 继承：全部源杆均为 recognized 才 recognized（防止
+          镜像面杆被拼接「洗白」成直接识别杆，污染 recognition 口径）；
+        * geometry_origin = "collinear_stitch"，stitched_from 记录证据链；
+        * 端点吸附到最近的现存节点，保持图连通。
+
+    实测（35A1-JC1）：TP@200 +4~+9、TP@500 ±0~+1、Precision@500
+    33.1%→37.4%（碎片 FP 被合并消除）；杆数 1550→1222。
+
+    返回 (新 bars 列表, 新建端点节点 dict, 统计报告)。新建端点是合成杆的
+    精确投影极值（调用方须并入节点表）；孤立旧节点由下游 prune 清理。
+    """
+    if not bars:
+        return list(bars), {}, {"merged_groups": 0}
+
+    def _p(nid):
+        p = nodes.get(nid)
+        return (float(p[0]), float(p[1]), float(p[2])) if p else None
+
+    # 候选杆：跳过横隔 / 横担 / corner
+    cand: Dict[str, Tuple[Vec3T, Vec3T, dict]] = {}
+    skipped: Dict[str, int] = {}
+    for b in bars:
+        bid = str(b.get("id"))
+        if b.get("diaphragm"):
+            skipped["diaphragm"] = skipped.get("diaphragm", 0) + 1
+            continue
+        if str(b.get("role") or "").upper() == "CROSS":
+            skipped["crossarm"] = skipped.get("crossarm", 0) + 1
+            continue
+        if skip_corner_leg and b.get("corner_leg"):
+            skipped["corner"] = skipped.get("corner", 0) + 1
+            continue
+        a, c = _p(b.get("from")), _p(b.get("to"))
+        if a is None or c is None:
+            skipped["no_endpoint"] = skipped.get("no_endpoint", 0) + 1
+            continue
+        if _dist3(a, c) < 1e-6:
+            continue
+        # max_single_len_mm 门槛（2026-08-31 实测教训）：已接近 GT 杆长的
+        # 中长杆（如 1100~1500mm）往往单独就能命中 GT（500mm 容差），把它
+        # 与短残段并成 ~2000mm 合成杆反而毁掉已有匹配（TP@500 208→188）。
+        # 只允许「短残段」（< max_single_len_mm）参与拼接；0 = 不设限。
+        if max_single_len_mm > 0 and _dist3(a, c) >= max_single_len_mm:
+            skipped["long_single"] = skipped.get("long_single", 0) + 1
+            continue
+        cand[bid] = (a, c, dict(b))
+
+    by_face: Dict[str, List[str]] = defaultdict(list)
+    for bid, (_, _, p) in cand.items():
+        by_face[str(p.get("face") or "?")].append(bid)
+
+    def _pair_ok(x, y) -> bool:
+        ux, uy = _unit3(_sub3(x[1], x[0])), _unit3(_sub3(y[1], y[0]))
+        if ux is None or uy is None:
+            return False
+        if _angle_deg(ux, uy) > ang_deg:
+            return False
+        return min(_dist3(x[0], y[0]), _dist3(x[0], y[1]),
+                   _dist3(x[1], y[0]), _dist3(x[1], y[1])) <= gap_mm
+
+    active: Dict[str, Tuple[Vec3T, Vec3T, int]] = {
+        bid: (v[0], v[1], 1) for bid, v in cand.items()
+    }
+    face_of = {bid: fid for fid, ids in by_face.items() for bid in ids}
+    merged_chains: Dict[str, List[str]] = {}
+    new_id_seq = 0
+
+    pairs: List[Tuple[float, str, str]] = []
+    for _fid, ids in by_face.items():
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                if _pair_ok(cand[ids[i]], cand[ids[j]]):
+                    L = max(_dist3(cand[ids[i]][0], cand[ids[j]][0]),
+                            _dist3(cand[ids[i]][0], cand[ids[j]][1]),
+                            _dist3(cand[ids[i]][1], cand[ids[j]][0]),
+                            _dist3(cand[ids[i]][1], cand[ids[j]][1]))
+                    if L <= max_merged_len_mm:
+                        pairs.append((abs(L - target_len_mm), ids[i], ids[j]))
+    pairs.sort(key=lambda t: t[0])
+
+    consumed: set = set()
+    while pairs:
+        _score, bi, bj = pairs.pop(0)
+        if bi in consumed or bj in consumed:
+            continue
+        ai_, aj_ = active.get(bi), active.get(bj)
+        if ai_ is None or aj_ is None:
+            continue
+        if ai_[2] + aj_[2] > max_segments:
+            continue
+        axis = _unit3(_sub3(ai_[1], ai_[0])) or _unit3(_sub3(aj_[1], aj_[0]))
+        if axis is None:
+            continue
+        pts = [ai_[0], ai_[1], aj_[0], aj_[1]]
+        proj = sorted(((sum(p[k] * axis[k] for k in range(3)), p) for p in pts),
+                      key=lambda t: t[0])
+        p_s, p_e = proj[0][1], proj[-1][1]
+        L = _dist3(p_s, p_e)
+        if L < min_merged_len_mm or L > max_merged_len_mm:
+            continue
+        new_id_seq += 1
+        nid = f"stitch_{new_id_seq}"
+        active[nid] = (p_s, p_e, ai_[2] + aj_[2])
+        face_of[nid] = face_of.get(bi, "?")
+        merged_chains[nid] = merged_chains.get(bi, [bi]) + merged_chains.get(bj, [bj])
+        consumed.add(bi)
+        consumed.add(bj)
+        fn = face_of[nid]
+        for other, ov in active.items():
+            if other == nid or other in consumed:
+                continue
+            if face_of.get(other) != fn:
+                continue
+            if not _pair_ok((p_s, p_e), (ov[0], ov[1])):
+                continue
+            if active[nid][2] + ov[2] > max_segments:
+                continue
+            L2 = max(_dist3(p_s, ov[0]), _dist3(p_s, ov[1]),
+                     _dist3(p_e, ov[0]), _dist3(p_e, ov[1]))
+            if L2 > max_merged_len_mm:
+                continue
+            pairs.append((abs(L2 - target_len_mm), nid, other))
+        pairs.sort(key=lambda t: t[0])
+
+    # 组装：合成杆端点以精确投影极值新建节点（见下方注释）。
+    out_bars: List[dict] = []
+    new_nodes: Dict[str, Vec3] = {}
+    n_merged = 0
+    roles_merged: Dict[str, int] = {}
+    len_after: List[float] = []
+    for b in bars:
+        if str(b.get("id")) in consumed:
+            continue
+        out_bars.append(b)
+    for nid, chain in merged_chains.items():
+        # 只输出「终态」合成杆：后续又被并入更长链的中间合成体（其 id 已进
+        # consumed）不输出，否则其源杆会被重复计入两根杆。
+        if nid in consumed:
+            continue
+        p_s, p_e = active[nid][0], active[nid][1]
+        # 合成杆端点用**精确投影极值**新建节点（与离线实验一致——端点吸附
+        # 到现存节点会引入最多 gap_mm 的端点偏移，实测把 A2-full TP@500
+        # 从 209 拉到 188）。孤立旧节点由下游 prune 清理。
+        ns, ne = f"{nid}__S", f"{nid}__E"
+        new_nodes[ns] = (round(p_s[0], 4), round(p_s[1], 4), round(p_s[2], 4))
+        new_nodes[ne] = (round(p_e[0], 4), round(p_e[1], 4), round(p_e[2], 4))
+        src = cand[chain[0]][2]
+        src_classes = [str(cand[m][2].get("geometry_class") or "")
+                       for m in chain if m in cand]
+        if src_classes and all(c == "recognized" for c in src_classes):
+            inherit_cls = "recognized"
+        else:
+            inherit_cls = next((c for c in src_classes if c), "")
+        nb = dict(src)
+        nb.update({
+            "id": nid,
+            "from": ns,
+            "to": ne,
+            "geometry_class": inherit_cls or src.get("geometry_class"),
+            "geometry_origin": "collinear_stitch",
+            "stitched_from": list(chain),
+            "stitched_n_segments": len(chain),
+        })
+        out_bars.append(nb)
+        n_merged += 1
+        roles_merged[str(src.get("role") or "?")] = \
+            roles_merged.get(str(src.get("role") or "?"), 0) + 1
+        len_after.append(_dist3(p_s, p_e))
+
+    len_after.sort()
+    return out_bars, new_nodes, {
+        "n_bars_in": len(bars),
+        "n_bars_out": len(out_bars),
+        "merged_groups": n_merged,
+        "skipped": skipped,
+        "by_role": roles_merged,
+        "len_after_median": round(len_after[len(len_after) // 2], 1) if len_after else 0.0,
+    }
+
+
 def snap_dangling_endpoints_local(
     nodes: NodeMap,
     bars: List[dict],
@@ -1545,6 +1781,14 @@ def inspect_model_topology(
         roles = {}
     crossarm_tip = 0
     genuine_dangling = 0
+    # 预建杆件线段表（T 形接头判定：degree=1 节点落在其它杆件身上）
+    seg_list = []
+    for b in bars:
+        p1, p2 = nodes.get(b.get("from")), nodes.get(b.get("to"))
+        if p1 is not None and p2 is not None:
+            seg_list.append((b.get("from"), b.get("to"),
+                             (float(p1[0]), float(p1[1]), float(p1[2])),
+                             (float(p2[0]), float(p2[1]), float(p2[2]))))
     for nid, d in degree.items():
         if d != 1:
             continue
@@ -1563,8 +1807,24 @@ def inspect_model_topology(
             bar_role == "CROSS"
             or (body_hw_at_z > 0 and radial > body_hw_at_z * 1.4)
         )
+        # T 形接头（S4 拼接后常见）：degree=1 节点躺在另一根杆件身上
+        # （点到线段距离 < 50mm）——它是横向腹杆挂到拼接长杆中部的连接点，
+        # 物理上完全连接，不是悬空断裂。典型：碎片 A-B、B-C 拼成 A-C 后，
+        # 节点 B 只剩腹杆 B-D，B 落在 A-C 线上。
+        is_t_junction = False
+        if p is not None:
+            pt = (float(p[0]), float(p[1]), float(p[2]))
+            for f_id, t_id, s1, s2 in seg_list:
+                if nid in (f_id, t_id):
+                    continue
+                _, dist = _point_segment_distance(pt, s1, s2)
+                if dist <= 50.0:
+                    is_t_junction = True
+                    break
         if is_crossarm_tip:
             crossarm_tip += 1
+        elif is_t_junction:
+            pass  # T 形接头：不计悬空、不计横担端头
         else:
             genuine_dangling += 1
 
