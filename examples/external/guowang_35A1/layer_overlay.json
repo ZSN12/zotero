@@ -1149,5 +1149,7 @@
   "max_stub_len_mm": 400.0,
   "use_gt_platform_levels": true,
   "snap_dangling_endpoints": true,
-  "snap_dangling_max_gap_mm": 300.0
+  "snap_dangling_max_gap_mm": 300.0,
+  "half_width_taper": true,
+  "detect_crossarm_layers": true
 }

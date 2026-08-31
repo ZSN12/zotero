@@ -289,10 +289,47 @@ def expand_4_face_symmetry_model(
     # 标记，不假装闭合）。
     if half_width_fn is None:
         from ..solve.tower_geometry import fit_tower_half_width_from_face
-        fitted = fit_tower_half_width_from_face(snapped_nodes, snapped_bars)
+        # S7 锥体重建（2026-08-31）：method="taper" 用 Theil-Sen 稳健回归把半宽
+        # 拟合成直线锥体，替代原「分段常数+单调包络」。默认关闭保持旧行为，
+        # 须 overlay 显式启用——与 snap_dangling_endpoints 同纪律。
+        taper = bool(spec.get("half_width_taper", False))
+        fitted = fit_tower_half_width_from_face(
+            snapped_nodes, snapped_bars,
+            method="taper" if taper else "monotone",
+            taper_max_residual_mm=float(
+                spec.get("half_width_taper_max_residual_mm", 150.0)),
+        )
         if fitted is not None:
             half_width_fn = fitted
             half_width_fitted = True
+
+        # S7 生产横担层检测（2026-08-31）：从 DXF 证据找塔头横担外伸层，
+        # 替代「传 None 导致横担节点被吸附到塔身锥线」的旧行为。仅在
+        # 生产路径（未注入 GT 横担）且显式开启时启用。层位来自图纸证据
+        # 本身（宽节点 z 链聚类），不依赖 GT 层表。
+        if (
+            crossarm_half_width_fn is None
+            and half_width_fn is not None
+            and bool(spec.get("detect_crossarm_layers", False))
+        ):
+            from ..solve.tower_geometry import detect_crossarm_layers_from_face
+            _arm_fn, _arm_rep = detect_crossarm_layers_from_face(
+                snapped_nodes, snapped_bars, half_width_fn)
+            if _arm_fn is not None:
+                crossarm_half_width_fn = _arm_fn
+                _df = model.components.get("drawing_file")
+                if _df is not None:
+                    _df.properties["crossarm_layer_detection"] = {
+                        "n_layers": len(_arm_rep.get("layers", [])),
+                        "layers": [
+                            {
+                                "z_lo": round(float(l["z_lo"]), 1),
+                                "z_hi": round(float(l["z_hi"]), 1),
+                                "arm_mm": round(float(l["arm_mm"]), 1),
+                            }
+                            for l in _arm_rep.get("layers", [])
+                        ],
+                    }
 
     # S6 主腿节间化 + S2b 横隔层 z 对齐（用户 2026-08 裁定：canonical 平台
     # 标高 z-only 可注入，x/y 严禁注入 GT）。
@@ -338,6 +375,9 @@ def expand_4_face_symmetry_model(
         add_diaphragms=add_diaphragms,
         half_width_fn=half_width_fn,
         crossarm_half_width_fn=crossarm_half_width_fn,
+        # S7：生产横担层保留真实 t（桁架内部节点不得推到外缘）；GT 注入路径
+        # 保持旧行为（detect_crossarm_layers=False）。
+        crossarm_preserve_t=bool(spec.get("detect_crossarm_layers", False)),
         diaphragm_levels=panel_levels if panel_levels else None,
         level_source_label=(
             "gt_canonical" if level_source == "gt" else "dxf_derived"

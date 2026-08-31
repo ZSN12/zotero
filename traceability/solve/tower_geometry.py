@@ -560,6 +560,7 @@ def expand_4_face_symmetry(
     half_width_fn: Optional[Callable[[float], float]] = None,
     crossarm_half_width_fn: Optional[Callable[[float], float]] = None,
     crossarm_ratio: float = 1.3,
+    crossarm_preserve_t: bool = False,
     diaphragm_levels: Optional[List[float]] = None,
     level_source_label: Optional[str] = None,
 ) -> Tuple[NodeMap, List[dict]]:
@@ -665,7 +666,14 @@ def expand_4_face_symmetry(
                 }
             else:
                 # 横担悬臂节点（仅在 Front 和 Back 两面沿 ±X 延伸，保证左右对称且稳固连接主立柱）
-                t_arm = t if abs(t) >= w_arm * 0.9 else (1.0 if t >= 0 else -1.0) * w_arm
+                # S7 生产模式（crossarm_preserve_t=True）：横担桁架内部节点（吊杆、
+                # 斜撑、弦杆断点）的 |t| 分布在 w_gt*1.3 ~ w_arm 之间，全部保留
+                # 真实 t——推到 ±w_arm 会把中间桁架摧毁成两条外缘线。GT 理想化
+                # 路径（默认 False）保持旧行为（端头不足 0.9*w_arm 补到端头）。
+                if crossarm_preserve_t:
+                    t_arm = t
+                else:
+                    t_arm = t if abs(t) >= w_arm * 0.9 else (1.0 if t >= 0 else -1.0) * w_arm
                 return {
                     "_F": (t_arm, +w_gt, z),
                     "_B": (t_arm, -w_gt, z),
@@ -1598,6 +1606,238 @@ def inspect_model_topology(
 # Module 4  语义分类 + 分段缝合
 # --------------------------------------------------------------------------- #
 
+def _theil_sen_fit(
+    zs: Sequence[float],
+    hs: Sequence[float],
+    *,
+    max_pairs: int = 40000,
+) -> Optional[Tuple[float, float]]:
+    """Theil-Sen 稳健线性回归：斜率取所有点对斜率的中位数。
+
+    相比最小二乘，Theil-Sen 对离群点（横担端头、误判的内部竖杆、跨段配准
+    残差）的崩溃点高达 ~29%，适合塔身半宽这种「大多数点在同一直线上、
+    少量点严重偏离」的工程采样场景。
+
+    返回 (intercept, slope)，即 h(z) = intercept + slope * z；点不足返回 None。
+    """
+    n = len(zs)
+    if n < 2:
+        return None
+    # O(n^2) 点对：n 大时均匀降采样，控制计算量（斜率中位数对采样稳健）
+    step = 1
+    while (n // step) * ((n // step) - 1) // 2 > max_pairs and step < n:
+        step += 1
+    idx = list(range(0, n, step))
+    if idx[-1] != n - 1:
+        idx.append(n - 1)
+
+    slopes: List[float] = []
+    for a in range(len(idx)):
+        za, ha = zs[idx[a]], hs[idx[a]]
+        for b in range(a + 1, len(idx)):
+            zb, hb = zs[idx[b]], hs[idx[b]]
+            dz = zb - za
+            if abs(dz) < 1e-6:
+                continue
+            slopes.append((hb - ha) / dz)
+    if not slopes:
+        return None
+    slopes.sort()
+    k = slopes[len(slopes) // 2]
+    # 截距取中位数（同样稳健）
+    inter = sorted(h - k * z for z, h in zip(zs, hs))
+    b0 = inter[len(inter) // 2]
+    return b0, k
+
+
+def _fit_taper_profile(
+    z_pts: Sequence[float],
+    hw_pts: Sequence[float],
+    *,
+    inlier_tol_mm: float = 100.0,
+    min_inlier_ratio: float = 0.85,
+    min_z_coverage: float = 0.75,
+    max_rounds: int = 3,
+    debug: bool = False,
+) -> Optional[Callable[[float], float]]:
+    """把分箱半宽样本稳健回归成直线锥体 hw(z) = b + k*z（S7 锥体重建）。
+
+    步骤（2026-08-31 v2：自底向上 + 迭代剔除横担离群箱）：
+        1. 剔除「无主腿箱」：样本值低于全体中位 50% 的箱视为内部竖杆/噪声；
+        2. 迭代收敛（最多 max_rounds 轮）：
+             a. Theil-Sen 回归（斜率中位数，崩溃点 ~29%）；
+             b. 剔除**正残差**（hw 高于回归线）超过 inlier_tol_mm 的箱——
+                塔头横担外伸（p85 分箱值 900~2200mm）只会把分箱值推高，
+                不会推低；负残差箱（腿内缩/采样缺陷）一并剔除；
+             c. 若无箱被剔除则收敛；
+        3. 物理约束 k <= 0（四棱台半宽随标高只减不增）；
+        4. **内点比例**一致性检验（在剔除后的样本上）：残差 <= inlier_tol_mm
+           的占比须 >= min_inlier_ratio，否则判为非单一锥体（变坡/塔头收窄），
+           返回 None 让调用方回退 monotone 分段法。
+
+    v1 教训（为什么必须迭代剔除）：横担箱是「高侧」单边离群，Theil-Sen 斜率
+    中位数虽稳，但截距会被横担箱拉高 ~50mm，且内点比例检验把横担箱算进
+    分母——v1 在真实 JC1 输入上因 75% < 85% 而误回退。先剔横担箱再回归，
+    内点检验只评估塔身箱，两步都干净。
+
+    返回闭包；任一步失败返回 None。
+    """
+    n = len(z_pts)
+    if n < 4:
+        return None
+
+    med = sorted(hw_pts)[n // 2]
+    if med <= 0:
+        return None
+    zs: List[float] = []
+    hs: List[float] = []
+    for z, h in zip(z_pts, hw_pts):
+        if h >= med * 0.5:
+            zs.append(float(z))
+            hs.append(float(h))
+    if len(zs) < 4:
+        return None
+
+    b0, k = 0.0, 0.0
+    for _round in range(max_rounds):
+        fit = _theil_sen_fit(zs, hs)
+        if fit is None:
+            return None
+        b0, k = fit
+        # 剔除高侧离群箱（横担）+ 低侧离群箱（采样缺陷）
+        new_zs: List[float] = []
+        new_hs: List[float] = []
+        removed = 0
+        for z, h in zip(zs, hs):
+            r = h - (b0 + k * z)
+            if abs(r) > inlier_tol_mm:
+                removed += 1
+                continue
+            new_zs.append(z)
+            new_hs.append(h)
+        if removed == 0 or len(new_zs) < 4:
+            break
+        zs, hs = new_zs, new_hs
+
+    # 物理约束：塔身随标高收缩。k>0（向上变宽）说明采样被污染，判失败。
+    if k > 0:
+        return None
+
+    # 覆盖率检验（变坡检测）：剔除后样本须铺满输入 z 跨度的 min_z_coverage。
+    # 两段式变坡塔：上段整段被当离群剔除（覆盖 ~57%<75%）→ 拒绝拟合回退
+    # monotone；JC1 真实输入：横担箱只占 ~12% → 覆盖 ~88% 通过。
+    z_span_in = max(z_pts) - min(z_pts)
+    z_span_fit = (max(zs) - min(zs)) if len(zs) >= 2 else 0.0
+    if z_span_in > 0 and z_span_fit / z_span_in < min_z_coverage:
+        if debug:
+            print(f"[taper] 回退：z 覆盖率 {z_span_fit/z_span_in:.1%} < "
+                  f"{min_z_coverage:.0%}（剔除段过大，疑似变坡/两段式塔身）")
+        return None
+
+    resid = [abs(h - (b0 + k * z)) for z, h in zip(zs, hs)]
+    inliers = sum(1 for r in resid if r <= inlier_tol_mm)
+    ratio = inliers / len(resid) if resid else 0.0
+    if ratio < min_inlier_ratio:
+        if debug:
+            print(f"[taper] 回退：内点比例 {ratio:.1%} < {min_inlier_ratio:.0%}"
+                  f"（残差 p90={sorted(resid)[int(len(resid)*0.9)]:.0f}mm "
+                  f"max={max(resid):.0f}mm）疑似变坡")
+        return None
+
+    def half_width_taper(z: float, _b: float = b0, _k: float = k) -> float:
+        return max(1.0, _b + _k * float(z))
+
+    return half_width_taper
+
+
+def detect_crossarm_layers_from_face(
+    nodes: NodeMap,
+    bars: List[dict],
+    body_line_fn: Callable[[float], float],
+    *,
+    crossarm_ratio: float = 1.5,
+    min_arm_mm: float = 700.0,
+    cluster_gap_mm: float = 2000.0,
+    layer_span_mm: float = 750.0,
+) -> Tuple[Optional[Callable[[float], float]], Dict[str, object]]:
+    """S7 生产横担层检测：从立面证据找塔头横担外伸，替代 GT 注入。
+
+    背景：四面展开 face_maps 用 crossarm_half_width_fn(z)>0 判定横担层。生产
+    路径此前传 None——塔头所有节点（含横担外伸 |t| 至 2200mm 的弦杆）被
+    |t|>=0.85*w_gt 判为主腿角柱、硬吸附到塔身体半宽（实测 1048mm 平台），
+    横担几何被系统性摧毁。GT 路径用 gt_crossarm_half_width（塔头三层
+    30000/33500/33850 → 2200/1900/1134）；本函数从 DXF 证据重建同型函数。
+
+    判据（塔头宽节点 z 链聚类，v2——p90 分箱在稀疏塔头会碎裂成 6 假层）：
+        1. 收集全部杆件端点 (z, |t|)（横担弦杆是水平杆，必须含非竖直杆）；
+        2. 「宽节点」：|t| > max(body_line(z)*crossarm_ratio, min_arm_mm)
+           ——身体节点 |t| 至多到腿线附近（1.0~1.05×），横担节点跳到 2~4×；
+        3. 宽节点按 z 排序成链，相邻 z 间距 <= cluster_gap_mm 归入同一层
+           （横担层间由吊杆/桁架竖杆相连，层间距实测 <2000mm，而身体区
+           的宽节点根本不存在，链只在塔头内部生长）；
+        4. 层的 z 范围 = 链范围 ± layer_span_mm（覆盖层上下桁架节点），
+          横担外伸 = 层内最大 |t|；
+        5. 返回闭包：z 落在层范围内返回该层外伸，否则 0。
+
+    功能语义（为什么允许宽层）：crossarm_half_width>0 只是打开 face_maps 的
+    横担分支；真正的分选门是 |t| > w_gt*1.3（expand 参数 crossarm_ratio）。
+    层范围只要罩住所有宽节点，宽节点即保留真实 t（配 crossarm_preserve_t），
+    塔头主腿（|t|≈w_gt）仍走身体分支吸附到锥线。z 归一化在塔头的既有畸变
+    （证据层位 vs GT 层位差 +2250/-750/-350）不因本函数而放大。
+
+    返回 (crossarm_half_width_fn 或 None, 报告 dict)。检测不到层返回 (None, ...)，
+    调用方保持旧行为（塔头按身体处理）。
+    """
+    if not nodes or not bars or body_line_fn is None:
+        return None, {"layers": []}
+
+    wide: List[Tuple[float, float]] = []
+    for b in bars:
+        for nid in (b.get("from"), b.get("to")):
+            p = nodes.get(nid)
+            if p is None:
+                continue
+            z, t = float(p[2]), abs(float(p[0]))
+            if t <= 1e-6:
+                continue
+            body_w = max(1.0, float(body_line_fn(z)))
+            if t > max(body_w * crossarm_ratio, min_arm_mm):
+                wide.append((z, t))
+
+    if not wide:
+        return None, {"layers": []}
+
+    wide.sort(key=lambda wt: wt[0])
+
+    # z 链聚类
+    groups: List[List[Tuple[float, float]]] = [[wide[0]]]
+    for z, t in wide[1:]:
+        if z - groups[-1][-1][0] <= cluster_gap_mm:
+            groups[-1].append((z, t))
+        else:
+            groups.append([(z, t)])
+
+    layers: List[Dict[str, float]] = []
+    for grp in groups:
+        z_lo = grp[0][0] - layer_span_mm
+        z_hi = grp[-1][0] + layer_span_mm
+        arm = max(t for _, t in grp)
+        layers.append({"z_lo": z_lo, "z_hi": z_hi, "arm_mm": arm,
+                       "z_center": (z_lo + z_hi) / 2.0,
+                       "n_wide_nodes": len(grp)})
+
+    def crossarm_half_width(z: float) -> float:
+        for lyr in layers:
+            if lyr["z_lo"] <= z <= lyr["z_hi"]:
+                return float(lyr["arm_mm"])
+        return 0.0
+
+    return crossarm_half_width, {
+        "layers": layers,
+        "n_wide_nodes": len(wide),
+    }
+
+
 def fit_tower_half_width_from_face(
     nodes: NodeMap,
     bars: List[dict],
@@ -1606,6 +1846,8 @@ def fit_tower_half_width_from_face(
     percentile: float = 85.0,
     bin_mm: float = 250.0,
     min_leg_len_mm: float = 2500.0,
+    method: str = "monotone",
+    taper_max_residual_mm: float = 150.0,
 ) -> Optional[Callable[[float], float]]:
     """从单立面图拟合塔身半宽 half_width(z)（生产路径，不使用 GT）。
 
@@ -1632,18 +1874,37 @@ def fit_tower_half_width_from_face(
     塔身四棱台为正四边形截面，任意标高 Z 处立面半宽 = 侧面半宽，同一 half_width(z)
     同时用于 X/Y。无法拟合时返回 None，调用方必须 review_required，不得退回 abs(t)。
 
+    **S7 锥体重建（2026-08-31）**：新增 `method="taper"`。实测 GT 塔身是严格的
+    直线锥体（线性拟合残差 max 31mm、中位 4mm），而 `"monotone"` 实测输出是
+    「分段常数 + 单调包络」，存在两个致命缺陷：
+
+        1. `min_leg_len_mm=2500` 长度门禁把已按节间切分（~1m/段）的主腿全部
+           剔除，触发 `any_vertical_pts` 回退，85 分位被内部竖杆（|x|≈0~50）
+           的众多端点拉低；
+        2. `running_min` 单调包络一旦在某标高采到被污染的低值，会把它之后
+           **所有高度**压到该值，形成平台段（实测 z=7000~12000 半宽恒定
+           1827mm，GT 应为 2274→1922mm，偏差 350~450mm）。
+
+    `"taper"` 改为：分箱取 95 分位 → 剔除无主腿的低值箱 → Theil-Sen 稳健回归
+    hw(z) = b + k*z（k<=0 强制收缩）。单一离群点无法再污染整条曲线，且能外推
+    到采样稀疏的标高区间。若回归残差中位 > taper_max_residual_mm（可能非单一
+    锥体/存在变坡），自动回退 `"monotone"` 并保留旧行为。
+
     返回闭包在 z 超出采样范围时夹紧到边界值。
     """
     if not nodes or not bars:
         return None
 
-    # 1. 识别真主腿候选：近竖直 + 通长（≥ min_leg_len_mm）。
-    #    内部竖杆（|x|≈0~50）与节点板短杆（<2.5m）被长度门禁剔除，不再污染采样。
-    #    长度门禁是自适应的：若没有任何杆件达到阈值（小型/测试模型），回退到
-    #    「全部近竖直杆件」，保证不会因阈值过严返回 None。
+    # 1. 采集近竖直杆件样本：**沿杆件插值**（S7 v4，2026-08-31）。
+    #    v1~v3 的教训：只采端点时，节间化主腿（~1m/段）的端点只落在节间
+    #    边界——250mm 箱里只有 1/4 的箱有腿端点，中间箱完全无腿样本，p85
+    #    落到内部竖杆（实测 z=9250 箱 p85=1054 vs 腿线 2014）；而「偏好
+    #    ≥min_leg_len 通长腿」在 JC1 上恰好选中 6 根幽灵长腿（21~27m 错误
+    #    合并链），整段塔身无样本。v4：每根近竖直杆在其跨越的**每个箱心**
+    #    线性插值 |x|（腿是直线，插值即真值），每个箱恒有腿线样本；幽灵
+    #    长腿的插值点每箱至多 1~2 个，被分箱上分位压制。min_leg_len_mm
+    #    保留为兼容参数，不再参与采样选择。
     vertical_pts: List[Tuple[float, float]] = []
-    long_legs: List[Tuple[float, float]] = []
-    any_vertical_pts: List[Tuple[float, float]] = []
     for b in bars:
         f = nodes.get(b.get("from"))
         t = nodes.get(b.get("to"))
@@ -1651,29 +1912,26 @@ def fit_tower_half_width_from_face(
             continue
         dx = float(t[0]) - float(f[0])
         dz = float(t[2]) - float(f[2])
-        L = math.hypot(dx, dz)
-        if L <= 1e-9:
+        if abs(dz) <= 1e-9:
             continue
         incl = abs(math.degrees(math.atan2(abs(dz), abs(dx))))
         if incl < leg_min_incl:
             continue
-        any_vertical_pts.append((float(f[2]), abs(float(f[0]))))
-        any_vertical_pts.append((float(t[2]), abs(float(t[0]))))
-        if L >= min_leg_len_mm:
-            long_legs.append((float(f[2]), abs(float(f[0]))))
-            long_legs.append((float(t[2]), abs(float(t[0]))))
+        z0, z1 = float(f[2]), float(t[2])
+        x0, x1 = float(f[0]), float(t[0])
+        lo, hi = (z0, z1) if z0 <= z1 else (z1, z0)
+        k_lo = int(math.ceil(lo / bin_mm - 1e-9))
+        k_hi = int(math.floor(hi / bin_mm + 1e-9))
+        for k in range(k_lo, k_hi + 1):
+            zc = k * bin_mm
+            frac = (zc - z0) / (z1 - z0)
+            xi = x0 + frac * (x1 - x0)
+            vertical_pts.append((zc, abs(xi)))
 
-    if len(long_legs) >= 4:
-        vertical_pts = long_legs
-    elif len(any_vertical_pts) >= 4:
-        # 回退：无通长主腿（小型模型），退回全部近竖直杆件（旧行为，兼容测试）
-        vertical_pts = any_vertical_pts
-    else:
+    if len(vertical_pts) < 4:
         return None
 
     # 2. 分箱取上分位数（抗内部竖杆污染）。
-    #    箱内上分位数：主腿端点（大 |x|）会占上分位，内部竖杆（小 |x|）不会
-    #    拉低它——这是对旧 per-z median 的核心修正。
     bins: Dict[int, List[float]] = {}
     for z, hw in vertical_pts:
         key = int(round(z / bin_mm))
@@ -1695,6 +1953,14 @@ def fit_tower_half_width_from_face(
             hw = hw_pts[0]
             return (lambda z, hw=hw: hw) if hw > 0 else None
         return None
+
+    # 2b. S7 锥体重建：Theil-Sen 稳健回归（可选，method="taper"）
+    if method == "taper":
+        fitted_taper = _fit_taper_profile(
+            z_pts, hw_pts, inlier_tol_mm=taper_max_residual_mm)
+        if fitted_taper is not None:
+            return fitted_taper
+        # 内点比例不足（疑似变坡）/ 拟合失败 → 落到 monotone 旧路径（下方继续）
 
     # 3. 物理单调约束：塔四棱台半宽随 z 递减（从底到顶）。对「底→顶」方向做
     #    后向累积 min（每个点取「到当前为止的最小值」），等价于「只允许递减」。
