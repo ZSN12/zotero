@@ -388,6 +388,11 @@ def expand_4_face_symmetry_model(
                 snapped_nodes, snapped_bars, panel_levels,
                 half_width_fn=half_width_fn,
             )
+            # P3 复核收尾：节间守恒审计落盘（drawing_file 属性，供验收
+            # 与 diff 复核），原实现返回值被丢弃未挂出
+            _df_sub = model.components.get("drawing_file")
+            if _df_sub is not None and _sub_rep:
+                _df_sub.properties["leg_subdivision_audit"] = _sub_rep
 
     # Phase 3（P3.2/P3.3）：评分制节间 X 交叉重建。保守参数默认关闭，
     # 须 overlay 显式开启（panel_cross_reconstruct=true）。三层评分：
@@ -737,6 +742,9 @@ def expand_4_face_symmetry_model(
             "level_source": b.get("level_source"),
             "source_handles": b.get("source_handles"),
             "diagonal_kind": b.get("diagonal_kind"),
+            # P4：底段参数化结构分类（parametric_leg / parametric_cross），
+            # viewer 分组渲染 + 免责声明的数据面
+            "parametric_struct": b.get("parametric_struct"),
             "generated_4face": True,
             "solve_status": "solved",
             # 证据链

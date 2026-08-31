@@ -242,6 +242,8 @@ const ORIGIN_GROUPS = {
   assisted:   { label: '辅助重建', color: '#3f6fd8', origins: ['diaphragm_reconstructed', 'panel_subdivision'] },
   stitch:     { label: '拼接',   color: '#d8b62a', origins: ['collinear_stitch'] },
   derived:    { label: '派生',   color: '#5a6068', origins: ['derived_4face'] },
+  // P4：底段参数化外推（z<6500 无图纸来源）——半透明紫，图例带免责声明
+  parametric: { label: '参数化底段', color: '#a855f7', origins: ['derived_parametric_base'] },
 };
 const originToGroup = {};
 for (const [g, def] of Object.entries(ORIGIN_GROUPS))
@@ -253,6 +255,10 @@ const MATS = {
   assisted:   new THREE.MeshStandardMaterial({ color: 0x3f6fd8, metalness: 0.55, roughness: 0.45 }),
   stitch:     new THREE.MeshStandardMaterial({ color: 0xd8b62a, metalness: 0.70, roughness: 0.35 }),
   derived:    new THREE.MeshStandardMaterial({ color: 0x5a6068, metalness: 0.15, roughness: 0.85 }),
+  // P4：参数化底段——半透明紫（结构分类 parametric_leg/cross 仅示意，
+  // 非图纸识别），不遮挡上层图纸来源构件
+  parametric: new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.20, roughness: 0.70,
+    transparent: true, opacity: 0.55, depthWrite: false }),
   galvanized: new THREE.MeshStandardMaterial({ color: 0xb0b6c0, metalness: 0.85, roughness: 0.40,
     emissive: 0x333a45, envMapIntensity: 1.8 }),   // 任务书钉死 0.85/0.4；emissive 兜底大平面反射暗区发黑
   darksteel:  new THREE.MeshStandardMaterial({ color: 0x262a31, metalness: 0.60, roughness: 0.55 }),
@@ -266,6 +272,8 @@ const ROLE_LABELS = { LEG: '主腿', DIAG: '斜材', HORIZ: '水平材', CROSS: 
 const ORIGIN_LABELS = {
   dxf_geom: 'DXF 直接识别', diaphragm_reconstructed: '横隔重建（标高辅助）',
   panel_subdivision: '主腿节间化', collinear_stitch: '共线拼接', derived_4face: '四面派生展示',
+  // P4：底段参数化外推（免责声明数据面）
+  derived_parametric_base: '参数化外推（无图纸来源，示意性补全）',
 };
 
 function sheetOf(cid) {
@@ -723,14 +731,25 @@ function renderLegend() {
     el.appendChild(d);
   };
   if (state.mode === 'model') {
-    for (const [g, def] of Object.entries(ORIGIN_GROUPS))
+    let hasParametric = false;
+    for (const [g, def] of Object.entries(ORIGIN_GROUPS)) {
+      if (g === 'parametric' && Object.values(ATTRS).some(a => a.group === 'parametric')) hasParametric = true;
       item(def.label, def.color, state.origins.has(g), () => {
         state.origins.has(g) ? state.origins.delete(g) : state.origins.add(g);
         syncCheckboxes(); applyFilters();
       });
+    }
     item('复核', '#ff2828', state.review, () => {
       state.review = !state.review; syncCheckboxes(); applyFilters();
     });
+    // P4：底段参数化外推免责声明（存在 parametric 杆才显示）
+    if (hasParametric) {
+      const note = document.createElement('span');
+      note.className = 'note';
+      note.style.cssText = 'display:block;margin-top:4px;border-top:1px solid #333;padding-top:4px;max-width:430px';
+      note.textContent = '⚠ 参数化底段（z<6500）：图纸无底段来源，主腿/交叉按锥线外推示意（parametric_leg/parametric_cross），非图纸识别结果';
+      el.appendChild(note);
+    }
   } else if (state.mode === 'diff') {
     item('新增', '#28c828', state.diffGroups.has('added'), () => toggleDiff('added'));
     item('删除', '#e63c3c', state.diffGroups.has('removed'), () => toggleDiff('removed'));
