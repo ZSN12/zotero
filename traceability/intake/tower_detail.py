@@ -138,9 +138,19 @@ def extract_detail_connections(
     dxf_path: str | Path,
     overlay: Optional[str | Path | dict] = None,
 ) -> Dict[str, Any]:
-    """从大样视图区域抽取节点板与螺栓群，写入 model 并注入验算规则。"""
-    detail_regions = [r for r in regions if r.get("kind") == "detail"] or list(regions)
-    report: Dict[str, Any] = {"plates": 0, "bolt_groups": 0, "rules": []}
+    """从大样视图区域抽取节点板与螺栓群，写入 model 并注入验算规则。
+
+    仅处理 kind="detail" 的视图区域。立面图（front/elevation 等）不在此列——
+    2026-08-31 实测教训：04/05/06/07 分段立面图因文件名规则被判 node_detail，
+    旧版 fallback `or list(regions)` 会把整个 front 区域（含材料表）当大样处理，
+    BOM 表中的螺栓条目（如 '9M16X40'）被当作孔位标注、表格符号圆被抓为孔，
+    产生 113 个必然失败的假 bolt_group 规则（孔间距 2.5mm、孔在轮廓外）。
+    无 detail 区域时直接返回空报告（该图无节点大样是诚实结论）。
+    """
+    detail_regions = [r for r in regions if r.get("kind") == "detail"]
+    report: Dict[str, Any] = {"plates": 0, "bolt_groups": 0, "rules": [], "skipped_no_detail_region": not detail_regions}
+    if not detail_regions:
+        return report
 
     for idx, region in enumerate(detail_regions):
         title = str(region.get("title") or f"{stem} detail")

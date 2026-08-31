@@ -1667,13 +1667,18 @@ def extract_tower_from_dxf(
     df.properties["view_kinds"] = sorted(view_kinds)
 
     # M3：节点大样（03+ 图纸）→ 节点板 + 螺栓群（Gap 2 主链接入）
+    # 注意：仅当 overlay 声明了 kind="detail" 区域才提取。04-07 虽按文件名
+    # 判为 node_detail，但 overlay 已声明为 front 立面（无 detail 区域），
+    # 不得把 front 区域（含材料表）当大样提取（2026-08-31 假 bolt_group 事故：
+    # BOM 螺栓条目被当孔位标注，产生 113 个必然失败的假验算规则）。
     if drawing_kind["kind"] == "node_detail":
-        detail_regions = [r for r in regions if r.get("kind") == "detail"] or regions
-        from .tower_detail import extract_detail_connections
+        detail_regions = [r for r in regions if r.get("kind") == "detail"]
+        if detail_regions:
+            from .tower_detail import extract_detail_connections
 
-        extract_detail_connections(
-            model, msp, detail_regions, stem, dxf_path, overlay=layer_map_path,
-        )
+            extract_detail_connections(
+                model, msp, detail_regions, stem, dxf_path, overlay=layer_map_path,
+            )
 
     return model
 
