@@ -6,6 +6,8 @@ web/demo/35A1-JC1/latest_deliver/，供 compare.html fetch。
 独立于主管线（主管线每次 run 覆盖 tower_from_dxf.glb，与本脚本无交集）。
 
 清单（核心必拷）：
+    version.json           P0 版本指纹（run_id/git_sha/model_sha/generated_at/计数），
+                           viewer 顶部运行信息条 + 浏览器端 SHA 实测校验的数据源
     skeleton.glb            当前骨架（L 截面实体，provenance 五色）
     skeleton.bar_map.json   → bar_map.json（component_id ↔ role/origin 权威映射；
                             Phase 6.4：同步时读 model.json 把 section 并进每条记录，
@@ -18,8 +20,13 @@ web/demo/35A1-JC1/latest_deliver/，供 compare.html fetch。
 清单（可选，缺失只警告不失败）：
     diff.glb / diff_report.json   （scripts/generate_diff_glb.py 产物）
 
+P0 行为：
+    * 清单外旧文件会被清理（--no-prune 关闭）——历史截图/旧产物不再混进网页资产，
+      「到底是不是新模型」由清单 + version.json 唯一决定；
+    * 拷贝后逐文件复算 SHA-256（src vs dst），不一致进 warnings（防止拷贝损坏）。
+
 用法：
-    python3 scripts/sync_demo_assets.py [--src DIR] [--dst DIR]
+    python3 scripts/sync_demo_assets.py [--src DIR] [--dst DIR] [--no-prune]
 """
 from __future__ import annotations
 
@@ -43,6 +50,7 @@ def _section_re():
 
 # (源文件名, 目标文件名, 是否必需)
 ASSET_MANIFEST: List[Tuple[str, str, bool]] = [
+    ("version.json", "version.json", True),
     ("skeleton.glb", "skeleton.glb", True),
     ("skeleton.bar_map.json", "bar_map.json", True),
     ("model.json", "model.json", True),
@@ -80,12 +88,43 @@ def merge_section_into_bar_map(bar_map: List[dict], model: dict) -> List[dict]:
     return out
 
 
-def sync_assets(src_dir: Path, dst_dir: Path) -> Dict[str, List[str]]:
-    """按清单同步。返回 {"copied": [...], "skipped_optional": [...]}。
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _prune_stale(dst_dir: Path, keep: set) -> List[str]:
+    """删除 dst 中不在清单内的文件（P0：历史产物不再混进网页资产目录）。
+
+    只删文件不动目录结构，最后清掉空目录。返回被删除的相对路径列表。
+    """
+    removed: List[str] = []
+    for p in sorted(dst_dir.rglob("*")):
+        if p.is_file():
+            rel = p.relative_to(dst_dir).as_posix()
+            if rel not in keep:
+                p.unlink()
+                removed.append(rel)
+    for d in sorted(dst_dir.rglob("*"), reverse=True):
+        if d.is_dir() and not any(d.iterdir()):
+            d.rmdir()
+    return removed
+
+
+def sync_assets(src_dir: Path, dst_dir: Path, prune: bool = True) -> Dict[str, List[str]]:
+    """按清单同步。返回 {"copied": [...], "skipped_optional": [...],
+    "pruned": [...], "sha_mismatch": [...], "warnings": [...]}。
 
     必需文件缺失 → FileNotFoundError（管线产物没生成齐就该显式失败）。
     bar_map.json 特殊：不原样拷贝，而是读 model.json 把 section 并进每条记录
     （Phase 6.4）；JSON 结构异常时回退原样拷贝并在 warnings 里说明。
+    version.json 的 sha 字段（model_sha/skeleton_sha）指向 out 源文件，
+    与 dst 拷贝内容一致，无需改写。
     """
     src_dir = Path(src_dir)
     dst_dir = Path(dst_dir)
@@ -96,6 +135,7 @@ def sync_assets(src_dir: Path, dst_dir: Path) -> Dict[str, List[str]]:
     copied: List[str] = []
     skipped: List[str] = []
     warnings: List[str] = []
+    sha_mismatch: List[str] = []
     missing_required: List[str] = []
     for src_name, dst_name, required in ASSET_MANIFEST:
         src = src_dir / src_name
@@ -109,18 +149,36 @@ def sync_assets(src_dir: Path, dst_dir: Path) -> Dict[str, List[str]]:
             merged = _merge_bar_map_or_fallback(src, src_dir / "model.json", warnings)
             if merged is None:
                 shutil.copy2(src, dst_dir / dst_name)
+                _verify_copy(src, dst_dir / dst_name, dst_name, sha_mismatch)
             else:
                 (dst_dir / dst_name).write_text(
                     json.dumps(merged, ensure_ascii=False, indent=1), encoding="utf-8")
         else:
             (dst_dir / dst_name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst_dir / dst_name)
+            _verify_copy(src, dst_dir / dst_name, dst_name, sha_mismatch)
         copied.append(dst_name)
 
     if missing_required:
         raise FileNotFoundError(
             "缺少必需资产（先跑主管线 / generate_diff_glb）：" + ", ".join(missing_required))
-    return {"copied": copied, "skipped_optional": skipped, "warnings": warnings}
+
+    pruned: List[str] = []
+    if prune:
+        keep = {dst for _, dst, _ in ASSET_MANIFEST}
+        pruned = _prune_stale(dst_dir, keep)
+
+    return {"copied": copied, "skipped_optional": skipped, "pruned": pruned,
+            "sha_mismatch": sha_mismatch, "warnings": warnings}
+
+
+def _verify_copy(src: Path, dst: Path, name: str, mismatch: List[str]) -> None:
+    """P0.4：拷贝后复算 SHA，防中途损坏/被并发写覆盖。"""
+    try:
+        if _sha256(src) != _sha256(dst):
+            mismatch.append(name)
+    except OSError as e:
+        mismatch.append(f"{name}（{e}）")
 
 
 def _merge_bar_map_or_fallback(bar_map_path: Path, model_path: Path,
@@ -141,9 +199,11 @@ def main(argv: List[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="同步 viewer 数据资产 out/ → web/demo/latest_deliver/")
     ap.add_argument("--src", default=str(DEFAULT_SRC))
     ap.add_argument("--dst", default=str(DEFAULT_DST))
+    ap.add_argument("--no-prune", action="store_true",
+                    help="不清理清单外的旧文件（默认清理，防历史产物混入）")
     args = ap.parse_args(argv)
     try:
-        result = sync_assets(Path(args.src), Path(args.dst))
+        result = sync_assets(Path(args.src), Path(args.dst), prune=not args.no_prune)
     except FileNotFoundError as e:
         print(f"[sync_demo_assets] {e}", file=sys.stderr)
         return 2
@@ -152,6 +212,11 @@ def main(argv: List[str] | None = None) -> int:
         print(f"  ✓ {name}")
     for name in result["skipped_optional"]:
         print(f"  ⚠ 可选缺失：{name}（diff 模式暂不可用，跑 scripts/generate_diff_glb.py 生成）")
+    for name in result.get("pruned", []):
+        print(f"  ✗ 已清理旧文件：{name}")
+    if result.get("sha_mismatch"):
+        print(f"  ✗ SHA 不一致（拷贝损坏）：{result['sha_mismatch']}", file=sys.stderr)
+        return 3
     for w in result.get("warnings", []):
         print(f"  ⚠ {w}", file=sys.stderr)
     return 0
