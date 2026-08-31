@@ -121,6 +121,18 @@ def main() -> int:
     if gate.get("reasons"):
         for r in gate["reasons"]:
             print(f"  - {r}")
+    # P0.1 结构化状态链：四个子阶段并列展示，消除「门禁通过但 failed」的
+    # 表面矛盾——几何门禁与证据校验各自独立，failed 必有 failure_reasons。
+    ss = pd.get("stage_status") or {}
+    if ss:
+        print("状态链: " + "  ".join(
+            f"{name}={'ok' if (ss.get(name) or {}).get('ok') else 'NG'}"
+            for name in ("gate", "validation", "export", "evidence")
+        ))
+    for fr in (pd.get("failure_reasons") or []):
+        print(f"  ✗ [{fr.get('code')}] ({fr.get('stage')}) {fr.get('message')}")
+    for rr in (pd.get("review_reasons") or [])[:5]:
+        print(f"  ⚠ [{rr.get('code')}] ({rr.get('stage')}) {rr.get('message')}")
 
     if GT_PATH.exists():
         bom_file = REPO / "examples/external/guowang_35A1/guowang_merged_bom.csv"

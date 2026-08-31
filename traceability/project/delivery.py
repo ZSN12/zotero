@@ -861,6 +861,107 @@ def deliver_project(
         status = "verified"
         delivery_ok = True
 
+    # P0.1（2026-08-31）结构化 failure_reasons：状态三态只回答「多严重」，
+    # 不回答「哪里错」。这里把 has_failed / has_pending 的每个布尔分量展开成
+    # {code, stage, message}，让「门禁通过但 deliver failed」这种表面矛盾
+    # 可解释（几何门禁 OK + 证据校验 FAILED 同时成立是正常组合）。
+    failure_reasons: List[Dict[str, str]] = []
+    if sheet_failures:
+        failure_reasons.append({
+            "code": "SHEET_PARSE_FAILED",
+            "stage": "intake",
+            "message": f"{len(sheet_failures)} 张分册解析失败: "
+                       f"{[s.get('sheet_id') or s for s in sheet_failures[:3]]}",
+        })
+    if geometry_gate_failed:
+        failure_reasons.append({
+            "code": "GEOMETRY_GATE_FAILED",
+            "stage": "geometry_gate",
+            "message": "几何门禁未通过（悬空节点/退化杆/连通分量超限）",
+        })
+    if single_failed:
+        _fr = (harness or {}).get("failed") or []
+        failure_reasons.append({
+            "code": "EVIDENCE_VALIDATION_FAILED",
+            "stage": "harness",
+            "message": f"单模型规则失败: {_fr}",
+        })
+    if proj_failed:
+        _pf = project_harness.get("failed") or []
+        failure_reasons.append({
+            "code": "PROJECT_VALIDATION_FAILED",
+            "stage": "project_harness",
+            "message": f"图册级规则失败: {_pf}",
+        })
+    if assembly_failed:
+        failure_reasons.append({
+            "code": "ASSEMBLY_NOT_CLOSED",
+            "stage": "assembly",
+            "message": "装配接口未闭合（模块间存在超差间隙）",
+        })
+    if export_failed:
+        failure_reasons.append({
+            "code": "GLB_EXPORT_FAILED",
+            "stage": "export",
+            "message": f"GLB 导出失败: {skeleton_glb_error or '门禁未通过'}",
+        })
+    if merged_model is None:
+        failure_reasons.append({
+            "code": "NO_3D_MODEL",
+            "stage": "solve",
+            "message": "空间合并未产出 3D 模型",
+        })
+    elif nodes_solved <= 0:
+        failure_reasons.append({
+            "code": "NO_NODES_SOLVED",
+            "stage": "solve",
+            "message": "3D 合并未解出任何节点",
+        })
+    if bool(assembly_glb_error):
+        failure_reasons.append({
+            "code": "ASSEMBLY_GLB_EXPORT_FAILED",
+            "stage": "export",
+            "message": f"装配 GLB 导出失败: {assembly_glb_error}",
+        })
+    # review_required 的原因（单独登记，不与 failed 混列）
+    review_reasons: List[Dict[str, str]] = []
+    if single_pending:
+        review_reasons.append({
+            "code": "RULES_PENDING",
+            "stage": "harness",
+            "message": f"待复核规则: {(harness or {}).get('pending') or []}",
+        })
+    if proj_pending:
+        review_reasons.append({
+            "code": "PROJECT_RULES_PENDING",
+            "stage": "project_harness",
+            "message": f"图册级待复核: {project_harness.get('pending') or []}",
+        })
+    if merged_model is not None and getattr(merged_model, "degraded", False):
+        review_reasons.append({
+            "code": "DEGRADED_FALLBACK",
+            "stage": "solve",
+            "message": "空间合并走了降级回退路径",
+        })
+    if unresolved_projection_count > 0:
+        review_reasons.append({
+            "code": "UNRESOLVED_PROJECTIONS",
+            "stage": "solve",
+            "message": f"{unresolved_projection_count} 处跨视图投影未匹配",
+        })
+    if half_width_degraded:
+        review_reasons.append({
+            "code": "HALF_WIDTH_DEGRADED",
+            "stage": "geometry_fit",
+            "message": "生产路径半宽拟合失败，四面展开退化到 abs(t) 假深度",
+        })
+    if unsolved_nodes:
+        review_reasons.append({
+            "code": "UNSOLVED_NODES",
+            "stage": "solve",
+            "message": f"{len(unsolved_nodes)} 个节点三轴坐标未解出",
+        })
+
     # P0-3 报告：unsolved_nodes 已在 has_pending 判定前计算（见上方阶段 8.5），
     # 这里只汇总报告，不重复计算。
     unsolved_summary = {
@@ -929,6 +1030,28 @@ def deliver_project(
     delivery = {
         "ok": delivery_ok,
         "status": status,
+        # P0.1 结构化状态链：四个子阶段 ok 并列 + 结构化原因清单。
+        # 「门禁通过但 status=failed」不再矛盾——几何门禁（gate.ok）与证据
+        # 校验（validation.ok）各自独立，failed 必有 failure_reasons 条目。
+        "stage_status": {
+            "gate": {
+                "ok": bool(not geometry_gate_failed),
+                "reasons": (skeleton_gate or {}).get("reasons") or [],
+            },
+            "validation": {
+                "ok": bool(not single_failed and not proj_pending and not single_pending and not proj_failed),
+                "failed_rules": (harness or {}).get("failed") or [],
+                "pending_rules": (harness or {}).get("pending") or [],
+            },
+            "export": {
+                "ok": bool(not export_failed and not assembly_glb_error),
+            },
+            "evidence": {
+                "ok": bool(not sheet_failures and not assembly_failed),
+            },
+        },
+        "failure_reasons": failure_reasons,
+        "review_reasons": review_reasons,
         # 阶段 0.2 GT 隔离：manifest 必须标明是否发生过 GT 对齐。
         # gt_aligned=True 的交付只可用于调试/评测对齐，正式评测应拒绝。
         "gt_aligned": gt_aligned,
