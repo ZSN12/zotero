@@ -797,6 +797,51 @@ def reconstruct_diagonal_topology(
             final_bars.append(b)
     final_bars.extend(gen_bars)
 
+    # P1.4 超驰碎片清扫（2026-08-31 门禁修复）：拓扑重建后，z_window 内
+    # 两端皆 Degree=1 的原始残留杆（族键不在候选集、但几何已被生成杆
+    # 取代的碎片——实测 06/07 残留 bar_64/UNLABELED_3B1/bar_4__split62/
+    # bar_613 等，产生 6 处 genuine dangling）整族撤除。守卫：
+    #   * 仅清 z_window 内的杆（塔尖/横担区不受影响）；
+    #   * 仅当窗口内存在生成杆（重建确实发生）时才清扫；
+    #   * 同族四面拷贝一起删（保持对称）；
+    #   * 计数进 report.superseded_fragments（审计可追溯）。
+    superseded: set = set()
+    if gen_bars and z_window:
+        _zw_lo, _zw_hi = float(z_window[0]), float(z_window[1])
+
+        def _in_window(bd: dict) -> bool:
+            p1 = new_nodes.get(bd.get("from"))
+            p2 = new_nodes.get(bd.get("to"))
+            if p1 is None or p2 is None:
+                return False
+            return (_zw_lo <= float(p1[2]) <= _zw_hi
+                    and _zw_lo <= float(p2[2]) <= _zw_hi)
+
+        _deg: Dict[str, int] = {}
+        for b in final_bars:
+            _deg[b.get("from")] = _deg.get(b.get("from"), 0) + 1
+            _deg[b.get("to")] = _deg.get(b.get("to"), 0) + 1
+        _frag_ids = {
+            str(b.get("id")) for b in final_bars
+            if not b.get("diagonal_topology")          # 只清原始杆
+            and not b.get("diaphragm")
+            and _in_window(b)
+            and _deg.get(b.get("from"), 0) == 1
+            and _deg.get(b.get("to"), 0) == 1
+        }
+        if _frag_ids:
+            _frag_fams = {_family(i) for i in _frag_ids}
+            for b in final_bars:
+                if (not b.get("diagonal_topology")
+                        and not b.get("diaphragm")
+                        and _family(str(b.get("id"))) in _frag_fams):
+                    superseded.add(str(b.get("id")))
+            if superseded:
+                final_bars = [
+                    b for b in final_bars
+                    if str(b.get("id")) not in superseded
+                ]
+
     report = {
         "sheets": list(sheets),
         "z_window": list(z_window) if z_window else None,
@@ -813,6 +858,7 @@ def reconstruct_diagonal_topology(
         ],
         "generated": len(gen_bars),
         "removed_originals": sorted(removed_ids),
+        "superseded_fragments": sorted(superseded),
         "fan_pairs": sum(1 for r in interps if r["kind"] == "fan"),
         "twist_pairs": sum(1 for r in interps if r["kind"] == "twist"),
         "selection": sel_audit,

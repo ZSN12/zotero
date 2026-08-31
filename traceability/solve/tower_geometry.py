@@ -995,6 +995,15 @@ def generate_diaphragms(
         for lv in collapsed:
             cids: List[Optional[str]] = [None, None, None, None]
             new_corn: List[Optional[str]] = [None, None, None, None]
+            # P3.2 修正（2026-08-31 回归归因）：hw_fn 存在时先按半宽锥线
+            # 过滤象限候选——塔头层的径向最大节点是横担外伸端（径向可达
+            # hw 的数倍），盲选会把横担端当横隔角点，随后被
+            # _diaphragm_corners_valid 以 half_width_mismatch 整层跳过
+            # （GT 塔头 30024~36600 六层横隔全灭，horiz_x −19 TP）。
+            # 先剔除 hw±tol 外的节点再取径向最大，塔身角点自然胜出；
+            # 无 hw_fn 时保持旧行为（径向最大）。
+            _hw_lv = (half_width_fn(float(lv))
+                      if half_width_fn is not None else None)
             for ci, (sx, sy) in enumerate(quadrants):
                 cands = [
                     (nid, p) for nid, p in nodes.items()
@@ -1002,6 +1011,17 @@ def generate_diaphragms(
                     and math.copysign(1.0, p[0]) == sx
                     and math.copysign(1.0, p[1]) == sy
                 ]
+                if _hw_lv is not None and _hw_lv > 1e-6 and cands:
+                    _lo, _hi = (
+                        _hw_lv * (1.0 - hw_tol_ratio),
+                        _hw_lv * (1.0 + hw_tol_ratio),
+                    )
+                    _near_hw = [
+                        (nid, p) for nid, p in cands
+                        if _lo <= max(abs(float(p[0])), abs(float(p[1]))) <= _hi
+                    ]
+                    if _near_hw:
+                        cands = _near_hw
                 if cands:
                     nid, p = max(
                         cands, key=lambda np: np[1][0] ** 2 + np[1][1] ** 2
@@ -1078,7 +1098,16 @@ def generate_diaphragms(
 
         # S2b levels 模式：cids 是 (nid, p) 元组——角点 x/y 取证据节点，
         # z 对齐到平台标高（生成新角节点，不动共享节点坐标）。
+        _src_signature: Optional[Tuple[str, ...]] = None
         if levels and isinstance(cids[0], tuple):
+            # P3.2 修正（2026-08-31 回归归因）：levels 模式下 dedup key 的
+            # 「平面身份」用**证据角点签名**（四个象限选中的证据节点 id），
+            # 不用 z_bucket（min_z_gap=2000 合桶）。塔头真实双层平台间距
+            # 776mm（GT 30024/30800）会被合桶误判为重复平面，把第二层
+            # 横隔当 duplicate 删光（22→6 杆残缺层 + Degree=1 悬空）。
+            # 证据签名相同时（噪声层间距 < pick_window 重选同一批角点）
+            # 仍合并——test_diaphragm_dedup 的语义。
+            _src_signature = tuple(sorted(str(c[0]) for c in cids))
             fixed_cids: List[Optional[str]] = []
             for ci, (nid, p) in enumerate(cids):
                 x, y = float(p[0]), float(p[1])
@@ -1173,7 +1202,9 @@ def generate_diaphragms(
             )
             member_type = "edge" if idx < 8 else "cross"
             dedup_key = (
-                z_bucket_by_level[float(z)], region, member_type, endpoint_pair,
+                (_src_signature if _src_signature is not None
+                 else z_bucket_by_level[float(z)]),
+                region, member_type, endpoint_pair,
             )
             survivor = dedup_survivors.get(dedup_key)
             if survivor is not None:

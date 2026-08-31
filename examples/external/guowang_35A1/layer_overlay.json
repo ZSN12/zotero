@@ -1175,7 +1175,7 @@
   "parametric_base_extrapolation": true,
   "parametric_base_z_top": 6500.0,
   "diagonal_topology_reconstruct": true,
-  "diagonal_topology_selection_mode": "p11",
+  "diagonal_topology_selection_mode": "none",
   "diagonal_topology_sheets": [
     "35A1-JC1-05",
     "35A1-JC1-06",
@@ -1183,7 +1183,10 @@
   ],
   "diagonal_topology_sheet_config": {
     "35A1-JC1-06": {
-      "z_window": [11000.0, 17500.0],
+      "z_window": [
+        11000.0,
+        17500.0
+      ],
       "auto_z_window": false
     },
     "35A1-JC1-05": {
@@ -1197,16 +1200,20 @@
     11000.0,
     17500.0
   ],
-  "diagonal_topology_twist_faces": ["f", "l", "r"],
+  "diagonal_topology_twist_faces": [
+    "f",
+    "l",
+    "r"
+  ],
   "diaphragm_max_z_mm": 30000.0,
   "diaphragm_crossarm_margin_mm": 200.0,
   "crossarm_fp_prune": true,
   "crossarm_zone_z_min_mm": 29000.0,
   "crossarm_radial_ratio": 1.3,
-  "diaphragm_depth_filter": true,
+  "diaphragm_depth_filter": false,
   "diaphragm_leg_attach_mm": 500.0,
   "diaphragm_hw_tol_ratio": 0.35,
-  "centerline_geom_filter": true,
+  "centerline_geom_filter": false,
   "centerline_geom_min_len_mm": 80.0,
   "centerline_geom_dim_max_len_mm": 450.0,
   "centerline_geom_dim_angle_tol_deg": 8.0,
@@ -1216,12 +1223,8 @@
       "dim_max_len_mm": 400.0
     }
   },
-  "multiview_hypothesis_sheets": ["35A1-JC1-06"],
-  "mllm_confidence_gate_block_inject": false,
-  "mllm_keep_drop_sheets": [
-    "35A1-JC1-02",
-    "35A1-JC1-04",
-    "35A1-JC1-05",
-    "35A1-JC1-07"
-  ]
+  "multiview_hypothesis_sheets": [
+    "35A1-JC1-06"
+  ],
+  "mllm_confidence_gate_block_inject": false
 }

@@ -38,7 +38,12 @@ def test_legacy_signatures_unchanged():
 def test_degraded_export_and_glb_material_normals(tmp_path):
     report = build(tmp_path, SHEET)
     assert report['bolt_count'] == 56
-    assert set(report['missing']) == {'solid_angle_tower.glb', 'gusset_attached.glb'}
+    # T5 回退目录（out/35A1-JC1-solid）提供 solid_angle_tower.glb 与
+    # gusset_attached.glb 后，装配不再缺件——missing 恒为空、非降级。
+    # （旧断言 set(missing)=={两文件} 是资产尚未生成时的历史行为。）
+    assert report['missing'] == []
+    assert report['degraded'] is False
+    assert set(report['parts']) == {'angle_tower', 'gusset'}
     blob = (tmp_path / 'assembly.glb').read_bytes()
     assert blob[:4] == b'glTF'
     loaded = trimesh.load(tmp_path / 'assembly.glb', force='scene')
@@ -109,8 +114,14 @@ class TestBoltWorldAnchor(unittest.TestCase):
             if not name.startswith("bolt_group"):
                 continue
             rel = g.vertices - self.c
-            axial = rel @ self.n
-            inplane = np.linalg.norm(rel - np.outer(axial, self.n), axis=1)
+            if not np.all(np.isfinite(rel)):
+                self.fail(f"{name}: 非有限顶点（网格生成异常）")
+            # macOS Accelerate BLAS 对极端小/大数值的 matmul 会抛
+            # FP 假警告（divide by zero / overflow / invalid），
+            # 结果本身正确——按已知噪声显式抑制，避免测试输出污染。
+            with np.errstate(all="ignore"):
+                axial = rel @ self.n
+                inplane = np.linalg.norm(rel - np.outer(axial, self.n), axis=1)
             self.assertTrue(np.abs(axial).max() < 80.0, name)      # 层叠沿法向
             self.assertTrue(inplane.max() < 260.0, name)           # 面内在连接区
 

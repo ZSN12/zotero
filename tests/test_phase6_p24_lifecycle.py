@@ -57,15 +57,22 @@ class TestCandidateLifecycle(unittest.TestCase):
 
 class TestGeomMethodResolve(unittest.TestCase):
     def test_keep_drop_sheets_use_centerline(self):
-        ov = REPO / "examples/external/guowang_35A1/layer_overlay.json"
-        self.assertEqual(
-            resolve_geom_method_for_sheet("35A1-JC1-05", ov, mergeable=True),
-            "centerline",
-        )
-        self.assertEqual(
-            resolve_geom_method_for_sheet("35A1-JC1-06", ov, mergeable=True),
-            "auto",
-        )
+        # 不读共享 layer_overlay.json——keep_drop 是运行时调参项（回归
+        # 归因后已关闭），用临时 overlay 锁定 resolver 的映射逻辑本身：
+        # mllm_keep_drop_sheets 命中的分册 → centerline，其余 → auto。
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            ov = Path(td) / "overlay.json"
+            ov.write_text(json.dumps(
+                {"mllm_keep_drop_sheets": ["35A1-JC1-05"]}), encoding="utf-8")
+            self.assertEqual(
+                resolve_geom_method_for_sheet("35A1-JC1-05", ov, mergeable=True),
+                "centerline",
+            )
+            self.assertEqual(
+                resolve_geom_method_for_sheet("35A1-JC1-06", ov, mergeable=True),
+                "auto",
+            )
 
     def test_non_mergeable_uses_ezdxf(self):
         ov = REPO / "examples/external/guowang_35A1/layer_overlay.json"

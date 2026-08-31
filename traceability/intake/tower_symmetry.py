@@ -390,11 +390,19 @@ def expand_4_face_symmetry_model(
         filter_panel_levels_for_diaphragms,
         resolve_diaphragm_z_cap,
     )
-    _z_cap = resolve_diaphragm_z_cap(
-        diaphragm_max_z_mm=spec.get("diaphragm_max_z_mm"),
-        crossarm_layers=_cld_layers or None,
-        crossarm_margin_mm=float(spec.get("diaphragm_crossarm_margin_mm", 200.0)),
-    )
+    # P3.2 修正（2026-08-31 回归归因）：z_cap 只对 DXF 推导层位生效。
+    # GT canonical 层位是权威证据——本塔 GT 在塔头横担区（30024~36600）
+    # 确有 6 个平台层横隔，cap 会误杀（horiz_x 162→143，−19 TP，
+    # 实测见 PRODUCTION_REGRESSION_ANALYSIS.md）。DXF 层位的塔头聚类
+    # 噪声（30300/32600 等漂移簇）仍需要 cap 清理。
+    if level_source == "gt":
+        _z_cap = None
+    else:
+        _z_cap = resolve_diaphragm_z_cap(
+            diaphragm_max_z_mm=spec.get("diaphragm_max_z_mm"),
+            crossarm_layers=_cld_layers or None,
+            crossarm_margin_mm=float(spec.get("diaphragm_crossarm_margin_mm", 200.0)),
+        )
     if _diag_levels and _z_cap is not None:
         _diag_levels, _dia_filter = filter_panel_levels_for_diaphragms(
             _diag_levels, z_cap=_z_cap, exclusive=True)
