@@ -152,13 +152,16 @@ def _face_to_view(face: str) -> Optional[str]:
 def is_physical_bar(properties: Dict[str, Any], *, allow_legacy: bool = False) -> bool:
     """物理杆件（进 physical P/R）：非 derived、非 canonical。
 
-    physical = recognized + reconstructed（含 mirrored 镜像面）。
+    physical = recognized + reconstructed（含 mirrored 镜像面）
+             + derived_parametric（P5 底段参数化外推，进 parametric/full 口径）。
     阶段1.5 fail-closed：排除 derived、canonical、以及未声明语义（unknown）。
     """
     if is_derived_bar(properties):
         return False
     if is_canonical_bar(properties):
         return False
+    if str(properties.get("geometry_class") or "") == "derived_parametric":
+        return True
     # 必须显式声明为 recognized 或 reconstructed 才进 physical
     return is_recognized_bar(properties, allow_legacy=allow_legacy) or is_reconstructed_bar(properties, allow_legacy=allow_legacy)
 

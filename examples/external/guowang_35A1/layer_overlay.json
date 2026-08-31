@@ -1167,5 +1167,7 @@
     "35A1-JC1-05": {
       "tolerance_units": 0.6
     }
-  }
+  },
+  "parametric_base_extrapolation": true,
+  "parametric_base_z_top": 6500.0
 }

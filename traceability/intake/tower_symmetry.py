@@ -420,6 +420,43 @@ def expand_4_face_symmetry_model(
                 "panels": len(_xc_rep.get("panels", [])),
             }
 
+    # P5：底段参数化外推（DXF 无底段图纸，02 图最低节点 z=6643）。
+    # 沿生产拟合半宽锥线外推 z ∈ [0, 6500]（主腿节间 + X 交叉），
+    # 紫色 derived_parametric——只进 parametric 口径（GT 隔离：半宽用
+    # 生产 fit 函数，不读 GT）。overlay 开关 parametric_base_extrapolation。
+    _z_top_pb = spec.get("parametric_base_z_top", 6500.0)
+    if bool(spec.get("parametric_base_extrapolation", False)) and half_width_fn is not None:
+        from ..solve.tower_geometry import (
+            extrapolate_base_segment,
+            leg_chain_extrapolator,
+        )
+        # P5.1 锥线延拓：monotone fit 闭包在低 z 夹紧到采样下界（实测
+        # 2298.5 恒定），底段半宽须用腿线斜率延拓替代——且 expand 的
+        # face_maps 重投影（|t|>=0.85*w_gt → ±w_gt）也用延拓版，否则
+        # 外推节点会被 snap 回夹紧常数。分段闭包：z >= 腿证据下界回落
+        # 原 fit（上段零改变），z < 下界用延拓线。
+        _extrap_fn = leg_chain_extrapolator(
+            snapped_nodes, snapped_bars, base_fn=half_width_fn)
+        _hw_for_base = _extrap_fn if _extrap_fn is not None else half_width_fn
+        _pb_nodes, _pb_bars, _pb_rep = extrapolate_base_segment(
+            snapped_nodes, snapped_bars, _hw_for_base,
+            z_top=float(_z_top_pb),
+        )
+        snapped_nodes.update(_pb_nodes)
+        snapped_bars.extend(_pb_bars)
+        _df_pb = model.components.get("drawing_file")
+        if _df_pb is not None:
+            _df_pb.properties["base_segment_declaration"] = {
+                **_pb_rep,
+                "reason": "DXF 图纸无底段（02 图最低节点 z=6643 > 6500）",
+                "declared_missing": True,
+            }
+        # expand 的 face_maps 重投影（body 节点 |t|>=0.85*w_gt → ±w_gt）
+        # 必须用延拓版半宽，否则外推腿节点会被 snap 回夹紧常数。
+        if _extrap_fn is not None:
+            half_width_fn = _extrap_fn
+            half_width_fitted = True
+
     face_nodes, face_bars = expand_4_face_symmetry(
         snapped_nodes, snapped_bars,
         weld_corner_legs=weld_corner_legs,
@@ -632,8 +669,13 @@ def expand_4_face_symmetry_model(
         #   derived      —— corner_leg / center 轴（纯展示几何）
         #   reconstructed—— 对称展开重建产物（mirrored b/l/r 面 + 横隔 diaphragm）
         #   recognized   —— primary（front）面识别原貌（非派生）
+        # P5 例外：derived_parametric（底段参数化外推）按原 class 透传
+        # ——parametric 口径依赖 geometry_class=derived_parametric 归层
+        # （caliber_of_bar），四向镜像不改变「参数化推断」语义。
         if evidence_status == "derived":
             geometry_class = "derived"
+        elif str(b.get("geometry_class") or "") == "derived_parametric":
+            geometry_class = "derived_parametric"
         elif evidence_status in ("mirrored", "reconstructed"):
             geometry_class = "reconstructed"
         else:

@@ -2957,3 +2957,187 @@ def reconstruct_panel_cross_diagonals(
         "levels_used": len(lv),
         "panels": panels,
     }
+
+
+def leg_chain_extrapolator(
+    nodes: NodeMap,
+    bars: List[dict],
+    base_fn: Optional[Callable[[float], float]] = None,
+) -> Optional[Callable[[float], float]]:
+    """P5.1：底段半宽锥线延拓（从最低腿线证据外推 hw(z)）。
+
+    背景：生产 half_width_fn 是 monotone 闭包——在采样下界以下（35A1-JC1
+    为 z < 6643）夹紧到常数（实测底段恒 2298.5），把参数化外推的腿
+    变成竖直墙（GT 腿实为 2649@z0 → 2202@z6500 锥线，端点差 450mm
+    超匹配容差 → parametric 口径 TP=0）。
+
+    做法：收集近竖直杆（|dz|/L >= 0.98）端点 (z, |x|)，取最低两个
+    不同 z（间隔 > 100mm）的腿点确定延拓线 hw(z) = x0 + s*(z - z0)
+    （s 为锥线斜率，物理约束 s < 0）。
+
+    返回**分段闭包**：z >= z0（腿证据下界）回落 base_fn（原生产拟合，
+    上段行为零改变），z < z0 才用延拓线——避免延拓直线污染有证据区间。
+    base_fn 未提供时全区间用延拓线。找不到合格腿点或斜率非负返回
+    None（调用方回退原 half_width_fn）。
+    """
+    import math as _m
+
+    leg_pts: List[Tuple[float, float]] = []  # (z, |x|)
+    for b in bars:
+        f = nodes.get(b.get("from"))
+        t = nodes.get(b.get("to"))
+        if f is None or t is None:
+            continue
+        dx = abs(float(t[0]) - float(f[0]))
+        dz = abs(float(t[2]) - float(f[2]))
+        L = _m.hypot(dx, dz, abs(float(t[1]) - float(f[1])))
+        if L <= 1e-9 or dz / L < 0.98:
+            continue  # 只取近竖直腿
+        for p in (f, t):
+            leg_pts.append((float(p[2]), abs(float(p[0]))))
+    if len(leg_pts) < 2:
+        return None
+    leg_pts.sort()
+    # 最低的两个不同 z 的腿点决定延拓线
+    z0, x0 = leg_pts[0]
+    for z1, x1 in leg_pts[1:]:
+        if z1 - z0 > 100.0:
+            s = (x1 - x0) / (z1 - z0)  # 锥线斜率（随 z 增大收窄 → s<0）
+            if s >= 0:
+                return None
+
+            def _hw(zz: float, _x0: float = x0, _z0: float = z0,
+                    _s: float = s,
+                    _base: Optional[Callable[[float], float]] = base_fn) -> float:
+                if zz >= _z0 and _base is not None:
+                    return float(_base(zz))
+                return max(50.0, _x0 + _s * (zz - _z0))
+            return _hw
+    return None
+
+
+
+def extrapolate_base_segment(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    *,
+    z_top: float = 6500.0,
+    panel_step_mm: float = 1000.0,
+    add_cross_diagonals: bool = True,
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """P5：底段参数化外推（DXF 无底段图纸的显式补全，紫色 derived_parametric）。
+
+    背景（35A1-JC1 实测）：02 图最低图纸节点 z=6643，GT 底段 z ∈ [0, 6500]
+    有 120 根杆（主腿 40 + 斜材 80）零覆盖。底段是规则四棱台（腿沿锥线
+    hw(z) 收窄），参数化外推是唯一诚实补全：
+        * 主腿：沿 ±hw(z) 锥线按 panel_step_mm 节间生成（z=0 塔脚 → z_top）
+        * 交叉斜材：段内 X 交叉（对角腿位连接，与 GT 底段样式一致——
+          GT 斜材全为跨腿位对角连接）
+        * 节点：z=0 处 4 角塔脚节点；每层 ±hw(z) 腿节点
+
+    语义（口径隔离关键）：
+        * geometry_origin="derived_parametric_base"
+        * geometry_class="derived_parametric" → 只进 parametric 口径
+          （caliber_of_bar 已接线），绝不进 pure/reconstructed/level_assisted
+        * evidence_status 不动（保持物理杆资格，进 physical full 口径）
+
+    half_width_fn 必须是生产拟合函数（fit）——GT 半宽只许用于 GT 注入路径
+    的既有旗标，本函数不直接读 GT（隔离红线）。
+
+    返回 (new_nodes, new_bars, report)。new_bars 只含生成杆（调用方合并）。
+    """
+    import math as _m
+
+    new_nodes: NodeMap = {}
+    new_bars: List[dict] = []
+    # 层位：z_top 往下按 panel_step 取整到 z=0
+    levels: List[float] = [0.0]
+    z = panel_step_mm
+    while z < z_top:
+        levels.append(round(z, 1))
+        z += panel_step_mm
+    levels.append(round(float(z_top), 1))
+    levels = sorted(set(levels))
+
+    # P5.1 锥线延拓：half_width_fn 可能是 monotone 闭包（低 z 夹紧到采样
+    # 下界常数——实测 35A1-JC1 底段半宽恒 2298.5）。外推不能依赖它的
+    # 越界行为：leg_chain_extrapolator 用最低腿线斜率向下延拓；找不到
+    # 两腿点才回退 half_width_fn。
+    _extrap = leg_chain_extrapolator(nodes, bars)
+    if _extrap is not None:
+        _hw = _extrap
+    else:
+        _hw = half_width_fn  # type: ignore[assignment]
+
+    def _leg_x(zz: float) -> float:
+        return abs(float(_hw(zz)))
+
+    # 腿节点（4 角 × 每层）：front 面只生成 (x, 0, z) 平面内两腿
+    # （b/l/r 由 4-face 展开镜像——调用方在本函数后接 expand_4_face_symmetry）
+    seq = 900000
+    node_ids: Dict[float, Dict[str, str]] = {}
+    for zz in levels:
+        x = _leg_x(zz)
+        node_ids[zz] = {}
+        for sx in (-1.0, 1.0):
+            nid = f"pbase_{seq}"
+            seq += 1
+            new_nodes[nid] = (round(sx * x, 2), 0.0, round(zz, 1))
+            node_ids[zz][sx] = nid
+
+    # 主腿杆（通长样式，与 GT 底段同构）：每个层起点 z_k 生成
+    # (x_k, z_k) → (x_top, z_top) 通长腿杆——GT 底段实测主腿为
+    # (z_k → 6500) 通长斜杆（非 1000mm 节间柱），k=0..n-1。
+    # 最上层（z_k = z_top 前最后层）与 z_top 的短段也保留。
+    _z_top_lvl = levels[-1]
+    for k in range(len(levels) - 1):
+        z0 = levels[k]
+        for sx in (-1.0, 1.0):
+            new_bars.append({
+                "id": f"pbase_leg_{int(z0)}_{int(_z_top_lvl)}_{'p' if sx > 0 else 'n'}",
+                "from": node_ids[z0][sx],
+                "to": node_ids[_z_top_lvl][sx],
+                "role": "LEG",
+                "geometry_origin": "derived_parametric_base",
+                "geometry_class": "derived_parametric",
+                "level_source": "parametric_extrapolation",
+                "evidence_status": "reconstructed",
+            })
+
+    # 段内 X 交叉斜材（相邻层对角连接，GT 底段样式）
+    if add_cross_diagonals:
+        for k in range(len(levels) - 1):
+            z0, z1 = levels[k], levels[k + 1]
+            new_bars.append({
+                "id": f"pbase_x_{int(z0)}_{int(z1)}_pn",
+                "from": node_ids[z0][-1.0],
+                "to": node_ids[z1][1.0],
+                "role": "CROSS",
+                "geometry_origin": "derived_parametric_base",
+                "geometry_class": "derived_parametric",
+                "level_source": "parametric_extrapolation",
+                "evidence_status": "reconstructed",
+            })
+            new_bars.append({
+                "id": f"pbase_x_{int(z0)}_{int(z1)}_np",
+                "from": node_ids[z0][1.0],
+                "to": node_ids[z1][-1.0],
+                "role": "CROSS",
+                "geometry_origin": "derived_parametric_base",
+                "geometry_class": "derived_parametric",
+                "level_source": "parametric_extrapolation",
+                "evidence_status": "reconstructed",
+            })
+
+    report = {
+        "z_range": [0.0, float(z_top)],
+        "levels": [round(z, 1) for z in levels],
+        "leg_segments": len(levels) - 1,
+        "cross_diagonals": (len(levels) - 1) * 2 if add_cross_diagonals else 0,
+        "leg_topology": "through_to_ztop",
+        "source": "parametric_extrapolation",
+        "half_width_at_base_mm": round(_leg_x(0.0), 1),
+        "half_width_at_top_mm": round(_leg_x(float(z_top)), 1),
+    }
+    return new_nodes, new_bars, report
