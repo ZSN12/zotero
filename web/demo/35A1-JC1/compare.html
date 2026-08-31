@@ -175,7 +175,16 @@ async function fetchJSONRel(url) {
   return r.json();
 }
 function loadGLB(url) {
-  return new Promise((res, rej) => loader.load(url, g => res(g.scene), undefined, rej));
+  return new Promise((res, rej) => loader.load(url, (g) => {
+    // trimesh 导出的 GLB 不带 NORMAL 属性；MeshStandardMaterial 缺法线会渲染成纯黑
+    // （2026-08-31 实测：节点板样例发黑根因）。加载时一次性补算顶点法线。
+    g.scene.traverse(o => {
+      if (o.isMesh && o.geometry && !o.geometry.attributes.normal) {
+        o.geometry.computeVertexNormals();
+      }
+    });
+    res(g.scene);
+  }, undefined, rej));
 }
 const $ = id => document.getElementById(id);
 function setLoading(on, text) { $('loading').style.display = on ? 'block' : 'none'; if (text) $('loading').textContent = text; }
