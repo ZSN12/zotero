@@ -5554,7 +5554,9 @@ def reconstruct_terminal_pair_structure(
             # P3.5j：双倍子系统——塔身上部双层扭转段的高密度层对
             # （(21500,22800)/(22800,24000) GT 每对 28-32 根物理杆，
             # 单套 12 根 multiplicity 不足）。杆数预算约束只开这两对。
-            _mult = 2 if (21500.0 <= z_lo <= 22000.0 and 1200.0 <= gap <= 1400.0) else 1
+            _mult = 2 if (21500.0 <= z_lo <= 22000.0 and 1200.0 <= gap <= 1400.0) else (
+                2 if (22700.0 <= z_lo <= 22900.0 and 1100.0 <= gap <= 1300.0) else 1
+            )
             is_tip = z_lo >= tip_z_min
             gap_lo = tip_min_gap_mm if is_tip else min_gap_mm
             min_x = tip_min_leg_x_mm if is_tip else min_leg_x_mm
