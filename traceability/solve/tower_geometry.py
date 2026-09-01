@@ -1168,6 +1168,13 @@ def generate_diaphragms(
             # front 投影退化（x 同位置零长）无匹配价值）。
             # center 共享节点（同层去重）。
         ]
+        # P3.12：横担支撑环层全宽杆——32700/33500/34200 三层 GT 有
+        # 4 根角到角全宽环梁（L63X5/L40X3）。塔身段层不加（角点
+        # 吸附偏差在高精度口径负收益，实测 @100 -15）。
+        if round(z) in (32700, 33500, 34200):
+            dia_pairs.extend([
+                (cids[0], cids[1]), (cids[2], cids[3]),
+            ])
         node_id_counter += 1
         _center = f"dia_center_{node_id_counter}"
         new_nodes[_center] = (0.0, 0.0, float(z))
