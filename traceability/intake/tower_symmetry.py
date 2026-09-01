@@ -689,7 +689,8 @@ def expand_4_face_symmetry_model(
                     "n_candidates", "n_twist_candidates",
                     "twist_faces", "n_heights",
                     "heights", "interpretations", "generated",
-                    "removed_originals", "fan_pairs", "twist_pairs",
+                    "removed_originals", "centerline_exempted",
+                    "fan_pairs", "twist_pairs",
                     "kchain_pairs", "selection", "candidates", "twist_candidates")
                 if k in _dt_rep
             }
@@ -1165,6 +1166,10 @@ def expand_4_face_symmetry_model(
             "source_file": source_file,
             "geometry_origin": geometry_origin,
             "geometry_class": geometry_class,
+            # P1.1 零损耗透传：source_extractor（centerline_extract 主路径
+            # 证据标记）随杆进入 3D 链——评测口径据此保 pure 语义（合并/
+            # 合成杆不被降层），A1 审计可追溯提取器来源。
+            "source_extractor": b.get("source_extractor"),
             "projection_refs": projection_refs,
             "bar_id_evidence": bar_id_evidence,
             "evidence_status": evidence_status,

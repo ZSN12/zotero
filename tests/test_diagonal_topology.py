@@ -194,6 +194,41 @@ class TestMainEntry(unittest.TestCase):
         ids = {str(b.get("id")) for b in new_bars}
         self.assertIn("35A1-JC1-06__bar_A_front_F", ids)
 
+    def test_centerline_originals_exempt(self):
+        """P1.1 识别证据零销毁：centerline_extract 原杆不被 DT 撤除。
+
+        默认 keep_centerline_originals=True；两套解释共存（原杆 + DT 生成杆）。
+        """
+        nodes, bars = make_model()
+        # 给 A（FULL twist 候选线）打上 centerline 主路径标记
+        for b in bars:
+            if b["id"] == "35A1-JC1-06__bar_A_front_F":
+                b["source_extractor"] = "centerline_extract"
+        _, new_bars, rep = reconstruct_diagonal_topology(
+            nodes, bars, hw, sheets=["35A1-JC1-06"],
+            panel_levels=[14000.0])
+        ids = {str(b.get("id")) for b in new_bars}
+        # A 豁免存活，B（无 centerline 标记）照常撤除
+        self.assertIn("35A1-JC1-06__bar_A_front_F", ids)
+        self.assertNotIn("35A1-JC1-06__bar_B_front_F", ids)
+        # 审计：豁免清单记录
+        self.assertIn("35A1-JC1-06__bar_A_front_F",
+                      rep.get("centerline_exempted") or [])
+        # DT 生成杆照常输出
+        self.assertGreaterEqual(rep["generated"], 1)
+
+    def test_centerline_exemption_off(self):
+        """显式关闭豁免：恢复旧撤除语义（消融/回退入口）。"""
+        nodes, bars = make_model()
+        for b in bars:
+            if b["id"] == "35A1-JC1-06__bar_A_front_F":
+                b["source_extractor"] = "centerline_extract"
+        _, new_bars, _ = reconstruct_diagonal_topology(
+            nodes, bars, hw, sheets=["35A1-JC1-06"],
+            panel_levels=[14000.0], keep_centerline_originals=False)
+        ids = {str(b.get("id")) for b in new_bars}
+        self.assertNotIn("35A1-JC1-06__bar_A_front_F", ids)
+
 
 class TestSelectionP11(unittest.TestCase):
     """P1.1：fan 候选冲突图择优——节拍筛选/同 h 冗余/交叉保险。"""

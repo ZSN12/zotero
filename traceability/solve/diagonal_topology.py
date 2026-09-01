@@ -852,6 +852,8 @@ def reconstruct_diagonal_sheets(
         totals["twist_pairs"] += rep.get("twist_pairs", 0)
         totals["kchain_pairs"] += rep.get("kchain_pairs", 0)
         totals["removed_originals"] += len(rep.get("removed_originals") or [])
+        totals["centerline_exempted"] = totals.get("centerline_exempted", 0) + \
+            len(rep.get("centerline_exempted") or [])
 
     merged = {
         "sheets": [c["sheet"] for c in configs],
@@ -891,6 +893,7 @@ def reconstruct_diagonal_topology(
     twist_span_hi: Optional[float] = None,
     fan_enabled: bool = True,
     beat_tol_mm: Optional[float] = None,
+    keep_centerline_originals: bool = True,
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """斜材拓扑闭环主入口。
 
@@ -904,6 +907,10 @@ def reconstruct_diagonal_topology(
     结构，关掉可消除 64 根 fan 杆中 56 根 FP）。
     beat_tol_mm：per-sheet 节拍容差覆写（None 用默认 450；07 册簇高
     z 偏移使真扇跨度超出默认容差，需要 500+）。
+    keep_centerline_originals：P1.1 识别证据零销毁——source_extractor=
+    centerline_extract 的原始杆不进撤除集（A2-pure 证据本体），DT 生成
+    杆照常输出。两套解释共存，评测 Hungarian 一对一各取所需。实测
+    （2026-09-02 全塔消融）：full TP +27 / pure 杆 90→159 / 门禁 0 悬空。
     """
     # 1. 候选收集（front 面 fan + 多面 twist）
     cands = collect_diagonal_candidates(
@@ -946,9 +953,22 @@ def reconstruct_diagonal_topology(
     removed_ids: set = set()
     fams = {_family(c["bar_id"]) for c in cands}
     fams |= {_family(c["bar_id"]) for c in twist_cands}
+    # P1.1 零损耗透传（Phase 1 管线打通，2026-09-02 实测）：centerline_extract
+    # 主路径的识别杆是 A2-pure 的证据本体——DT 重建是「另一种几何解释」
+    # （3D 螺旋/扭转拓扑），撤除识别原件等于销毁识别证据。豁免规则：
+    # source_extractor=centerline_extract 的杆不进撤除集，DT 生成杆照常
+    # 输出（两套解释共存，Hungarian 一对一各取所需）。实测（06 册消融）：
+    #   全塔 full @500: TP 415→442 (+27)；pure 杆 90→159、TP 14→27；
+    #   06 窗口 pure 7→27 杆；门禁 genuine_dangling_physical 0（无新悬空
+    #   ——复活杆端点恰与 DT 生成杆共享节点层位）。
+    _centerline_exempt: set = set()
     for b in bars:
         if _family(b.get("id")) in fams:
-            removed_ids.add(str(b.get("id")))
+            if (keep_centerline_originals
+                    and str(b.get("source_extractor") or "") == "centerline_extract"):
+                _centerline_exempt.add(str(b.get("id")))
+            else:
+                removed_ids.add(str(b.get("id")))
 
     # 节点解析 + 去重
     new_nodes: NodeMap = dict(nodes)
@@ -1020,6 +1040,7 @@ def reconstruct_diagonal_topology(
             if not b.get("diagonal_topology")          # 只清原始杆
             and not b.get("panel_template_completion")   # S8 K-fan 补全杆保留
             and not b.get("diaphragm")
+            and str(b.get("id")) not in _centerline_exempt  # P1.1 识别证据不销毁
             and _in_window(b)
             and _deg.get(b.get("from"), 0) == 1
             and _deg.get(b.get("to"), 0) == 1
@@ -1030,6 +1051,7 @@ def reconstruct_diagonal_topology(
                 if (not b.get("diagonal_topology")
                         and not b.get("panel_template_completion")
                         and not b.get("diaphragm")
+                        and str(b.get("id")) not in _centerline_exempt
                         and _family(str(b.get("id"))) in _frag_fams):
                     superseded.add(str(b.get("id")))
             if superseded:
@@ -1054,6 +1076,7 @@ def reconstruct_diagonal_topology(
         ],
         "generated": len(gen_bars),
         "removed_originals": sorted(removed_ids),
+        "centerline_exempted": sorted(_centerline_exempt),
         "superseded_fragments": sorted(superseded),
         "fan_pairs": sum(1 for r in interps if r["kind"] == "fan"),
         "twist_pairs": sum(1 for r in interps if r["kind"] == "twist"),
