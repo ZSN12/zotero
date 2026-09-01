@@ -887,6 +887,28 @@ def expand_4_face_symmetry_model(
         if _df is not None:
             _df.properties["collinear_stitch_report"] = dict(_stitch_rep)
 
+    # P3.2 腿杆节间链合并（骨架先行，2026-09-02）：通用 stitch 的
+    # max_single_len=800 中长杆保护对 LEG 恰好反了——实测腿碎片中位
+    # 1005mm/162 根 <1200mm，830/998mm 段全被拒。腿的合并约束应是
+    # 「节间包络」（panel_levels 切分，平台层必断）而非目标杆长——
+    # GT 塔身角柱是环层间 ~3.5m 整段。度数保护：有横隔/斜材挂接的
+    # 中间节点处断链，不制造新悬空。bar_id 剥离（source_bar_ids 留证）。
+    if bool(spec.get("leg_chain_stitch", False)) and panel_levels:
+        from ..solve.tower_geometry import stitch_leg_chains
+        for _b in face_bars:
+            if not _b.get("role"):
+                _b["role"] = roles.get(str(_b.get("id")))
+        face_bars, _lc_rep = stitch_leg_chains(
+            face_nodes, face_bars,
+            panel_levels=list(panel_levels),
+            gap_mm=float(spec.get("leg_chain_stitch_gap_mm", 400.0)),
+            ang_deg=float(spec.get("leg_chain_stitch_ang_deg", 6.0)),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_lc = model.components.get("drawing_file")
+        if _df_lc is not None:
+            _df_lc.properties["leg_chain_stitch_report"] = dict(_lc_rep)
+
     # Phase 3：悬空断裂修复（微型残段清除 + 端点焊接）。
     # 与 snap_dangling_endpoints_local 的关键区别：snap 只在四面展开之前
     # 修 front 面原版，镜像 B/L/R 不继承其节点合并结果——这正是 17 个

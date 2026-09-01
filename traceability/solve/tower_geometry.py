@@ -3488,6 +3488,236 @@ def stitch_collinear_bars(
     }
 
 
+def stitch_leg_chains(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    panel_levels: Optional[Sequence[float]] = None,
+    gap_mm: float = 400.0,
+    ang_deg: float = 6.0,
+    dup_mid_tol_mm: float = 120.0,
+) -> Tuple[List[dict], Dict[str, object]]:
+    """P3.2 腿杆节间链合并（骨架先行）：把同角腿碎片并成节间整段。
+
+    背景（2026-09-02 实测诊断）：模型 LEG 256 实例中位长 1005mm、162 根
+    <1200mm——碎片来自图纸 beat 断点（07 册腿被切成 830/213/998mm 段）。
+    GT 真实塔身角柱是环层之间的 ~3.5m 整段（8500→12000 等）。碎片化
+    既毁渲染观感（塔身乱线），又让 Hungarian 端点匹配失效（1m 碎段 vs
+    3.5m 角柱端点天然偏 1000mm 量级）。
+
+    与 collinear_stitch 的区别（为何另开通道）：
+        * 通用 stitch 的 max_single_len_mm=800「中长杆保护」会把 830/998mm
+          腿段全部拒之门外——那是 DIAG 杆的实测教训，对 LEG 恰好反了；
+        * 通用 stitch max_segments=2 只两两拼，腿链需要全段合并；
+        * 腿合并的正确约束不是「目标杆长 2018」，而是「节间包络」：
+          合并链必须整体落在单一 panel_levels 区间内（平台层必断），
+          与 GT 角柱（环层间整段）结构一致。
+
+    算法：
+        1. 收集 role==LEG（含 corner_leg/derived），按物理角象限分组
+           （sign(中点x), sign(中点y)——四面展开后每角每 z 段恰一根）；
+        2. 组内按 z 排序，同节间 + gap<=gap_mm + 夹角<=ang_deg 连成链；
+        3. 度数保护：中间节点有其他杆（横隔/斜材/DT）挂接处断链——
+           保证不制造新悬空（几何门禁不回退）；
+        4. z 向近重合的平行重复段（同角同段被两视图各画一次）取其一，
+           优先保留 dxf_geom/recognized 证据；
+        5. 合成杆复用链端两端的**现存节点**（from=最低段底节点，
+           to=最高段顶节点）——不新建节点、不吸附漂移，挂接拓扑不丢。
+
+    合成杆语义（与 collinear_stitch 对齐）：
+        bar_id 剥离（UNLABELED，BOM 核验不掺假），source_bar_ids 留
+        证据链；geometry_origin="leg_chain_stitch"；geometry_class 全
+        recognized 才继承 recognized。
+
+    返回 (新 bars 列表, 统计报告)。节点集不变（复用现存节点）。
+    """
+    if not bars or not panel_levels:
+        return list(bars), {"merged_groups": 0, "reason": "no_panel_levels"}
+
+    def _p(nid):
+        q = nodes.get(nid)
+        return (float(q[0]), float(q[1]), float(q[2])) if q else None
+
+    # 节点度数（全图，含非 LEG 杆）——度数保护用
+    node_deg: Dict[str, int] = {}
+    for b in bars:
+        for key in ("from", "to"):
+            nid = b.get(key)
+            if nid:
+                node_deg[nid] = node_deg.get(nid, 0) + 1
+
+    legs: List[dict] = []
+    skipped: Dict[str, int] = {}
+    for b in bars:
+        if str(b.get("role") or "").upper() != "LEG":
+            continue
+        if b.get("diaphragm"):
+            skipped["diaphragm"] = skipped.get("diaphragm", 0) + 1
+            continue
+        a, c = _p(b.get("from")), _p(b.get("to"))
+        if a is None or c is None:
+            continue
+        legs.append(dict(b, _a=a, _c=c))
+    if len(legs) < 2:
+        return list(bars), {"merged_groups": 0, "n_legs": len(legs)}
+
+    # 节间定位：panel i 覆盖 [pl[i], pl[i+1])
+    pls = sorted(float(z) for z in panel_levels)
+
+    def _panel_of(z: float) -> int:
+        for i in range(len(pls) - 1):
+            if pls[i] - 1e-6 <= z < pls[i + 1]:
+                return i
+        return -1  # 平台层外（如基座 0~首层、塔顶）
+
+    # 象限分组（物理角）
+    quads: Dict[Tuple[int, int], List[dict]] = defaultdict(list)
+    for b in legs:
+        mx, my = (b["_a"][0] + b["_c"][0]) / 2, (b["_a"][1] + b["_c"][1]) / 2
+        quads[(1 if mx >= 0 else -1, 1 if my >= 0 else -1)].append(b)
+
+    def _zspan(b: dict) -> Tuple[float, float]:
+        z0, z1 = b["_a"][2], b["_c"][2]
+        return (z0, z1) if z0 <= z1 else (z1, z0)
+
+    def _endpoints_low_high(b: dict) -> Tuple[str, str]:
+        z0, z1 = _zspan(b)
+        return (b["from"], b["to"]) if b["_a"][2] <= b["_c"][2] else (b["to"], b["from"])
+
+    def _frag_key(b: dict) -> str:
+        return str(b.get("id"))
+
+    merged_ids: set = set()
+    out_extra: List[dict] = []
+    rep_quads = 0
+    rep_dropped_dup = 0
+    rep_split_deg = 0
+
+    for _q, frags in quads.items():
+        # 重复段去重：同角内 z 向近重合（中点距 < dup_mid_tol_mm）且共线
+        frags = sorted(frags, key=_zspan)
+        keep: List[dict] = []
+        for b in frags:
+            dup = False
+            for k in keep:
+                kmid = ((k["_a"][0] + k["_c"][0]) / 2, (k["_a"][1] + k["_c"][1]) / 2,
+                        (k["_a"][2] + k["_c"][2]) / 2)
+                bmid = ((b["_a"][0] + b["_c"][0]) / 2, (b["_a"][1] + b["_c"][1]) / 2,
+                        (b["_a"][2] + b["_c"][2]) / 2)
+                if _dist3(kmid, bmid) <= dup_mid_tol_mm:
+                    uk = _unit3(_sub3(k["_c"], k["_a"]))
+                    ub = _unit3(_sub3(b["_c"], b["_a"]))
+                    if uk and ub and _angle_deg(uk, ub) <= ang_deg * 2:
+                        # 保留证据更强的：dxf_geom/recognized 优先
+                        ok, ob = str(k.get("geometry_origin") or ""), str(b.get("geometry_origin") or "")
+                        keep_o = ok if (
+                            ok == "dxf_geom" or (ob != "dxf_geom" and k.get("geometry_class") == "recognized")
+                        ) else ob
+                        if keep_o == ok:
+                            # 现存 k 胜出：丢弃新 b
+                            dup = True
+                            rep_dropped_dup += 1
+                            break
+                        # 新 b 胜出：丢弃旧 k
+                        keep.remove(k)
+                        merged_ids.add(_frag_key(k))
+                        rep_dropped_dup += 1
+                        break
+            if dup:
+                merged_ids.add(_frag_key(b))  # 重复段直接移除（不重建合成杆）
+                continue
+            keep.append(b)
+        frags = keep
+        if len(frags) < 2:
+            continue
+
+        # 链构建：相邻同节间 + gap + 共线
+        chains: List[List[dict]] = []
+        cur: List[dict] = [frags[0]]
+        for b in frags[1:]:
+            prev = cur[-1]
+            pz0, pz1 = _zspan(prev)
+            bz0, bz1 = _zspan(b)
+            gap = max(bz0 - pz1, 0.0)
+            up = _unit3(_sub3(prev["_c"], prev["_a"]))
+            ub = _unit3(_sub3(b["_c"], b["_a"]))
+            same_panel = _panel_of((pz0 + pz1) / 2) >= 0 and \
+                _panel_of((pz0 + pz1) / 2) == _panel_of((bz0 + bz1) / 2)
+            ok = (same_panel and gap <= gap_mm and up is not None and ub is not None
+                  and _angle_deg(up, ub) <= ang_deg)
+            if ok:
+                cur.append(b)
+            else:
+                chains.append(cur)
+                cur = [b]
+        chains.append(cur)
+
+        for chain in chains:
+            if len(chain) < 2:
+                continue
+            # 度数保护：链中段节点若有外部杆挂接（度数>2），在处断开
+            segs: List[List[dict]] = []
+            seg: List[dict] = [chain[0]]
+            for b in chain[1:]:
+                lo, hi = _endpoints_low_high(chain[chain.index(b) - 1])
+                # 前段顶节点
+                prev_top = _endpoints_low_high(chain[chain.index(b) - 1])[1]
+                if node_deg.get(prev_top, 0) > 2:
+                    segs.append(seg)
+                    seg = [b]
+                    rep_split_deg += 1
+                else:
+                    seg.append(b)
+            segs.append(seg)
+            for s in segs:
+                if len(s) < 2:
+                    continue
+                low_node = _endpoints_low_high(s[0])[0]
+                high_node = _endpoints_low_high(s[-1])[1]
+                src = s[0]
+                src_classes = [str(f.get("geometry_class") or "") for f in s]
+                inherit_cls = "recognized" if src_classes and all(
+                    c == "recognized" for c in src_classes) else next(
+                    (c for c in src_classes if c and c != "recognized"),
+                    src_classes[0] if src_classes else "")
+                _src_bids = sorted({str(f.get("bar_id")) for f in s
+                                    if f.get("bar_id") and not str(f.get("bar_id")).startswith("UNLABELED")})
+                nb = dict(src)
+                nb.pop("bar_id", None)
+                if _src_bids:
+                    nb["source_bar_ids"] = _src_bids
+                nb.update({
+                    "id": f"legchain_{rep_quads}",
+                    "from": low_node,
+                    "to": high_node,
+                    "role": "LEG",
+                    "geometry_class": inherit_cls or src.get("geometry_class"),
+                    "geometry_origin": "leg_chain_stitch",
+                    "leg_stitched_from": [str(f.get("id")) for f in s],
+                    "leg_stitched_n": len(s),
+                })
+                if any(f.get("corner_leg") for f in s):
+                    nb["corner_leg"] = True
+                out_extra.append(nb)
+                for f in s:
+                    merged_ids.add(_frag_key(f))
+                rep_quads += 1
+
+    if not merged_ids:
+        return list(bars), {"merged_groups": 0, "n_legs": len(legs)}
+
+    out_bars = [b for b in bars if str(b.get("id")) not in merged_ids]
+    out_bars.extend(out_extra)
+    return out_bars, {
+        "merged_groups": rep_quads,
+        "dropped_duplicates": rep_dropped_dup,
+        "split_at_degree": rep_split_deg,
+        "n_legs_in": len(legs),
+        "n_bars_in": len(bars),
+        "n_bars_out": len(out_bars),
+    }
+
+
 def snap_dangling_endpoints_local(
     nodes: NodeMap,
     bars: List[dict],
