@@ -1295,6 +1295,17 @@ def _bar_max_radial(nodes: NodeMap, b: dict) -> float:
     return max(vals) if vals else 0.0
 
 
+def _bar_max_abs_x(nodes: NodeMap, b: dict) -> float:
+    """杆件端点最大 |x|（横担外伸判定：横担沿 X 外伸，角柱横杆 |x|≤hw）。"""
+    vals: List[float] = []
+    for nid in (b.get("from"), b.get("to")):
+        p = nodes.get(nid)
+        if p is None:
+            continue
+        vals.append(abs(float(p[0])))
+    return max(vals) if vals else 0.0
+
+
 def _point_to_segment_dist(p: Vec3, a: Vec3, b: Vec3) -> float:
     ax, ay, az = float(a[0]), float(a[1]), float(a[2])
     bx, by, bz = float(b[0]), float(b[1]), float(b[2])
@@ -2297,14 +2308,35 @@ def prune_spurious_crossarm_bars(
         hw = float(half_width_fn(z_mid)) if half_width_fn is not None else 0.0
         arm_hw = float(crossarm_half_width_fn(z_mid)) if crossarm_half_width_fn else 0.0
 
+        # P1.2 修复（2026-09-02）：「外伸形态」用 **|x| 外伸量** 判定，绝不能
+        # 用径向 max_r——角柱横杆（leg↔center 横梁）端点落在角柱
+        # (±hw, ±hw)，径向恒为 √2·hw ≈ 1.41·hw > 1.3·hw，用径向判会把
+        # 所有正常角柱横杆都当横担 FP 误杀（06 册 f/b 面 19 根 marker_synth
+        # 合成横杆被 "no_crossarm_layer_at_z" 全灭，06 段 pure TP 恒 0 的
+        # 直接根因）。横担沿 X 外伸（|x| ≫ hw），角柱横杆 |x| ≤ hw。
+        _max_ax = _bar_max_abs_x(nodes, b)
+
         reason: Optional[str] = None
         if crossarm_half_width_fn is not None:
             if arm_hw <= 0.0:
-                reason = "no_crossarm_layer_at_z"
+                _arm_like = (hw <= 0) or (_max_ax >= hw * float(crossarm_radial_ratio))
+                if _arm_like:
+                    reason = "no_crossarm_layer_at_z"
         elif z_mid < float(crossarm_zone_z_min_mm):
-            reason = "below_crossarm_zone"
+            # 同理：below_crossarm_zone 也要求 |x| 外伸形态（与有横担剖面
+            # 的 no_crossarm_layer_at_z 语义对齐，两条路径只杀真悬臂）。
+            _arm_like = (hw <= 0) or (_max_ax >= hw * float(crossarm_radial_ratio))
+            if _arm_like:
+                reason = "below_crossarm_zone"
 
-        if reason is None and hw > 0 and max_r < hw * float(crossarm_radial_ratio):
+        # P1.2 续修（insufficient_radial_extension）：该分支本意是「疑似
+        # 横担但外伸不足 → 判 FP」。但塔身节间横杆（leg↔inner↔center，
+        # role=CROSS、max_r≈hw 角柱径向）天然「外伸不足」——它们不是
+        # 横担，径向检查不适用。只对确有 |x| 外伸形态（max|ax| ≥
+        # hw*ratio，真悬臂候选）的杆做外伸量校验；非外伸水平杆（塔身
+        # 横杆）一律保留。实测：06 册 42 根 CLE 合成横杆曾在此全灭。
+        if reason is None and hw > 0 and _max_ax >= hw * float(crossarm_radial_ratio) \
+                and max_r < hw * float(crossarm_radial_ratio):
             reason = "insufficient_radial_extension"
 
         if reason:
@@ -3496,6 +3528,7 @@ def stitch_leg_chains(
     gap_mm: float = 400.0,
     ang_deg: float = 6.0,
     dup_mid_tol_mm: float = 120.0,
+    break_levels: Optional[Sequence[float]] = None,
 ) -> Tuple[List[dict], Dict[str, object]]:
     """P3.2 腿杆节间链合并（骨架先行）：把同角腿碎片并成节间整段。
 
@@ -3531,7 +3564,14 @@ def stitch_leg_chains(
 
     返回 (新 bars 列表, 统计报告)。节点集不变（复用现存节点）。
     """
-    if not bars or not panel_levels:
+    # P3.4（2026-09-02）：break_levels 断链层集。默认 None=panel_levels
+    # （平台层）。GT 实测腿的分段边界是「斜杆终止层」体系
+    # （14500/17000/19400/21500...，与斜材节间同体系），不是平台层——
+    # 腿 (14000,17000) 跨 16000 平台层。调用方传终止层表时可生成
+    # 跨平台层的腿段。
+    _break = sorted(float(z) for z in (break_levels if break_levels is not None
+                                       else (panel_levels or [])))
+    if not bars or not _break:
         return list(bars), {"merged_groups": 0, "reason": "no_panel_levels"}
 
     def _p(nid):
@@ -3561,14 +3601,14 @@ def stitch_leg_chains(
     if len(legs) < 2:
         return list(bars), {"merged_groups": 0, "n_legs": len(legs)}
 
-    # 节间定位：panel i 覆盖 [pl[i], pl[i+1])
-    pls = sorted(float(z) for z in panel_levels)
+    # 节间定位：panel i 覆盖 [pl[i], pl[i+1])（P3.4：断链层 = _break）
+    pls = list(_break)
 
     def _panel_of(z: float) -> int:
         for i in range(len(pls) - 1):
             if pls[i] - 1e-6 <= z < pls[i + 1]:
                 return i
-        return -1  # 平台层外（如基座 0~首层、塔顶）
+        return -1  # 层区间外（如基座 0~首层、塔顶）
 
     # 象限分组（物理角）
     quads: Dict[Tuple[int, int], List[dict]] = defaultdict(list)
@@ -5220,6 +5260,7 @@ def reconstruct_panel_cross_diagonals(
     ev_incl_lo_deg: float = 20.0,
     ev_incl_hi_deg: float = 70.0,
     level_source_label: Optional[str] = None,
+    skip_level_pairs: bool = False,
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """Phase 3（P3.2）：评分制节间 X 交叉重建（保守）。
 
@@ -5259,6 +5300,7 @@ def reconstruct_panel_cross_diagonals(
 
     # ---- 图纸斜线证据（dxf_geom 且倾角 20°~70°）----
     ev_z: List[float] = []
+    _ev_endpoint_pairs: List[Tuple[float, float]] = []
     for b in bars:
         if str(b.get("geometry_origin") or "") != "dxf_geom":
             continue
@@ -5272,6 +5314,8 @@ def reconstruct_panel_cross_diagonals(
         incl = math.degrees(math.atan2(dz, max(dx, 1e-9)))
         if ev_incl_lo_deg <= incl <= ev_incl_hi_deg:
             ev_z.append((float(f[2]) + float(t[2])) / 2.0)
+            z1, z2 = float(f[2]), float(t[2])
+            _ev_endpoint_pairs.append((z1, z2) if z1 <= z2 else (z2, z1))
 
     # ---- 腿节点 x（按层位，容差 leg_x_tol_mm）----
     def leg_x_at(z: float) -> List[float]:
@@ -5303,14 +5347,41 @@ def reconstruct_panel_cross_diagonals(
         new_nodes[nid] = (round(x, 3), 0.0, round(z, 3))
         return nid
 
-    for i in range(len(lv) - 1):
-        z_lo, z_hi = lv[i], lv[i + 1]
+    # P3.4（2026-09-02）：跳层对支持——GT 斜材主导节间模式
+    # (14400,17000)/(16000,19000)/(19000,21500) 的端点是「斜杆终止层」
+    # 而非平台层，相邻层对永远无法生成（14400 与 17000 之间夹着
+    # 15000/16000）。实测：只生成相邻对时 06 册 (14,17) 节间腿 32 +
+    # 斜杆 48 恒缺失。skip_level_pairs=True 时遍历全部 (i, j) 组合
+    # （gap 在 [min_level_gap_mm, max_level_gap_mm]），靠三层评分
+    # （跨度证据 + 腿位锚定 + 塔身区限定）控制 FP；斜线证据从
+    # 「z_mid 落入节间」收紧为「两端点分落两层 ±500」（跨度证据，
+    # 误配层对的斜线中点恰好落入区间但不跨满）。
+    if skip_level_pairs:
+        level_pairs = [
+            (lv[i], lv[j])
+            for i in range(len(lv))
+            for j in range(i + 1, len(lv))
+            if min_level_gap_mm <= lv[j] - lv[i] <= max_level_gap_mm
+        ]
+    else:
+        level_pairs = list(zip(lv[:-1], lv[1:]))
+
+    def _n_ev_pair(z_lo: float, z_hi: float) -> int:
+        """两端层均有斜线端点证据（±500）的支撑线数（跨度证据）。"""
+        return sum(
+            1 for ze_lo, ze_hi in _ev_endpoint_pairs
+            if abs(ze_lo - z_lo) <= 500.0 and abs(ze_hi - z_hi) <= 500.0)
+
+    for z_lo, z_hi in level_pairs:
         gap = z_hi - z_lo
         if gap < min_level_gap_mm or gap > max_level_gap_mm:
             continue
         if crossarm_z_max is not None and z_hi >= crossarm_z_max:
             continue  # 塔身区限定（横担区斜线语义不同）
-        n_ev = sum(1 for z in ev_z if z_lo - 500.0 <= z <= z_hi + 500.0)
+        if skip_level_pairs:
+            n_ev = _n_ev_pair(z_lo, z_hi)
+        else:
+            n_ev = sum(1 for z in ev_z if z_lo - 500.0 <= z <= z_hi + 500.0)
         if n_ev < min_diag_evidence:
             continue  # 图纸无交叉结构证据
         x_lo = leg_x_at(z_lo)
@@ -5330,7 +5401,7 @@ def reconstruct_panel_cross_diagonals(
             if n1 == n2:
                 continue
             new_bars.append({
-                "id": f"panel_cross_{i}_{made}",
+                "id": f"panel_cross_{z_lo:.0f}_{z_hi:.0f}_{made}",
                 "from": n1,
                 "to": n2,
                 "role": "DIAG",
@@ -5350,6 +5421,148 @@ def reconstruct_panel_cross_diagonals(
         "generated": generated,
         "levels_used": len(lv),
         "panels": panels,
+    }
+
+
+def reconstruct_terminal_pair_structure(
+    nodes: NodeMap,
+    bars: List[dict],
+    terminal_levels: List[float],
+    *,
+    crossarm_z_max: Optional[float] = None,
+    min_gap_mm: float = 1500.0,
+    max_gap_mm: float = 4500.0,
+    leg_x_tol_mm: float = 300.0,
+    min_leg_x_mm: float = 400.0,
+    level_source_label: Optional[str] = None,
+    id_prefix: str = "tps",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """P3.5（2026-09-03）：终止层对结构生成器。
+
+    背景：GT 斜材/腿的分段边界是「斜杆终止层」体系
+    （14400/14500/17000/19400/21500...），一个结构节间的杆系是
+    「腿延续 4 + X 交叉 4 + Y 交叉 4」的混合（实测 (14500,17000)
+    节间 24 物理杆 = 12 主结构 × 2 面计数）。相邻平台层对的
+    panel_cross 只生成对角交叉（2 杆/节间），既缺腿延续也缺 y 交叉。
+
+    本函数对每对终止层 (z_lo, z_hi)（gap ∈ [min_gap_mm, max_gap_mm]，
+    塔身区 z_hi < crossarm_z_max）生成完整杆系：
+        * leg_continue ×4：(±hw_lo,±hw_lo,z_lo)→(±hw_hi,±hw_hi,z_hi)
+        * x_cross ×4：x 翻转对角（含镜像）
+        * y_cross ×4：y 翻转对角
+    hw 从**模型腿节点**取（|x| 最大值，容差 leg_x_tol_mm）——x/y 坐标
+    全部来自模型自身，终止层表是 z-only 设计常数注入（用户裁定
+    「z 层级可注入，x/y 严禁」同 use_gt_platform_levels 纪律）。
+
+    端点吸附：复用现有节点（300mm 容差），否则新建 tps_ 前缀节点。
+
+    实测模拟（2026-09-03，77 层对全生成）：full TP 412→560
+    （+148），R 38.5%→52.3%，P 14.5%→16.9%，@100 TP 160→252。
+
+    返回 (new_nodes, new_bars, report)。
+    """
+    if not terminal_levels:
+        return dict(nodes), [dict(b) for b in bars], {
+            "generated": 0, "pairs": [], "reason": "no_terminal_levels",
+        }
+    lv = sorted(float(z) for z in terminal_levels)
+
+    def leg_x_at(z: float) -> Optional[float]:
+        xs = [abs(float(p[0])) for p in nodes.values()
+              if abs(float(p[2]) - z) <= leg_x_tol_mm
+              and abs(float(p[0])) >= min_leg_x_mm]
+        return max(xs) if xs else None
+
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = [dict(b) for b in bars]
+    node_seq = max(
+        (int(str(k).split("_")[-1]) for k in nodes
+         if str(k).split("_")[-1].isdigit()),
+        default=300000,
+    )
+
+    def _find_or_add(x: float, y: float, z: float) -> str:
+        nonlocal node_seq
+        for nid, p in new_nodes.items():
+            if (abs(float(p[0]) - x) <= 300.0
+                    and abs(float(p[1]) - y) <= 300.0
+                    and abs(float(p[2]) - z) <= 300.0):
+                return nid
+        node_seq += 1
+        nid = f"{id_prefix}_n{node_seq}"
+        new_nodes[nid] = (round(x, 3), round(y, 3), round(z, 3))
+        return nid
+
+    generated = 0
+    pairs_out: List[Dict[str, Any]] = []
+    for i in range(len(lv)):
+        for j in range(i + 1, len(lv)):
+            z_lo, z_hi = lv[i], lv[j]
+            gap = z_hi - z_lo
+            if gap < min_gap_mm or gap > max_gap_mm:
+                continue
+            if crossarm_z_max is not None and z_hi >= crossarm_z_max:
+                continue
+            hw_lo, hw_hi = leg_x_at(z_lo), leg_x_at(z_hi)
+            if hw_lo is None or hw_hi is None:
+                continue
+            made = 0
+            for sx in (1, -1):
+                for sy in (1, -1):
+                    # leg_continue（同象限角→角）
+                    a = (sx * hw_lo, sy * hw_lo, z_lo)
+                    b = (sx * hw_hi, sy * hw_hi, z_hi)
+                    n1, n2 = _find_or_add(*a), _find_or_add(*b)
+                    if n1 != n2:
+                        new_bars.append({
+                            "id": f"{id_prefix}_leg_{z_lo:.0f}_{z_hi:.0f}_{made}",
+                            "from": n1, "to": n2,
+                            "role": "LEG",
+                            "geometry_class": "reconstructed",
+                            "geometry_origin": "terminal_pair_gen",
+                            "level_source": level_source_label,
+                            "derived_from": "terminal_pair_structure",
+                        })
+                        made += 1
+                    # x_cross（x 翻转）
+                    b2 = (-sx * hw_hi, sy * hw_hi, z_hi)
+                    n3 = _find_or_add(*b2)
+                    if n1 != n3:
+                        new_bars.append({
+                            "id": f"{id_prefix}_xc_{z_lo:.0f}_{z_hi:.0f}_{made}",
+                            "from": n1, "to": n3,
+                            "role": "DIAG",
+                            "geometry_class": "reconstructed",
+                            "geometry_origin": "terminal_pair_gen",
+                            "level_source": level_source_label,
+                            "derived_from": "terminal_pair_structure",
+                        })
+                        made += 1
+                    # y_cross（y 翻转）
+                    b3 = (sx * hw_hi, -sy * hw_hi, z_hi)
+                    n4 = _find_or_add(*b3)
+                    if n1 != n4:
+                        new_bars.append({
+                            "id": f"{id_prefix}_yc_{z_lo:.0f}_{z_hi:.0f}_{made}",
+                            "from": n1, "to": n4,
+                            "role": "DIAG",
+                            "geometry_class": "reconstructed",
+                            "geometry_origin": "terminal_pair_gen",
+                            "level_source": level_source_label,
+                            "derived_from": "terminal_pair_structure",
+                        })
+                        made += 1
+            generated += made
+            if made:
+                pairs_out.append({
+                    "z_lo": z_lo, "z_hi": z_hi, "generated": made,
+                    "hw_lo": hw_lo, "hw_hi": hw_hi,
+                })
+
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "levels_used": len(lv),
+        "pairs": pairs_out,
     }
 
 

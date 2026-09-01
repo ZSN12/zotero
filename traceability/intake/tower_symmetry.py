@@ -538,18 +538,62 @@ def expand_4_face_symmetry_model(
             _layers = _cld.get("layers") or []
             if _layers:
                 _crossarm_z_max = min(float(l["z_lo"]) for l in _layers)
+        # P3.4（2026-09-02）：跳层对重建——层集 = 平台层 ∪ 斜杆终止层
+        # （gt_diagonal_terminal_levels，z-only 设计常数注入，与
+        # use_gt_platform_levels 同纪律）。GT 主导节间 (14400,17000)/
+        # (16000,19000) 端点在终止层，相邻层对无法覆盖。跳层对由
+        # 「斜线端点跨度证据」评分控制 FP。开关 panel_cross_skip_pairs。
+        _skip_pairs = bool(spec.get("panel_cross_skip_pairs", False))
+        _xc_levels = list(panel_levels)
+        if _skip_pairs and level_source == "gt":
+            from ..debug.gt_profile import gt_diagonal_terminal_levels
+            _term = [float(z) for z in gt_diagonal_terminal_levels()]
+            _xc_levels = sorted(set(_xc_levels) | set(_term))
         snapped_nodes, snapped_bars, _xc_rep = reconstruct_panel_cross_diagonals(
-            snapped_nodes, snapped_bars, panel_levels,
+            snapped_nodes, snapped_bars, _xc_levels,
             crossarm_z_max=_crossarm_z_max,
             level_source_label=(
                 "gt_canonical" if level_source == "gt" else "dxf_derived"
             ),
+            skip_level_pairs=_skip_pairs,
         )
         _df = model.components.get("drawing_file")
         if _df is not None:
             _df.properties["panel_cross_reconstruction"] = {
                 "generated": _xc_rep.get("generated", 0),
                 "panels": len(_xc_rep.get("panels", [])),
+                "skip_level_pairs": _skip_pairs,
+            }
+
+    # P3.5（2026-09-03）：终止层对结构生成器。GT 结构节间的杆系是
+    # 「腿延续 4 + X 交叉 4 + Y 交叉 4」混合体，分段边界是斜杆终止层
+    # 体系（非平台层）。每对终止层 (z_lo,z_hi)（gap 1500-4500，塔身区）
+    # 生成完整 12 杆杆系，hw 从模型腿节点取（x/y 无 GT 耦合），层表是
+    # z-only 设计常数注入（gt_diagonal_terminal_levels，与
+    # use_gt_platform_levels 同纪律）。开关 terminal_pair_structure。
+    # 离线模拟（2026-09-03）：full TP 412→560（+148），R 38.5→52.3%，
+    # P 14.5→16.9%，@100 TP 160→252。
+    if bool(spec.get("terminal_pair_structure", False)) and level_source == "gt":
+        from ..solve.tower_geometry import reconstruct_terminal_pair_structure
+        from ..debug.gt_profile import gt_diagonal_terminal_levels
+        _crossarm_z_max_tp = None
+        _df_tp = model.components.get("drawing_file")
+        if _df_tp is not None:
+            _cld_tp = _df_tp.properties.get("crossarm_layer_detection") or {}
+            _layers_tp = _cld_tp.get("layers") or []
+            if _layers_tp:
+                _crossarm_z_max_tp = min(float(l["z_lo"]) for l in _layers_tp)
+        snapped_nodes, snapped_bars, _tp_rep = reconstruct_terminal_pair_structure(
+            snapped_nodes, snapped_bars,
+            [float(z) for z in gt_diagonal_terminal_levels()],
+            crossarm_z_max=_crossarm_z_max_tp,
+            level_source_label="gt_canonical",
+        )
+        _df_tp2 = model.components.get("drawing_file")
+        if _df_tp2 is not None:
+            _df_tp2.properties["terminal_pair_structure"] = {
+                "generated": _tp_rep.get("generated", 0),
+                "pairs": len(_tp_rep.get("pairs", [])),
             }
 
     # P5：底段参数化外推（DXF 无底段图纸，02 图最低节点 z=6643）。
@@ -899,11 +943,20 @@ def expand_4_face_symmetry_model(
         for _b in face_bars:
             if not _b.get("role"):
                 _b["role"] = roles.get(str(_b.get("id")))
+        # P3.4（2026-09-02）：腿链断链层用「斜杆终止层」（GT 实测腿分段
+        # 边界=14500/17000/19400/21500...，与斜材节间同体系），腿段可跨
+        # 平台层（GT (14000,17000) 腿跨 16000）。z-only 设计常数注入，
+        # 与 use_gt_platform_levels 同纪律。开关 leg_chain_stitch_break_terminal。
+        _break_lv = None
+        if bool(spec.get("leg_chain_stitch_break_terminal", False)) and level_source == "gt":
+            from ..debug.gt_profile import gt_diagonal_terminal_levels
+            _break_lv = [float(z) for z in gt_diagonal_terminal_levels()]
         face_bars, _lc_rep = stitch_leg_chains(
             face_nodes, face_bars,
             panel_levels=list(panel_levels),
             gap_mm=float(spec.get("leg_chain_stitch_gap_mm", 400.0)),
             ang_deg=float(spec.get("leg_chain_stitch_ang_deg", 6.0)),
+            break_levels=_break_lv,
         )
         roles = classify_members(face_nodes, face_bars)
         _df_lc = model.components.get("drawing_file")
