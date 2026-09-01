@@ -73,7 +73,7 @@
         "kind": "front",
         "title": "正立面(上塔身段 z26000-30620)",
         "origin": [
-          35090.6,
+          35093.4,
           -9411.1
         ],
         "region": [
@@ -86,18 +86,18 @@
           "x",
           "z"
         ],
-        "scale_x": 10.0,
-        "scale_y": 10.0,
+        "scale_x": 9.5,
+        "scale_y": 9.5,
         "z_flip": false,
         "z_axis_up": true,
-        "z_offset": 26000.0,
-        "z_span_mm": 4650.0
+        "z_offset": 26150.0,
+        "z_span_mm": 4418.0
       },
       {
         "kind": "side",
         "title": "侧立面(上塔身段 z25500-30142)",
         "origin": [
-          35281.5,
+          35283.0,
           -9409.6
         ],
         "region": [
@@ -110,12 +110,12 @@
           "x",
           "z"
         ],
-        "scale_x": 10.0,
-        "scale_y": 10.0,
+        "scale_x": 9.75,
+        "scale_y": 9.75,
         "z_flip": false,
         "z_axis_up": true,
-        "z_offset": 26000.0,
-        "z_span_mm": 4650.0
+        "z_offset": 25850.0,
+        "z_span_mm": 4534.0
       }
     ],
     "35A2-ZC1-10": [
@@ -123,7 +123,7 @@
         "kind": "front",
         "title": "正立面(塔身段 z24000-28224)",
         "origin": [
-          38406.9,
+          38402.9,
           -10071.4
         ],
         "region": [
@@ -136,12 +136,12 @@
           "x",
           "z"
         ],
-        "scale_x": 10.0,
-        "scale_y": 10.0,
+        "scale_x": 10.3,
+        "scale_y": 10.3,
         "z_flip": false,
         "z_axis_up": true,
-        "z_offset": 24000.0,
-        "z_span_mm": 4224.0
+        "z_offset": 24100.0,
+        "z_span_mm": 4429.0
       }
     ],
     "35A2-ZC1-01-1": [
@@ -149,7 +149,7 @@
         "kind": "front",
         "title": "正立面(塔头段 z32000-39129)",
         "origin": [
-          35019.7,
+          35025.2,
           -7242.1
         ],
         "region": [
@@ -162,12 +162,12 @@
           "x",
           "z"
         ],
-        "scale_x": 17.0,
-        "scale_y": 17.0,
+        "scale_x": 16.7,
+        "scale_y": 16.7,
         "z_flip": false,
         "z_axis_up": true,
-        "z_offset": 32000.0,
-        "z_span_mm": 7129.0
+        "z_offset": 32100.0,
+        "z_span_mm": 7098.0
       }
     ],
     "35A2-ZC1-09": [
@@ -188,12 +188,12 @@
           "x",
           "z"
         ],
-        "scale_x": 11.0,
-        "scale_y": 11.0,
+        "scale_x": 10.5,
+        "scale_y": 10.5,
         "z_flip": false,
         "z_axis_up": true,
         "z_offset": 26500.0,
-        "z_span_mm": 6163.0
+        "z_span_mm": 5964.0
       },
       {
         "kind": "front",
@@ -212,12 +212,12 @@
           "x",
           "z"
         ],
-        "scale_x": 11.0,
-        "scale_y": 11.0,
+        "scale_x": 10.7,
+        "scale_y": 10.7,
         "z_flip": false,
         "z_axis_up": true,
-        "z_offset": 33000.0,
-        "z_span_mm": 5557.0
+        "z_offset": 33050.0,
+        "z_span_mm": 5446.0
       }
     ],
     "35A2-ZC1-08": [
@@ -225,7 +225,7 @@
         "kind": "front",
         "title": "正立面(塔头段 z32500-38518)",
         "origin": [
-          36508.0,
+          36498.1,
           -9405.6
         ],
         "region": [
@@ -238,12 +238,12 @@
           "x",
           "z"
         ],
-        "scale_x": 12.0,
-        "scale_y": 12.0,
+        "scale_x": 11.5,
+        "scale_y": 11.5,
         "z_flip": false,
         "z_axis_up": true,
-        "z_offset": 32500.0,
-        "z_span_mm": 6018.0
+        "z_offset": 32250.0,
+        "z_span_mm": 5762.0
       }
     ],
     "35A2-ZC1-12": [
@@ -251,7 +251,7 @@
         "kind": "front",
         "title": "正立面(上塔身段 z23000-28607)",
         "origin": [
-          40557.0,
+          40547.2,
           -10106.4
         ],
         "region": [
@@ -264,18 +264,18 @@
           "x",
           "z"
         ],
-        "scale_x": 10.0,
-        "scale_y": 10.0,
+        "scale_x": 9.5,
+        "scale_y": 9.5,
         "z_flip": false,
         "z_axis_up": true,
-        "z_offset": 23000.0,
-        "z_span_mm": 5607.0
+        "z_offset": 23250.0,
+        "z_span_mm": 5330.0
       },
       {
         "kind": "front",
         "title": "正立面(塔头段 z33000-37790)",
         "origin": [
-          40823.0,
+          40807.5,
           -10024.7
         ],
         "region": [
@@ -288,12 +288,12 @@
           "x",
           "z"
         ],
-        "scale_x": 10.0,
-        "scale_y": 10.0,
+        "scale_x": 9.75,
+        "scale_y": 9.75,
         "z_flip": false,
         "z_axis_up": true,
-        "z_offset": 33000.0,
-        "z_span_mm": 4790.0
+        "z_offset": 33050.0,
+        "z_span_mm": 4670.0
       }
     ],
     "35A2-ZC1-07": [
@@ -301,7 +301,7 @@
         "kind": "front",
         "title": "正立面(中塔身段 z17000-21288)",
         "origin": [
-          35400.0,
+          35400.2,
           -10728.3
         ],
         "region": [
@@ -314,12 +314,12 @@
           "x",
           "z"
         ],
-        "scale_x": 12.0,
-        "scale_y": 12.0,
+        "scale_x": 11.5,
+        "scale_y": 11.5,
         "z_flip": false,
         "z_axis_up": true,
-        "z_offset": 17000.0,
-        "z_span_mm": 4284.0
+        "z_offset": 17050.0,
+        "z_span_mm": 4106.0
       }
     ]
   },
