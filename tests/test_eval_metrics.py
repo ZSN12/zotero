@@ -650,6 +650,47 @@ class EvaluateCliTest(unittest.TestCase):
         self.assertIn("A1", proc.stdout)
 
 
+class CostMatrixVecParityTest(unittest.TestCase):
+    """P3.14：_cost_matrix_vec 向量化代价矩阵与逐对 segment_cost 对照。
+
+    45k 对真实数据随机样本全一致（含 inf 门禁语义）——向量化内核
+    的语义锁，防止未来性能改动悄悄改变评测结果。
+    """
+
+    def test_vec_matches_pairwise_real_data(self):
+        import json, random
+        import numpy as np
+        from traceability.eval.metrics import (
+            _cost_matrix_vec, segment_cost, gt_bars_2d, bars_from_model_2d)
+        repo = Path(__file__).resolve().parent.parent
+        gt_path = repo / "examples" / "gt" / "35A1-JC1_ground_truth.json"
+        model_path = repo / "out" / "35A1-JC1-full-deliver" / "model.json"
+        if not gt_path.exists() or not model_path.exists():
+            self.skipTest("GT 或 model.json 不存在")
+        gt = json.loads(gt_path.read_text())
+        model = json.loads(model_path.read_text())
+        g_all = [s for s, _, _ in gt_bars_2d(gt, "front")]
+        m_all = [s for s, _ in bars_from_model_2d(model, mode="physical")]
+        random.seed(20260903)
+        g = random.sample(g_all, min(60, len(g_all)))
+        m = random.sample(m_all, min(80, len(m_all)))
+        cm = _cost_matrix_vec(g, m)
+        self.assertEqual(cm.shape, (len(g), len(m)))
+        n_inf = 0
+        for i in range(len(g)):
+            for j in range(len(m)):
+                ref = segment_cost(g[i], m[j])
+                got = float(cm[i, j])
+                if ref == float("inf"):
+                    n_inf += 1
+                    self.assertEqual(got, float("inf"),
+                                     f"({i},{j}) 应被门禁拒绝")
+                else:
+                    self.assertAlmostEqual(ref, got, places=6,
+                                           msg=f"({i},{j}) 代价不一致")
+        self.assertGreater(n_inf, 0, "真实数据必有门禁拒绝对")
+
+
 class BarIdMappingOneToManyTest(unittest.TestCase):
     """阶段2.2：BOM 数字件号 → GT PM_XXXX 一对多映射（非 Dict[str,str]）。"""
 

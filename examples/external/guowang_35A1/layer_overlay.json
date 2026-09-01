@@ -1166,7 +1166,7 @@
     }
   },
   "glb_gate_min_4face_bars": 50,
-  "glb_gate_max_4face_bars": 5000,
+  "glb_gate_max_4face_bars": 6500,
   "prune_to_largest_component": {
     "enabled": false
   },
@@ -1309,7 +1309,7 @@
       "enabled": true
     }
   },
-  "kfan_completion": false,
+  "kfan_completion": true,
   "crossarm_truss_completion": true,
   "leg_chain_stitch": true,
   "leg_chain_stitch_gap_mm": 400.0,
