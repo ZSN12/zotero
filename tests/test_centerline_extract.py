@@ -206,16 +206,21 @@ def test_calibration_zero_span_degenerate():
 
 def test_synth_beams_all_pairs():
     levels = [100.0]
-    legs = [-100.0, 0.0, 100.0]  # 3 个断点 → 3 对
+    legs = [-100.0, 0.0, 100.0]  # 断点含中心
     z_of_y = lambda y: y * 20.0
     x_of_u = lambda u: u * 20.0
     out = synth_beams(levels, legs, z_of_y, x_of_u, x_center_u=0.0)
-    assert len(out) == 3  # (-100,0),(0,100),(-100,100)
+    # P2.3 同半侧全对：(-100,0) 与 (0,100) 相邻对；跨中心 (-100,100)
+    # 两端均非中心——GT 环梁无此结构（GT 层 = [0,±hw] 全跨 + [±hw/2,±hw]
+    # 弦段，无 [-hw,hw] 通长），排除。
+    assert len(out) == 2  # (-2000,0),(0,2000)
     # 层位 z = 100u × 20 = 2000mm
     assert all(seg[1] == 2000.0 and seg[3] == 2000.0 for seg in out)
     # min_span 过滤
-    out2 = synth_beams(levels, legs, z_of_y, x_of_u, 0.0, min_span_mm=2500.0)
-    assert len(out2) == 1  # 只有 ±2000mm 的外对
+    out2 = synth_beams(levels, legs, z_of_y, x_of_u, 0.0, min_span_mm=1500.0)
+    assert len(out2) == 2  # 两对都是 2000mm
+    out3 = synth_beams(levels, legs, z_of_y, x_of_u, 0.0, min_span_mm=2500.0)
+    assert len(out3) == 0  # 跨中心对已排除，无 ≥2500 对
 
 
 def test_subdiv_t_x_splits_at_crossing():
@@ -248,11 +253,11 @@ def test_extract_drawing_segments_shape(tmp_path):
     doc = ezdxf.new("R2010")
     msp = doc.modelspace()
     # 双线左腿 x=-10/-7，双线右腿 x=10/7，y ∈ [0,100]
-    for x in (-10.0, -7.0, 7.0, 10.0):
+    for x in (-20.0, -17.0, 17.0, 20.0):
         msp.add_line((x, 0.0), (x, 100.0))
     # X 撐（0..100 两根对角）
-    msp.add_line((-8.5, 0.0), (8.5, 50.0))
-    msp.add_line((8.5, 0.0), (-8.5, 50.0))
+    msp.add_line((-18.5, 0.0), (18.5, 50.0))
+    msp.add_line((18.5, 0.0), (-18.5, 50.0))
     # 层位标记（塔中心 x=0，两条短划）
     msp.add_line((-2.0, 50.0), (2.0, 50.0))
     msp.add_line((-2.0, 50.5), (2.0, 50.5))

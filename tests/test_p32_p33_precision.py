@@ -75,8 +75,10 @@ class TestCrossarmFpPrune(unittest.TestCase):
             crossarm_zone_z_min_mm=29000.0,
             crossarm_radial_ratio=1.3,
         )
-        self.assertEqual(len(kept), 0)
-        self.assertEqual(rep["removed"][0]["reason"], "insufficient_radial_extension")
+        # P1.2 修复后：|x|=900 < hw=1000 → 塔身内水平杆（角柱横梁），
+        # 不再按「外伸不足」误杀（06 册 19 根 marker_synth 横杆曾在此全灭）。
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(len(rep["removed"]), 0)
 
     def test_valid_crossarm_kept(self):
         nodes = {

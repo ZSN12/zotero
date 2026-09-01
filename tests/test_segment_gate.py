@@ -71,7 +71,7 @@ class TestSegmentGate(unittest.TestCase):
         r = dr.segment_gate(self.gt, self.model, "06", "all", "front", 500.0, 85.0)
         self.assertEqual(r["z_window_mm"], [13000.0, 16000.0])
         self.assertEqual(r["n_gt"], 2)          # G3 窗口外被排除
-        self.assertEqual(r["n_model"], 2)       # m_far/m_dia 被 mode 排除；m_sub 在（all 口径）
+        self.assertEqual(r["n_model"], 3)       # m_far/m_dia 被 mode 排除；m_sub 在；m_mirror(b面) 对称化后参与（all 口径）
 
     def test_pure_caliber_excludes_mirror_and_assisted(self):
         r = dr.segment_gate(self.gt, self.model, "06", "pure", "front", 500.0, 85.0)

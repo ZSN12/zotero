@@ -125,10 +125,11 @@ class TestDualViewUnion(unittest.TestCase):
         m = _model([("bar_f", "n1", "n2", "f")],
                    l_bars=[("bar_b", "n1", "n3", "b")])
         r = eval_a2_dual_view(_gt(), m, tols=[500.0])
-        # b 面杆被排除在 side 投影外（审计面可外部验证）
+        # P2.5 对称化后：b 面杆投影进 front（4 面展开物理杆的 (x,z) 投影，
+        # 匹配 GT 重复计数口径）；side 仍显式排除 b（y-z 竖线与腿重合，
+        # 1:1 失衡，见 eval_a2_dual_view 的 b 面排除注释）。
         self.assertNotIn("b", r["per_view"]["side"]["faces"])
-        # front 也无 b（face→view 映射 b→side）
-        self.assertNotIn("b", r["per_view"]["front"]["faces"])
+        self.assertIn("b", r["per_view"]["front"]["faces"])
 
     def test_unmatched_both_views_is_fp(self):
         """杆在 front 与 side 投影都存在且都未匹配 → FP 一次。"""
