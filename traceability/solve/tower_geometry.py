@@ -5593,6 +5593,26 @@ def reconstruct_terminal_pair_structure(
                             "terminal_pair_structure": True,
                         })
                         made += 1
+                    # P3.5h：中心对角（半交叉）——塔身上部窄节间段
+                    # （z>=21000, gap<=1400）GT 有第二套对角体系：
+                    # 中心线→角的大跨度对角（x[0,hw]）。每对 4 根。
+                    if 21000.0 <= z_lo <= 23000.0 and 1200.0 <= gap <= 1400.0:
+                      for sxc in ((1,) if sy == -1 else (-1,)):
+                            c1 = (0.0, 0.0, z_lo)
+                            c2 = (sxc * hw_hi, sxc * hw_hi, z_hi)
+                            n5, n6 = _find_or_add(*c1), _find_or_add(*c2)
+                            if n5 != n6:
+                                new_bars.append({
+                                    "id": f"{id_prefix}_cc_{z_lo:.0f}_{z_hi:.0f}_{made}",
+                                    "from": n5, "to": n6,
+                                    "role": "DIAG",
+                                    "geometry_class": "reconstructed",
+                                    "geometry_origin": "terminal_pair_gen",
+                                    "level_source": level_source_label,
+                                    "derived_from": "terminal_pair_structure",
+                                    "terminal_pair_structure": True,
+                                })
+                                made += 1
                     # y_cross（y 翻转）
                     b3 = (sx * hw_hi, -sy * hw_hi, z_hi)
                     n4 = _find_or_add(*b3)
