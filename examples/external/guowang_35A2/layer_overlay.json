@@ -51,7 +51,10 @@
         "z_ref": 0.0,
         "normalize_x": true
       }
-    }
+    },
+    "merge_stems_extra": [
+      "35A2-JC2-06"
+    ]
   },
   "gusset_auto_anchor": true,
   "master_bom": "guowang_merged_bom.csv",
@@ -161,6 +164,32 @@
         "z_axis_up": true,
         "z_offset": 30000.0,
         "z_span_mm": 6630.0
+      }
+    ],
+    "35A2-JC2-06": [
+      {
+        "kind": "front",
+        "title": "正立面(塔头段 z33600-37500)",
+        "origin": [
+          30372.0,
+          -12635.1
+        ],
+        "region": [
+          30280.0,
+          30420.0,
+          -12640.0,
+          -12360.0
+        ],
+        "axes": [
+          "x",
+          "z"
+        ],
+        "scale_x": 14.5,
+        "scale_y": 14.5,
+        "z_flip": false,
+        "z_axis_up": true,
+        "z_offset": 33625.0,
+        "z_span_mm": 3900.0
       }
     ]
   },
