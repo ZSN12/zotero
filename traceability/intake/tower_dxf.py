@@ -1638,10 +1638,10 @@ def extract_tower_from_dxf(
             # 阶段2.6：ezdxf 直接识别出的杆件显式标记 recognized（非 derived/mirrored），
             # 否则单段 2D 评测时 bars_from_model_2d(mode=recognition) 因缺
             # geometry_class 而 fail-closed 全部排除。
-            "geometry_class": "recognized",
+            "geometry_class": str(seg.get("geometry_class") or "recognized"),
             "drawing_view": stem,
             "source_file": stem,
-            "geometry_origin": "dxf_geom",
+            "geometry_origin": str(seg.get("geometry_origin") or "dxf_geom"),
             # 阶段 4.1/4.2：每根 recognized 杆件必须携带自包含证据引用，
             # 不依赖被后续四面展开删除的二维组件 ID。字段稳定、可解析：
             #   sheet_id / view_id / view_type / source_component_id /
@@ -1659,7 +1659,7 @@ def extract_tower_from_dxf(
                                        else f"sheet://{stem}#{vk}",
                 "source_reference": dxf_path,
                 "region_id": seg.get("region"),
-                "geometry_origin": "dxf_geom",
+                "geometry_origin": str(seg.get("geometry_origin") or "dxf_geom"),
                 "confidence": conf,
                 "provider": "ezdxf",
                 "model": None,
@@ -1667,6 +1667,10 @@ def extract_tower_from_dxf(
                 "call_id": None,
             }],
         }
+        if seg.get("source_extractor"):
+            properties["source_extractor"] = seg["source_extractor"]
+        if seg.get("evidence_status"):
+            properties["evidence_status"] = seg["evidence_status"]
         if handle in handle_label_dist:
             properties["label_distance"] = round(handle_label_dist[handle], 2)
         # 阶段4.4：有件号的杆必须带 bar_id_evidence（件号从哪条文字来）

@@ -52,12 +52,18 @@ class BomLengthPhysicalAggregationTest(unittest.TestCase):
     """四面镜像实例按物理杆去重核验。"""
 
     def test_four_face_instances_counted_once(self):
-        """同一物理杆的 F/B/L/R 四实例只算 1 根超差（旧口径算 4）。"""
+        """同一物理杆的 F/B/L/R 四实例只算 1 根超差（旧口径算 4）。
+
+        2026-09-02 V1 语义对齐：欠识别（段长 < BOM 母杆）是召回缺口，
+        PENDING 不拦交付（与 r_project_bom_master 的 under_identified
+        同语义）；本例 500 < 1000 → PENDING。超长（件号错挂）才 FAILED，
+        见 test_overlength_bar_fails。
+        """
         from traceability.harness.tower_validators import validate_bom_length_match
         from traceability.model import ValidationStatus
 
         bars = [
-            # stem=b1 的四面镜像，长度 500 vs BOM 1000（超差 50%）
+            # stem=b1 的四面镜像，长度 500 vs BOM 1000（欠识别 50%）
             ("4f_b1_F", "b1", 500.0, "f"),
             ("4f_b1_B", "b1", 500.0, "b"),
             ("4f_b1_L", "b1", 500.0, "l"),
@@ -68,9 +74,25 @@ class BomLengthPhysicalAggregationTest(unittest.TestCase):
         m = _make_model_with_bars(bars, dims={"b1": 1000.0, "b2": 1000.0})
         res = validate_bom_length_match(m, "r_bom_length_match")
         self.assertIsNotNone(res)
-        self.assertEqual(res.status, ValidationStatus.FAILED)
-        self.assertIn("1 根物理杆", res.message)
+        self.assertEqual(res.status, ValidationStatus.PENDING)
+        # 物理杆去重口径：1 根欠识别（四镜像合并），旧实例口径 5
+        self.assertIn("1 根欠识别", res.message)
         self.assertIn("旧实例口径 5", res.message)
+
+    def test_overlength_bar_fails(self):
+        """超长（段长 > BOM，件号错挂/重复）→ FAILED（数据矛盾拦交付）。"""
+        from traceability.harness.tower_validators import validate_bom_length_match
+        from traceability.model import ValidationStatus
+
+        bars = [
+            ("4f_b1_F", "b1", 2000.0, "f"),   # 2000 vs BOM 1000，+100%
+            ("4f_b2_F", "b2", 980.0, "f"),   # 正常
+        ]
+        m = _make_model_with_bars(bars, dims={"b1": 1000.0, "b2": 1000.0})
+        res = validate_bom_length_match(m, "r_bom_length_match")
+        self.assertIsNotNone(res)
+        self.assertEqual(res.status, ValidationStatus.FAILED)
+        self.assertIn("1 根物理杆长度超差", res.message)
 
     def test_split_segments_checked_independently(self):
         """split 段（__splitN）是不同物理段，各自独立核验。"""

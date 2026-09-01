@@ -161,6 +161,10 @@ def main() -> int:
                              "写独立目录 out/35A1-JC1-production/）")
     parser.add_argument("--dxf-dir", type=Path, default=None,
                         help="DXF 批次目录（默认 out/xianyu-acceptance/batch-jc1/dxf）")
+    parser.add_argument("--dxf-stem-prefix", default="35A1-JC1",
+                        help="DXF 文件名 stem 前缀白名单（D4 范围裁定：JC1 交付只吃 "
+                             "35A1-JC1* 图册，批次目录里的 35C2-SJG1-ML 等异塔图纸"
+                             "排除并记入 manifest 排除清单；空串 = 不过滤")
     parser.add_argument("--out-dir", type=Path, default=None,
                         help="交付输出目录（默认随 profile 变化）")
     parser.add_argument("--selection-mode", choices=["none", "p11", "relaxed"],
@@ -224,6 +228,33 @@ def main() -> int:
     if not dxf_batch.exists():
         print(f"DXF 目录不存在: {dxf_batch}", file=sys.stderr)
         return 1
+
+    # D4 范围裁定：JC1 交付只吃 35A1-JC1* 图册。批次目录若混入异塔图纸
+    # （实测 35C2-SJG1-ML.dxf 曾被目录级 glob 吞入，污染 model/bom_tree/
+    # bar_inventory），按 stem 前缀白名单过滤到干净临时目录（符号链接，
+    # 不复制文件），排除清单打印留档（审计可追溯，不静默丢弃）。
+    stem_prefix = args.dxf_stem_prefix.strip()
+    if stem_prefix:
+        all_dxf = sorted(dxf_batch.glob("*.dxf"))
+        keep = [p for p in all_dxf if p.stem.startswith(stem_prefix)]
+        drop = [p for p in all_dxf if not p.stem.startswith(stem_prefix)]
+        if drop:
+            print(f"D4 范围过滤：排除 {len(drop)} 个非 {stem_prefix}* 文件：")
+            for p in drop:
+                print(f"  - {p.name}")
+        if not keep:
+            print(f"过滤后无匹配 DXF（前缀 {stem_prefix}）", file=sys.stderr)
+            return 1
+        scope_dir = out_dir / "_dxf_scope"
+        scope_dir.mkdir(parents=True, exist_ok=True)
+        for old in scope_dir.glob("*.dxf"):
+            old.unlink()
+        for p in keep:
+            link = scope_dir / p.name
+            if not link.exists():
+                link.symlink_to(p.resolve())
+        dxf_batch = scope_dir
+        print(f"D4 范围过滤：{len(keep)}/{len(all_dxf)} 个 DXF 进入交付")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     pd = deliver_project(

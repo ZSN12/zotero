@@ -75,16 +75,20 @@ def validate_bom_length_match(model: EngineeringModel, rule_id: str) -> Optional
         物理杆 = 同一 stem 的四面实例取 front 代表（无 front 取任一面），
         B/L/R 镜像不再单独计数。
 
-    split 段（__splitN 链）各自独立核验——模型段长与 BOM 长的偏差如实
-    报告（诚实失败）：段长 < BOM 长 = 识别不全（Phase 2/3 主战场），
-    段长 > BOM 长 = 件号错配或母杆未截断重复（Phase 4.3）。
+    split 段（__splitN 链）各自独立核验（2026-09-02 V1 语义对齐）：
+        段长 < BOM 长 = 欠识别（识别覆盖缺口，Phase 2/3 主战场）→ PENDING
+        不拦交付（与 r_project_bom_master 的 under_identified 同语义）；
+        段长 > BOM 长 = 件号错配或母杆未截断重复（Phase 4.3）→ FAILED。
 
     消息带物理杆/实例两种口径计数，便于审计对比。
     """
     failures = []
+    under = []    # 欠识别：段长 < BOM 长（识别覆盖缺口，非数据矛盾）
+    suspect = []  # 口径存疑：P4.3 已标 bar_id_length_suspect（同号歧义/塔头
+                  # 连续绘制 vs BOM 下料口径），属 review 队列，不自动判死
     matched = 0
     instance_count = 0
-    phys: dict = {}  # stem -> (actual_len, bar_id, bom_len)
+    phys: dict = {}  # stem -> (actual_len, bar_id, bom_len, suspect_flag)
     for cid, bar in _iter_bars(model):
         bid = bar.properties.get("bar_id")
         bom_dim = model.dimensions.get(f"dim_bom_length_{bid}")
@@ -102,14 +106,22 @@ def validate_bom_length_match(model: EngineeringModel, rule_id: str) -> Optional
         instance_count += 1
         stem = _physical_stem(cid)
         face = str(bar.properties.get("face") or "")
+        _sus = bool(bar.properties.get("bar_id_length_suspect"))
         # front 是识别源头，优先作为物理杆代表
         if stem not in phys or face == "f":
-            phys[stem] = (float(actual), bid, bom_len)
-    for stem, (actual, bid, bom_len) in phys.items():
+            phys[stem] = (float(actual), bid, bom_len, _sus)
+    for stem, (actual, bid, bom_len, _sus) in phys.items():
         matched += 1
         dev = abs(actual - bom_len) / bom_len
-        if dev > 0.03:
-            failures.append((bid, round(actual, 1), round(bom_len, 1), round(dev * 100, 1)))
+        if dev <= 0.03:
+            continue
+        rec = (bid, round(actual, 1), round(bom_len, 1), round(dev * 100, 1))
+        if actual < bom_len:
+            under.append(rec)
+        elif _sus:
+            suspect.append(rec)
+        else:
+            failures.append(rec)
     if matched == 0:
         return ValidationResult(rule_id, ValidationStatus.PENDING,
                                 "无足够数据做 BOM 长度核验", "bom-length")
@@ -117,7 +129,21 @@ def validate_bom_length_match(model: EngineeringModel, rule_id: str) -> Optional
         return ValidationResult(
             rule_id, ValidationStatus.FAILED,
             f"{len(failures)} 根物理杆长度超差（旧实例口径 {instance_count}）："
-            f"{sorted(failures, key=lambda t: -t[3])[:3]}",
+            f"{sorted(failures, key=lambda t: -t[3])[:3]}"
+            + (f"；另有 {len(under)} 根欠识别" if under else "")
+            + (f"、{len(suspect)} 根口径存疑（review 队列）" if suspect else ""),
+            "bom-length")
+    if under or suspect:
+        # V1 同语义（r_project_bom_master）：欠识别是召回缺口、suspect 是
+        # P4.3 已登记的人工复核口径歧义（塔头连续绘制 vs BOM 下料长），
+        # 均非可自动裁决的数据矛盾 → PENDING 不拦交付；无标记的纯超差
+        # （件号错挂/重复）才 FAILED。
+        return ValidationResult(
+            rule_id, ValidationStatus.PENDING,
+            f"{matched} 核验 / {len(under)} 根欠识别（段长 < BOM 母杆，"
+            f"Phase 2/3 主战场）/ {len(suspect)} 根口径存疑（bar_id_length_"
+            f"suspect 已标，review 队列；旧实例口径 {instance_count}）："
+            f"{sorted(suspect, key=lambda t: -t[3])[:3]}",
             "bom-length")
     return ValidationResult(rule_id, ValidationStatus.PASSED,
                             f"{matched} 根物理杆长度与 BOM 偏差 ≤ 3%"

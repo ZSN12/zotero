@@ -3200,6 +3200,15 @@ def _role_pair_ok_stitch(
     return True, None
 
 
+def _centerline_extract_bar(bar: dict) -> bool:
+    return str(bar.get("source_extractor") or "") == "centerline_extract"
+
+
+def _centerline_stitch_origin(src: dict) -> str:
+    o = str(src.get("geometry_origin") or "dxf_geom")
+    return o if o in ("dxf_geom", "marker_synth") else "dxf_geom"
+
+
 def stitch_collinear_bars(
     nodes: NodeMap,
     bars: List[dict],
@@ -3432,14 +3441,31 @@ def stitch_collinear_bars(
             inherit_cls = "recognized"
         else:
             inherit_cls = next((c for c in src_classes if c), "")
+        stitch_origin = "collinear_stitch"
+        if _centerline_extract_bar(src) or any(
+                _centerline_extract_bar(cand[m][2]) for m in chain if m in cand):
+            stitch_origin = _centerline_stitch_origin(src)
         nb = dict(src)
+        # 件号不继承（P4 件号错挂实测：stitch_58-61 继承 bar_321 → BOM 长度
+        # 核验 4 根 +93~121% 超差、r_project_bom_master 超计）。合成杆是
+        # 新的物理杆，BOM 件号证据属于源残段（stitched_from 证据链保留于
+        # source_bar_ids，A1 追溯不丢）；剥掉 bar_id 使其不进 BOM 核验
+        # 与件号去重。
+        _src_bids = []
+        for _m in chain:
+            _sb = cand[_m][2].get("bar_id") if _m in cand else None
+            if _sb and not str(_sb).startswith("UNLABELED"):
+                _src_bids.append(str(_sb))
+        if _src_bids:
+            nb["source_bar_ids"] = sorted(set(_src_bids))
+        nb.pop("bar_id", None)
         nb.update({
             "id": nid,
             "from": ns,
             "to": ne,
             "role": src.get("role"),
             "geometry_class": inherit_cls or src.get("geometry_class"),
-            "geometry_origin": "collinear_stitch",
+            "geometry_origin": stitch_origin,
             "stitched_from": list(chain),
             "stitched_n_segments": len(chain),
         })
@@ -4675,6 +4701,277 @@ def bridge_segment_boundary_legs(
         "boundaries": [float(z) for z in boundaries],
         "bridged": bridged,
         "details": details,
+    }
+
+
+def weld_dangling_endpoints_to_segments(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    max_gap_mm: float = 250.0,
+    exclude_roles=("CROSS",),
+    merge_node_tol_mm: float = 2.0,
+    min_bar_len_mm: float = 150.0,
+):
+    """阶段 5.6a：悬空端点焊接（图纸「线端停在构件边缘」缺口的闭合）。
+
+    背景（P3 真实性治理实测）：四面展开后残余物理悬空断裂中，多数自由端距
+    某根异杆线段仅 52~199mm——这是制图惯例（示意线端停在构件边缘而非中心
+    线交点），不是结构断裂，但门禁的 T 形接头判定（<=50mm）差一步够不着。
+    本函数把 degree=1 非横担端点投影到最近的异杆线段上：
+
+        1. 端点到异杆线段（不含自身杆）的最小投影距离 <= max_gap_mm；
+        2. 投影落点 merge_node_tol_mm 内有既有节点 → 杆端改指到该节点
+           （merge 路径，删除原悬空节点）；
+        3. 否则移动节点坐标到投影点（weld 路径——degree=1 节点被唯一
+           杆独占，移动无副作用）。
+
+    退化防护（2026-09-02 GLB 导出 8 根跳过实测：bar_2_front_71_L/R 等
+    L=0 杆）：若 weld/merge 后新杆长 < min_bar_len_mm（另一端恰在目标
+    附近，两端塌缩），**放弃焊接并剪除该杆**（残片件号收 pruned_label_ids，
+    与 prune_short_stub_bars 同纪律）——不能为关门禁制造零长杆。
+
+    焊接后该端点到目标线段距离为 0，门禁按 T 形接头豁免（不计入
+    genuine_dangling）。幂等：已焊接端点投影距离 ~0，自然跳过。
+
+    返回 (new_nodes, new_bars, {"welded": n, "merged": m,
+    "degenerate_pruned": k, "pruned_label_ids": [...], "details": [...]})。
+    """
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = [dict(b) for b in bars]
+    deg: Dict[str, int] = {}
+    for b in new_bars:
+        deg[b["from"]] = deg.get(b["from"], 0) + 1
+        deg[b["to"]] = deg.get(b["to"], 0) + 1
+
+    _excl = {str(r).upper() for r in exclude_roles}
+
+    def _role(b: dict) -> str:
+        return str(b.get("role") or "").upper()
+
+    def _label_of(b: dict):
+        v = b.get("bar_id")
+        if v and not str(v).startswith("UNLABELED"):
+            return str(v)
+        return None
+
+    def _seg_list():
+        out = []
+        for b in new_bars:
+            p1, p2 = new_nodes.get(b["from"]), new_nodes.get(b["to"])
+            if p1 is None or p2 is None:
+                continue
+            out.append((b["from"], b["to"],
+                        (float(p1[0]), float(p1[1]), float(p1[2])),
+                        (float(p2[0]), float(p2[1]), float(p2[2]))))
+        return out
+
+    segs = _seg_list()
+    welded = 0
+    merged = 0
+    degenerate_pruned = 0
+    pruned_labels: List[str] = []
+    seen_labels = set()
+    details: List[Dict[str, Any]] = []
+    bars_to_remove: set = set()
+    for b in new_bars:
+        if _role(b) in _excl or b["id"] in bars_to_remove:
+            continue
+        for end_key in ("from", "to"):
+            nid = b[end_key]
+            if deg.get(nid) != 1 or nid not in new_nodes:
+                continue
+            if b["id"] in bars_to_remove:
+                break
+            p = new_nodes[nid]
+            pv = np.array([float(p[0]), float(p[1]), float(p[2])])
+            best_d, best_q = None, None
+            for f_id, t_id, s1, s2 in segs:
+                if nid in (f_id, t_id):
+                    continue
+                ab = np.array(s2) - np.array(s1)
+                denom = float(np.dot(ab, ab)) or 1e-9
+                t = float(np.clip(np.dot(pv - np.array(s1), ab) / denom, 0.0, 1.0))
+                q = np.array(s1) + t * ab
+                d = float(np.linalg.norm(pv - q))
+                if best_d is None or d < best_d:
+                    best_d, best_q = d, q
+            if best_d is None or best_d > max_gap_mm or best_d <= 1e-6:
+                continue
+            q = (float(best_q[0]), float(best_q[1]), float(best_q[2]))
+            # merge 路径：投影落点贴着既有节点 → 改指节点并删除悬空节点
+            target_nid = None
+            for other_nid, other_p in new_nodes.items():
+                if other_nid == nid:
+                    continue
+                if math.dist((float(other_p[0]), float(other_p[1]),
+                              float(other_p[2])), q) <= merge_node_tol_mm:
+                    target_nid = other_nid
+                    break
+            # 退化防护：算焊接/并入后的新杆长，两端塌缩 → 剪除残片
+            other_key = "to" if end_key == "from" else "from"
+            other_pos = new_nodes.get(b[other_key])
+            if other_pos is not None:
+                new_L = math.dist(q, (float(other_pos[0]),
+                                      float(other_pos[1]),
+                                      float(other_pos[2])))
+                if new_L < min_bar_len_mm:
+                    bars_to_remove.add(b["id"])
+                    lab = _label_of(b)
+                    if lab and lab not in seen_labels:
+                        seen_labels.add(lab)
+                        pruned_labels.append(lab)
+                    degenerate_pruned += 1
+                    details.append({
+                        "node": nid,
+                        "bar": str(b.get("id")),
+                        "gap_mm": round(best_d, 1),
+                        "mode": "degenerate_pruned",
+                        "new_len_mm": round(new_L, 1),
+                    })
+                    break
+            if target_nid is not None:
+                b[end_key] = target_nid
+                new_nodes.pop(nid, None)
+                deg[nid] = 0
+                deg[target_nid] = deg.get(target_nid, 0) + 1
+                merged += 1
+            else:
+                new_nodes[nid] = q
+                welded += 1
+            details.append({
+                "node": nid,
+                "bar": str(b.get("id")),
+                "gap_mm": round(best_d, 1),
+                "mode": "merged" if target_nid is not None else "welded",
+            })
+            segs = _seg_list()  # 坐标/拓扑已变，重建线段表
+    if bars_to_remove:
+        new_bars = [b for b in new_bars if b["id"] not in bars_to_remove]
+    return new_nodes, new_bars, {
+        "welded": welded, "merged": merged,
+        "degenerate_pruned": degenerate_pruned,
+        "pruned_label_ids": pruned_labels,
+        "details": details,
+    }
+
+
+def prune_residual_dangling_bars(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    max_len_mm: float = 1800.0,
+    seg_gap_mm: float = 250.0,
+    min_bar_len_mm: float = 150.0,
+    exclude_roles=("CROSS",),
+    max_rounds: int = 8,
+):
+    """阶段 5.6b：残余孤立悬空杆剪除（焊接后仍无法闭合的孤立残片）。
+
+    规则（迭代至稳定）：degree=1 非横担端点，其杆长 <= max_len_mm，且该端
+    点到最近异杆线段距离 > seg_gap_mm（焊接通道够不着，属孤立残片）→ 剪除
+    该杆。剪除后另一端可能变成新的 degree=1 → 下一轮继续判定（链式残片）。
+    微小残片（< min_bar_len_mm，如 welding 塌缩残渣）无条件剪除。
+
+    件号保全：被剪杆件若携带真实图纸件号（bar_id 非 UNLABELED 前缀），收进
+    pruned_label_ids 由调用方挂 orphan_label_ids 登记簿——几何清噪，A1 证据
+    不丢（与 prune_short_stub_bars 同纪律）。
+
+    长杆（> max_len_mm）保留——真实结构断裂需拓扑缝合，不能靠删除假装闭合。
+    返回 (new_nodes, new_bars, {"pruned_bars": n, "pruned_rounds": k,
+    "pruned_label_ids": [...]})。
+    """
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = [dict(b) for b in bars]
+    _excl = {str(r).upper() for r in exclude_roles}
+
+    def _role(b: dict) -> str:
+        return str(b.get("role") or "").upper()
+
+    def _label_of(b: dict):
+        v = b.get("bar_id")
+        if v and not str(v).startswith("UNLABELED"):
+            return str(v)
+        return None
+
+    pruned_labels: List[str] = []
+    seen_labels = set()
+    total_pruned = 0
+    rounds_used = 0
+    for _round in range(max_rounds):
+        deg: Dict[str, int] = {}
+        for b in new_bars:
+            deg[b["from"]] = deg.get(b["from"], 0) + 1
+            deg[b["to"]] = deg.get(b["to"], 0) + 1
+        segs = []
+        for b in new_bars:
+            p1, p2 = new_nodes.get(b["from"]), new_nodes.get(b["to"])
+            if p1 is None or p2 is None:
+                continue
+            segs.append((b["from"], b["to"],
+                         (float(p1[0]), float(p1[1]), float(p1[2])),
+                         (float(p2[0]), float(p2[1]), float(p2[2]))))
+        dang_ids = set()
+        for nid, d in deg.items():
+            if d != 1 or nid not in new_nodes:
+                continue
+            bar = None
+            for b in new_bars:
+                if b["from"] == nid or b["to"] == nid:
+                    bar = b
+                    break
+            if bar is None or _role(bar) in _excl:
+                continue
+            p1, p2 = new_nodes.get(bar["from"]), new_nodes.get(bar["to"])
+            if p1 is None or p2 is None:
+                continue
+            L = math.dist((float(p1[0]), float(p1[1]), float(p1[2])),
+                          (float(p2[0]), float(p2[1]), float(p2[2])))
+            if L > max_len_mm:
+                continue
+            # 微小残片（< min_bar_len_mm）：无条件剪除—— welding 塌缩残渣 /
+            # split 碎头，即使贴着结构也无保留价值（GLB 导出会跳过零长杆）。
+            if L < min_bar_len_mm:
+                dang_ids.add(bar["id"])
+                continue
+            pv = np.array([float(new_nodes[nid][0]),
+                           float(new_nodes[nid][1]),
+                           float(new_nodes[nid][2])])
+            min_d = None
+            for f_id, t_id, s1, s2 in segs:
+                if nid in (f_id, t_id):
+                    continue
+                ab = np.array(s2) - np.array(s1)
+                denom = float(np.dot(ab, ab)) or 1e-9
+                t = float(np.clip(np.dot(pv - np.array(s1), ab) / denom, 0.0, 1.0))
+                d = float(np.linalg.norm(pv - (np.array(s1) + t * ab)))
+                if min_d is None or d < min_d:
+                    min_d = d
+            if min_d is not None and min_d <= seg_gap_mm:
+                continue  # 可焊接的留给焊接通道
+            dang_ids.add(bar["id"])
+        if not dang_ids:
+            break
+        rounds_used = _round + 1
+        for b in new_bars:
+            if b["id"] in dang_ids:
+                lab = _label_of(b)
+                if lab and lab not in seen_labels:
+                    seen_labels.add(lab)
+                    pruned_labels.append(lab)
+        new_bars = [b for b in new_bars if b["id"] not in dang_ids]
+        total_pruned += len(dang_ids)
+
+    # 清理孤立节点（无杆件引用）
+    used = set()
+    for b in new_bars:
+        used.add(b["from"])
+        used.add(b["to"])
+    new_nodes = {nid: p for nid, p in new_nodes.items() if nid in used}
+    return new_nodes, new_bars, {
+        "pruned_bars": total_pruned,
+        "pruned_rounds": rounds_used,
+        "pruned_label_ids": pruned_labels,
     }
 
 

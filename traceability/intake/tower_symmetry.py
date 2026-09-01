@@ -128,6 +128,8 @@ def expand_4_face_symmetry_model(
             "drawing_view": p.get("drawing_view"),
             "source_file": p.get("source_file"),
             "geometry_origin": p.get("geometry_origin"),
+            "geometry_class": p.get("geometry_class"),
+            "source_extractor": p.get("source_extractor"),
             "projection_refs": list(p.get("projection_refs") or []),
             # 阶段4.4：件号证据随展开透传（solve 层 nb=dict(b) 浅拷贝复制）
             "bar_id_evidence": list(p.get("bar_id_evidence") or []),
@@ -326,6 +328,45 @@ def expand_4_face_symmetry_model(
                 "bridged": int(_bbl_rep.get("bridged", 0)),
                 "boundaries": _bbl_rep.get("boundaries") or [],
                 "details": _bbl_rep.get("details") or [],
+            }
+
+    # 阶段 5.6：悬空断裂收尾（P3 真实性治理，门禁 genuine_dangling<=4 目标）。
+    # 实测（2026-09-02 dbd2d13 产物审计）：45 处物理悬空 stem 中 28 处自由端
+    # 距异杆线段 52~199mm（制图惯例「线端停在构件边缘」），5 处为焊接通道
+    # 够不着的孤立残片（L<=1200、离结构 318~481mm）。
+    #   5.6a 焊接：degree=1 非横担端点投影到最近异杆线段（gap<=250mm），
+    #       落点贴既有节点则并入（merge）；
+    #   5.6b 剪除：焊接后仍孤立的短残片剪除，件号收 orphan_label_ids 登记
+    #       （A1 证据不丢）。
+    # 顺序 weld→prune→weld：剪除可能使已焊接端失去目标杆，二遍焊接兜底。
+    # 均默认关闭（与 max_stub_len_mm 同纪律：过滤有损，须 overlay 显式启用）。
+    if bool(spec.get("weld_dangling_to_segments", False)):
+        from ..solve.tower_geometry import (
+            weld_dangling_endpoints_to_segments, prune_residual_dangling_bars)
+        _weld_gap = float(spec.get("weld_dangling_max_gap_mm", 250.0))
+        _min_bar_len = float(spec.get("weld_min_bar_len_mm", 150.0))
+        snapped_nodes, snapped_bars, _w1 = weld_dangling_endpoints_to_segments(
+            snapped_nodes, snapped_bars, max_gap_mm=_weld_gap,
+            min_bar_len_mm=_min_bar_len)
+        orphan_label_ids.extend(_w1.get("pruned_label_ids") or [])
+        _pruned_n = int(_w1.get("degenerate_pruned", 0))
+        if bool(spec.get("prune_residual_dangling", False)):
+            snapped_nodes, snapped_bars, _pr = prune_residual_dangling_bars(
+                snapped_nodes, snapped_bars,
+                max_len_mm=float(spec.get("prune_residual_max_len_mm", 1800.0)),
+                min_bar_len_mm=_min_bar_len)
+            _pruned_n += int(_pr.get("pruned_bars", 0))
+            orphan_label_ids.extend(_pr.get("pruned_label_ids") or [])
+        snapped_nodes, snapped_bars, _w2 = weld_dangling_endpoints_to_segments(
+            snapped_nodes, snapped_bars, max_gap_mm=_weld_gap,
+            min_bar_len_mm=_min_bar_len)
+        orphan_label_ids.extend(_w2.get("pruned_label_ids") or [])
+        df_weld = model.components.get("drawing_file")
+        if df_weld is not None:
+            df_weld.properties["dangling_weld_report"] = {
+                "welded": int(_w1.get("welded", 0)) + int(_w2.get("welded", 0)),
+                "merged": int(_w1.get("merged", 0)) + int(_w2.get("merged", 0)),
+                "pruned": _pruned_n + int(_w2.get("degenerate_pruned", 0)),
             }
 
     # 阶段3.2：生产路径（非 GT）从立面主腿证据拟合 half_width(z)，替代 abs(t)。
@@ -869,6 +910,44 @@ def expand_4_face_symmetry_model(
         _df = model.components.get("drawing_file")
         if _df is not None:
             _df.properties["dangling_repair_report"] = dict(_repair_rep)
+
+    # 阶段 5.6-final：悬空断裂收尾（终态兜底）。阶段 5.6 在展开前跑过一遍，
+    # 但展开后还有横隔过滤/DT/kfan/head-panel/crossarm/multiview/共线拼接/
+    # dangling-repair 等阶段会新建杆或拆除杆，暴露新的 degree=1 端点
+    # （实测 dbd2d13+5.6 产物仍有 20 处物理悬空：4f_stitch_* 与 04/05 册
+    # 残片）。此处在「门禁度量交付几何」的终算点之前再跑一轮
+    # weld→prune→weld（语义同阶段 5.6，件号收 orphan_label_ids 登记簿）。
+    if bool(spec.get("weld_dangling_to_segments", False)):
+        from ..solve.tower_geometry import (
+            weld_dangling_endpoints_to_segments, prune_residual_dangling_bars)
+        _wgap = float(spec.get("weld_dangling_max_gap_mm", 250.0))
+        _fmin_len = float(spec.get("weld_min_bar_len_mm", 150.0))
+        face_nodes, face_bars, _fw1 = weld_dangling_endpoints_to_segments(
+            face_nodes, face_bars, max_gap_mm=_wgap, min_bar_len_mm=_fmin_len)
+        orphan_label_ids.extend(_fw1.get("pruned_label_ids") or [])
+        _fpruned = int(_fw1.get("degenerate_pruned", 0))
+        if bool(spec.get("prune_residual_dangling", False)):
+            face_nodes, face_bars, _fpr = prune_residual_dangling_bars(
+                face_nodes, face_bars,
+                max_len_mm=float(spec.get("prune_residual_max_len_mm", 1800.0)),
+                min_bar_len_mm=_fmin_len)
+            _fpruned += int(_fpr.get("pruned_bars", 0))
+            orphan_label_ids.extend(_fpr.get("pruned_label_ids") or [])
+        face_nodes, face_bars, _fw2 = weld_dangling_endpoints_to_segments(
+            face_nodes, face_bars, max_gap_mm=_wgap, min_bar_len_mm=_fmin_len)
+        orphan_label_ids.extend(_fw2.get("pruned_label_ids") or [])
+        roles = classify_members(face_nodes, face_bars)
+        _dfw = model.components.get("drawing_file")
+        if _dfw is not None:
+            _prev = _dfw.properties.get("dangling_weld_report") or {}
+            _dfw.properties["dangling_weld_report"] = {
+                "welded": int(_prev.get("welded", 0))
+                          + int(_fw1.get("welded", 0)) + int(_fw2.get("welded", 0)),
+                "merged": int(_prev.get("merged", 0))
+                          + int(_fw1.get("merged", 0)) + int(_fw2.get("merged", 0)),
+                "pruned": int(_prev.get("pruned", 0)) + _fpruned
+                          + int(_fw2.get("degenerate_pruned", 0)),
+            }
 
     # Phase 3：门禁度量「交付几何」——全部几何变换（展开/拼接/修复）之后
     # 用同一 half_width_fn 终算 topology（half_width_fn 在本作用域仍可用，

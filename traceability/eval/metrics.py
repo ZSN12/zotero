@@ -972,6 +972,14 @@ def _bar_caliber_class(p: Dict[str, Any]) -> str:
     if p.get("panel_levels_source") == "gt_canonical_z_only":
         return "level_assisted"
     origin = str(p.get("geometry_origin") or "")
+    # P1.2：centerline_extract 主路径的合并/合成横杆仍是「图纸直读」语义，
+    # 不应因 collinear_stitch 或 marker_synth 被降 reconstructed 层。
+    if str(p.get("source_extractor") or "") == "centerline_extract":
+        face = p.get("face")
+        if face in (None, "f") and origin in (
+                "dxf_geom", "marker_synth", "collinear_stitch"):
+            if is_recognized_bar(p):
+                return "recognized"
     if origin == "collinear_stitch":
         return "reconstructed"
     face = p.get("face")
