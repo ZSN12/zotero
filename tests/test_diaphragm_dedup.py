@@ -37,9 +37,10 @@ class DiaphragmDedupTest(unittest.TestCase):
         )
 
         self.assertGreater(report["duplicates_removed"], 0)
-        self.assertEqual(report["n_generated"], 44)
-        self.assertEqual(report["n_deduped"], 22)
-        self.assertEqual(len(bars), 22)
+        # P3.7c：每层 23 杆（+1 y 向全宽梁），两层 46、去重后 23。
+        self.assertEqual(report["n_generated"], 46)
+        self.assertEqual(report["n_deduped"], 23)
+        self.assertEqual(len(bars), 23)
         self.assertTrue(report["groups"])
         self.assertTrue(any(b.get("diaphragm_dedup_merged") for b in bars))
 
