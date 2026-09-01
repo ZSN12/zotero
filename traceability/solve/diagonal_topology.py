@@ -260,6 +260,7 @@ def build_interpretations(
     kchain_span_lo: float = 400.0,
     kchain_span_hi: float = 1600.0,
     fan_enabled: bool = True,
+    beat_tol_mm: Optional[float] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """证据线 → fan/twist/kchain 解释对（P1 2.2/2.3 的评分聚合）。
 
@@ -465,6 +466,11 @@ def build_interpretations(
     sel_kwargs: Dict[str, Any] = {}
     if selection_mode == "relaxed":
         sel_kwargs["beat_tol_mm"] = 650.0
+    if beat_tol_mm is not None:
+        # per-sheet 节拍容差覆写（P3：07 册真扇跨度 2540/3701 卡在 450
+        # 容差外 14/0.7mm 被误杀——簇高 z 偏移 ±100-200mm 会传导进跨度，
+        # 塔身分册需要比默认更宽的吸收带）
+        sel_kwargs["beat_tol_mm"] = float(beat_tol_mm)
     out, sel_audit = select_interpretations(out, panel_levels, **sel_kwargs)
     sel_audit["mode"] = selection_mode
     return out, sel_audit
@@ -752,7 +758,8 @@ def resolve_diagonal_sheet_configs(spec: Dict[str, Any]) -> List[Dict[str, Any]]
     键：
       diagonal_topology_sheets — 分册列表（顺序即执行顺序）
       diagonal_topology_sheet_config — {stem: {z_window, auto_z_window,
-          twist_faces, twist_span_lo, twist_span_hi}}
+          twist_faces, twist_span_lo, twist_span_hi, fan_enabled,
+          beat_tol_mm}}
       diagonal_topology_z_window — 全局默认窗口
       diagonal_topology_twist_faces — 全局默认 twist 面
 
@@ -760,6 +767,10 @@ def resolve_diagonal_sheet_configs(spec: Dict[str, Any]) -> List[Dict[str, Any]]
     显著小于塔身门禁 [1900, 3300]，故 twist 跨度门限支持 per-sheet 覆写
     （twist_span_lo/hi）；塔头分册（04 册 GT 实测全 X 交叉、无 fan 结构）
     可用 fan_enabled=false 关闭 fan 解释。
+
+    P3（07 册接入）：塔身多跨 K 扇的簇高 z 偏移（±100-200mm）会传导进
+    fan 跨度，使真扇（GT 跨度 2500/3500）以 2540/3701 的候选跨度卡在
+    默认 450 节拍容差外——beat_tol_mm 支持 per-sheet 覆写（如 520）。
     """
     sheets = list(spec.get("diagonal_topology_sheets") or ["35A1-JC1-06"])
     per = dict(spec.get("diagonal_topology_sheet_config") or {})
@@ -780,6 +791,8 @@ def resolve_diagonal_sheet_configs(spec: Dict[str, Any]) -> List[Dict[str, Any]]
             "twist_span_hi": (float(cfg["twist_span_hi"])
                               if cfg.get("twist_span_hi") is not None else None),
             "fan_enabled": bool(cfg.get("fan_enabled", True)),
+            "beat_tol_mm": (float(cfg["beat_tol_mm"])
+                            if cfg.get("beat_tol_mm") is not None else None),
         })
     return out
 
@@ -829,6 +842,7 @@ def reconstruct_diagonal_sheets(
             twist_span_lo=cfg["twist_span_lo"],
             twist_span_hi=cfg["twist_span_hi"],
             fan_enabled=cfg.get("fan_enabled", True),
+            beat_tol_mm=cfg.get("beat_tol_mm"),
         )
         rep["sheet"] = sheet
         rep["auto_z_window"] = cfg["auto_z_window"]
@@ -876,6 +890,7 @@ def reconstruct_diagonal_topology(
     twist_span_lo: Optional[float] = None,
     twist_span_hi: Optional[float] = None,
     fan_enabled: bool = True,
+    beat_tol_mm: Optional[float] = None,
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """斜材拓扑闭环主入口。
 
@@ -887,6 +902,8 @@ def reconstruct_diagonal_topology(
     None 时用 build_interpretations 默认 [1900, 3300]）。
     fan_enabled：per-sheet fan 解释开关（04 册 GT 实测全 X 交叉、无 fan
     结构，关掉可消除 64 根 fan 杆中 56 根 FP）。
+    beat_tol_mm：per-sheet 节拍容差覆写（None 用默认 450；07 册簇高
+    z 偏移使真扇跨度超出默认容差，需要 500+）。
     """
     # 1. 候选收集（front 面 fan + 多面 twist）
     cands = collect_diagonal_candidates(
@@ -901,7 +918,7 @@ def reconstruct_diagonal_topology(
         cands, heights, panel_levels, hw_fn,
         selection_mode=selection_mode, twist_cands=twist_cands,
         twist_span_lo=twist_span_lo, twist_span_hi=twist_span_hi,
-        fan_enabled=fan_enabled)
+        fan_enabled=fan_enabled, beat_tol_mm=beat_tol_mm)
     # 4. 生成 3D 斜材（去重 + Degree=1 守门）
     gen_raw: List[dict] = []
     for interp in interps:

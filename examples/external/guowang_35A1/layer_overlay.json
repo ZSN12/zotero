@@ -285,8 +285,8 @@
         "scale_x": 20.0,
         "scale_y": 20.0,
         "z_flip": false,
-        "z_offset": 17143,
-        "z_span_mm": 7000.0,
+        "z_offset": 18000,
+        "z_span_mm": 6000.0,
         "z_invert": true
       }
     ],
@@ -311,8 +311,8 @@
         "scale_x": 20.0,
         "scale_y": 20.0,
         "z_flip": false,
-        "z_offset": 12143,
-        "z_span_mm": 5000.0,
+        "z_offset": 13000,
+        "z_span_mm": 4000.0,
         "z_invert": true
       }
     ],
@@ -337,8 +337,8 @@
         "scale_x": 20.0,
         "scale_y": 20.0,
         "z_flip": false,
-        "z_offset": 6643,
-        "z_span_mm": 5500.0,
+        "z_offset": 7000,
+        "z_span_mm": 5000.0,
         "z_invert": true
       }
     ],
@@ -1110,13 +1110,59 @@
     "35A1-JC1-02": {
       "colinear_tol": 2.0,
       "gap_tol": 30.0,
-      "max_angle_deg": 8.0
+      "max_angle_deg": 8.0,
+      "subdivide_at_t_junctions": false,
+      "subdivide_snap_tol": 2.0,
+      "subdivide_max_splits": 24,
+      "subdivide_at_levels": true,
+      "level_cluster_tol": 4.0,
+      "subdivide_min_seg_len": 3.0,
+      "subdivide_min_member_len": 40.0,
+      "subdivide_min_diag_len": 35.0
     },
     "35A1-JC1-06": {
       "colinear_tol": 2.0,
       "gap_tol": 30.0,
       "max_angle_deg": 8.0,
-      "min_fragment_len_units": 2.5
+      "min_fragment_len_units": 2.5,
+      "subdivide_at_t_junctions": false,
+      "subdivide_snap_tol": 2.0,
+      "subdivide_max_splits": 24,
+      "subdivide_at_levels": true,
+      "level_cluster_tol": 4.0,
+      "subdivide_min_seg_len": 3.0,
+      "subdivide_min_member_len": 40.0,
+      "subdivide_min_diag_len": 35.0
+    },
+    "35A1-JC1-07": {
+      "subdivide_at_t_junctions": false,
+      "subdivide_snap_tol": 2.0,
+      "subdivide_max_splits": 24,
+      "subdivide_at_levels": true,
+      "level_cluster_tol": 4.0,
+      "subdivide_min_seg_len": 3.0,
+      "subdivide_min_member_len": 40.0,
+      "subdivide_min_diag_len": 35.0
+    },
+    "35A1-JC1-05": {
+      "subdivide_at_t_junctions": false,
+      "subdivide_snap_tol": 2.0,
+      "subdivide_max_splits": 24,
+      "subdivide_at_levels": true,
+      "level_cluster_tol": 4.0,
+      "subdivide_min_seg_len": 3.0,
+      "subdivide_min_member_len": 40.0,
+      "subdivide_min_diag_len": 35.0
+    },
+    "35A1-JC1-04": {
+      "subdivide_at_t_junctions": false,
+      "subdivide_snap_tol": 2.0,
+      "subdivide_max_splits": 24,
+      "subdivide_at_levels": true,
+      "level_cluster_tol": 4.0,
+      "subdivide_min_seg_len": 3.0,
+      "subdivide_min_member_len": 40.0,
+      "subdivide_min_diag_len": 35.0
     }
   },
   "glb_gate_min_4face_bars": 50,
@@ -1149,7 +1195,7 @@
   "max_stub_len_mm": 400.0,
   "use_gt_platform_levels": true,
   "snap_dangling_endpoints": true,
-  "snap_dangling_max_gap_mm": 300.0,
+  "snap_dangling_max_gap_mm": 700.0,
   "half_width_taper": true,
   "detect_crossarm_layers": true,
   "collinear_stitch": true,
@@ -1175,7 +1221,7 @@
   "parametric_base_extrapolation": true,
   "parametric_base_z_top": 6500.0,
   "diagonal_topology_reconstruct": true,
-  "diagonal_topology_selection_mode": "none",
+  "diagonal_topology_selection_mode": "p11",
   "diagonal_topology_sheets": [
     "35A1-JC1-05",
     "35A1-JC1-06",
@@ -1194,7 +1240,8 @@
       "auto_z_window": true
     },
     "35A1-JC1-07": {
-      "auto_z_window": true
+      "auto_z_window": true,
+      "beat_tol_mm": 520.0
     },
     "35A1-JC1-04": {
       "z_window": [
@@ -1232,8 +1279,32 @@
       "dim_max_len_mm": 400.0
     }
   },
-  "multiview_hypothesis_sheets": [
-    "35A1-JC1-06"
-  ],
-  "mllm_confidence_gate_block_inject": false
+  "multiview_hypothesis_sheets": [],
+  "mllm_confidence_gate_block_inject": false,
+  "centerline_extract": {
+    "_comment": "P1.1/P2 候选中心线提取（A2-pure 主路径）。z 锚点 = 斜杆端点簇跨度（腿范围内）→ z_anchor_[lo|hi]_mm 线性映射。锚点推导：图纸自身证据（面板尺寸链 + 邻段界面 + 接头几何）。06=[13000,17000]、07=[7000,12000]、05=[18000,24000]（GT 节点 18000..24000 + 06 册顶界 17000 接头）、04/02 用 view_region 原锚点（面板链自洽）。40 底段裙部纯斜线无竖腿，暂不启用（裙部由 derived_parametric_base 承担）。",
+    "35A1-JC1-06": {
+      "enabled": true,
+      "z_anchor_lo_mm": 13000.0,
+      "z_anchor_hi_mm": 17000.0
+    },
+    "35A1-JC1-07": {
+      "enabled": true,
+      "z_anchor_lo_mm": 7000.0,
+      "z_anchor_hi_mm": 12000.0
+    },
+    "35A1-JC1-05": {
+      "enabled": true,
+      "z_anchor_lo_mm": 18000.0,
+      "z_anchor_hi_mm": 24000.0
+    },
+    "35A1-JC1-04": {
+      "enabled": true
+    },
+    "35A1-JC1-02": {
+      "enabled": true
+    }
+  },
+  "kfan_completion": false,
+  "crossarm_truss_completion": false
 }

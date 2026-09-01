@@ -1113,11 +1113,14 @@ def deliver_project(
         "bom_tree_summary": {
             "total_unique_bar_ids": bom_tree.get("total_unique_bar_ids", 0),
             "conflict_count": bom_tree.get("conflict_count", 0),
+            "under_identified_count": bom_tree.get("under_identified_count", 0),
+            "fittings_skipped": len(bom_tree.get("fittings_skipped") or []),
             "only_in_master": len(bom_tree.get("only_in_master") or []),
             "only_in_model": len(bom_tree.get("only_in_model") or []),
             "master_bom_path": str(bom_path) if bom_path else None,
         },
         "bom_conflicts": (bom_tree.get("conflicts") or [])[:50],
+        "bom_under_identified": (bom_tree.get("under_identified") or [])[:50],
         "cross_sheet_bar_id": {
             "duplicate_count": cross_sheet_bar_id.get("duplicate_count", 0),
             "cross_file_groups": (cross_sheet_bar_id.get("cross_file_groups") or [])[:20],

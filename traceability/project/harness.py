@@ -127,12 +127,26 @@ def run_project_harness(
         ))
 
     # r_project_bom_master
+    # V1（2026-09-02）语义修正：bom_tree 把数量差分成两类——
+    #   * conflicts（over_count：模型比图纸多）→ 真实数据冲突，FAILED；
+    #   * under_identified（模型比图纸少）→ 件号标注覆盖缺口（A1/A3 关联率
+    #     已度量，修法在 P4 件号绑定，不在 BOM 核对里重复拦交付）→ PENDING。
     conflicts = (bom_tree or {}).get("conflicts") or []
+    under = (bom_tree or {}).get("under_identified") or []
     master_path = (project.metadata or {}).get("master_bom_path")
     if conflicts:
+        detail = ", ".join(
+            f"{c.get('bar_id')}({c.get('aggregated_qty')}>{c.get('master_qty')})"
+            for c in conflicts[:6]
+        )
         results.append(ProjectValidationResult(
             "r_project_bom_master", ValidationStatus.FAILED,
-            f"{len(conflicts)} 个件号与 master BOM 数量不一致",
+            f"{len(conflicts)} 个件号模型数量超图纸（split 未并/件号错挂）: {detail}",
+        ))
+    elif under:
+        results.append(ProjectValidationResult(
+            "r_project_bom_master", ValidationStatus.PENDING,
+            f"{len(under)} 个件号识别不全（模型数量 < 图纸 BOM，待 P4 件号绑定补齐）",
         ))
     elif master_path and int((bom_tree or {}).get("total_unique_bar_ids") or 0) > 0:
         only_master = (bom_tree or {}).get("only_in_master") or []

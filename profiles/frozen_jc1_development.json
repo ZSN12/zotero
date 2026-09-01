@@ -1,6 +1,6 @@
 {
-  "_comment": "P4.1 冻结参数清单（JC1 development）。盲测前不得据结果修改这些键。",
-  "frozen_at": "2026-08-31",
+  "_comment": "P1 真实性治理基线（用户批准的阶段1-2）：关停盲目模板补全（kfan/crossarm_truss/multiview），启用 centerline_extract 纯几何提取主路径。原 P4.1 冻结键见 git 历史。",
+  "frozen_at": "2026-09-02",
   "dataset_split": "development",
   "profile": "canonical_assisted",
   "overlay_keys": {
@@ -43,16 +43,16 @@
     "collinear_stitch_max_single_len_mm": 800.0,
     "collinear_stitch_max_segments": 2,
     "collinear_stitch_role_specific": true,
-    "multiview_hypothesis_sheets": [
-      "35A1-JC1-06"
-    ],
+    "multiview_hypothesis_sheets": [],
     "mllm_confidence_gate_block_inject": false,
     "mllm_keep_drop_sheets": [
       "35A1-JC1-02",
       "35A1-JC1-04",
       "35A1-JC1-05",
       "35A1-JC1-07"
-    ]
+    ],
+    "kfan_completion": false,
+    "crossarm_truss_completion": false
   },
   "eval": {
     "tolerance_mm": 500.0,

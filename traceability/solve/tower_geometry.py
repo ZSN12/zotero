@@ -4567,6 +4567,117 @@ def stitch_segment_boundaries(
     }
 
 
+def bridge_segment_boundary_legs(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    boundaries: Sequence[float],
+    max_gap_mm: float = 1600.0,
+    min_gap_mm: float = 120.0,
+    max_lateral_mm: float = 400.0,
+    id_prefix: str = "bleg",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """阶段 5.4：分册边界腿杆搭桥（多段立面图册的真实结构缺口）。
+
+    背景：国网图册每册只画自己的段（07 画 [7000,12000]，06 画 [13000,17000]），
+    但真实塔在分册边界 [12000,13000] 处腿是连续的——GT 实测 96 根杆跨越
+    该边界。各册独立提取后腿链在边界/段内断口（如 06 顶 16645 → 05 底
+    18010 缺口 1366mm），既造成 M3 腿 FN，也留下悬空腿端头。
+
+    本函数按**腿链断口**搭桥（与端点度数无关——断口两侧端点往往各自
+    挂着横杆/斜材，degree>=2，但腿链本身断了）：
+
+        1. 收集全部 LEG 杆端点，按（x,y 象限）分组到 4 条腿轨迹；
+        2. 每条轨迹按 z 排序，找「链链顶端 z_top」与「下一段链底端
+           z_bot」之间的断口：min_gap_mm < z_bot - z_top <= max_gap_mm；
+        3. 断口两端横向错位 <= max_lateral_mm（塔身收缩 1m 内 <150mm）
+           时生成搭桥腿杆（role=LEG, geometry_origin=boundary_leg_bridge）。
+
+    boundaries 参数仅作报告锚点（搭桥本身是纯链断口检测，不依赖边界
+    标高先验——段内断口（05 册 21015→21918）同样补）。
+    只补腿、不补斜材（边界斜材需要跨册拓扑解释，另走 DT 通道）。
+    返回 (new_nodes, new_bars, report)。
+    """
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = [dict(b) for b in bars]
+    roles = classify_members(new_nodes, new_bars)
+
+    def _endpoint_role(b: dict) -> str:
+        # 显式 role 优先（管线写回的 LEG/DIAG/HORIZ），几何分类兜底
+        explicit = str(b.get("role") or "").upper()
+        if explicit:
+            return explicit
+        return roles.get(b["id"]) or ""
+
+    # 1) 腿端点按象限分组：(sign_x, sign_y) → [(z, nid)]
+    tracks: Dict[Tuple[int, int], List[Tuple[float, str]]] = {}
+    leg_ids = set()
+    for b in new_bars:
+        if _endpoint_role(b) != "LEG":
+            continue
+        leg_ids.add(b["id"])
+        for nid in (b["from"], b["to"]):
+            p = new_nodes.get(nid)
+            if p is None:
+                continue
+            sx = 1 if p[0] >= 0 else -1
+            sy = 1 if p[1] >= 0 else -1
+            tracks.setdefault((sx, sy), []).append((float(p[2]), nid))
+
+    bridged = 0
+    details: List[Dict[str, Any]] = []
+    seq = 0
+    # 2) 每条轨迹：按 z 排序端点，扫描断口
+    for (sx, sy), pts in tracks.items():
+        # 去重（同一节点可能出现在多根腿杆上）
+        seen: Dict[str, float] = {}
+        for z, nid in pts:
+            seen[nid] = min(seen.get(nid, z), z)
+        ordered = sorted(((z, nid) for nid, z in seen.items()))
+        # 链扫描：相邻端点 z 差 > min_gap 即候选断口；验证横向配对
+        for i in range(len(ordered) - 1):
+            z_top, nid_top = ordered[i]
+            z_bot, nid_bot = ordered[i + 1]
+            gap = z_bot - z_top
+            if not (min_gap_mm < gap <= max_gap_mm):
+                continue
+            p_top, p_bot = new_nodes[nid_top], new_nodes[nid_bot]
+            lateral = float(np.hypot(p_bot[0] - p_top[0], p_bot[1] - p_top[1]))
+            if lateral > max_lateral_mm:
+                continue
+            # 幂等：若两节点间已有腿杆相连，跳过（斜材连接不算——
+            # 腿链断裂处即使斜材跨越，腿本身仍是断的）
+            if any(((b["from"] == nid_top and b["to"] == nid_bot) or
+                    (b["from"] == nid_bot and b["to"] == nid_top))
+                   and _endpoint_role(b) == "LEG" for b in new_bars):
+                continue
+            seq += 1
+            bid = f"{id_prefix}_{seq:03d}"
+            new_bars.append({
+                "id": bid,
+                "from": nid_top,
+                "to": nid_bot,
+                "role": "LEG",
+                "geometry_class": "reconstructed",
+                "geometry_origin": "boundary_leg_bridge",
+                "source_handles": f"quadrant=({sx},{sy})",
+            })
+            bridged += 1
+            details.append({
+                "quadrant": f"({sx},{sy})",
+                "from_z": round(z_top, 1),
+                "to_z": round(z_bot, 1),
+                "gap_mm": round(gap, 1),
+                "lateral_mm": round(lateral, 1),
+            })
+
+    return new_nodes, new_bars, {
+        "boundaries": [float(z) for z in boundaries],
+        "bridged": bridged,
+        "details": details,
+    }
+
+
 def reconstruct_panel_cross_diagonals(
     nodes: NodeMap,
     bars: List[dict],

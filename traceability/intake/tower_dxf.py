@@ -1161,7 +1161,42 @@ def extract_tower_from_dxf(
 
     bar_segments: List[Dict] = []
     fallback_view = None
-    if regions:
+
+    # ---- P1.1 候选中心线提取（centerline_extract 分册）----
+    # 06/07 册的根因修复：双线角钢 → 中心线配对、X 撑通长线、横杆只画
+    # 双短划标记（marker）→ 层位合成。常规 raw_segments 直接产出碎双线，
+    # 拓扑粒度对不上 GT；对这些分册改用整链提取器（图纸单位段，带唯一
+    # handle 供件号文字关联），下游（共线合并/T 打断/节点聚类/z 归一化）
+    # 走既有管线。overlay 开关：centerline_extract.<stem>.enabled。
+    from .centerline_extract import (
+        extract_centerline_drawing_segments,
+        stems_with_centerline_extract,
+    )
+    _cle_audit: Optional[Dict[str, Any]] = None
+    if stem in stems_with_centerline_extract(layer_map_path):
+        try:
+            _cle_segs, _cle_audit = extract_centerline_drawing_segments(
+                dxf_path, stem, overlay=layer_map_path,
+            )
+        except Exception as _exc:  # 提取失败安全降级回 raw_segments
+            _cle_segs, _cle_audit = None, {"error": str(_exc)}
+        if _cle_segs:
+            front_region = next(
+                (r for r in regions if _region_kind(r) == "front"), None)
+            bar_segments = []
+            for _k, _s in enumerate(_cle_segs):
+                _seg = dict(_s)
+                _seg.pop("_stem", None)
+                _seg["handle"] = f"CLE{_k:04d}"
+                if front_region is not None:
+                    _seg["region"] = front_region
+                bar_segments.append(_seg)
+            _df_cle = model.components.get("drawing_file")
+            if _df_cle is not None:
+                _df_cle.properties["centerline_extract"] = _cle_audit
+            raw_segments = []  # 阻止下方常规区域过滤再注入原始碎双线
+
+    if regions and raw_segments:
         for seg in raw_segments:
             mx = (seg["start"][0] + seg["end"][0]) / 2
             my = (seg["start"][1] + seg["end"][1]) / 2

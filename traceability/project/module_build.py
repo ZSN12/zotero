@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -11,16 +10,38 @@ from ..intake.tower_spec import load_tower_spec
 from .assembly import assemble_modules
 
 
+def _root_stem(cid: str) -> str:
+    """组件 id → 物理杆根 stem（去四面镜像 + split 细分链）。
+
+    * 四面展开实例 ``4f_<stem>_F/_B/_L/_R``：剥面后缀，F/B/L/R 共享一杆；
+    * split/panel 细分链 ``<stem>__splitN[__splitM...]``：剥 __split 链，
+      同一识别线的所有细分段合并回一根（BOM 数的是整件，不是段）。
+    其余后缀（_front_56 等母杆序号）保留——不同识别线是不同物理杆。
+    """
+    s = cid[3:] if cid.startswith("4f_") else cid
+    for suf in ("_F", "_B", "_L", "_R"):
+        if s.endswith(suf):
+            s = s[: -len(suf)]
+            break
+    while "__split" in s:
+        s = s[: s.index("__split")]
+    return s
+
+
 def physical_bar_counts(model: EngineeringModel, *, labeled_only: bool = True) -> Dict[str, int]:
     """合并模型中各 bar_id 物理根数（tower_bar 计数）。
 
     阶段 9：用 is_physical_bar 的语义过滤（fail-closed），只统计物理杆件
     （recognized + reconstructed），排除 derived（corner_leg/diaphragm/center）
     与 canonical/unknown，避免 BOM 数量因派生展示几何而虚高。
+
+    V1（2026-09-02）：按 root stem 计数——同一物理杆的四面镜像（F/B/L/R）
+    与 split/panel 细分段只计 1 根。此前逐实例计数把 112 计成 30、402 计成
+    16，全是四面×细分的乘法伪影，不是真实数量差。
     """
     from ..eval.metrics import is_physical_bar
-    counts: Counter = Counter()
-    for comp in model.components.values():
+    stems: Dict[str, Dict[str, set]] = {}  # bar_id -> {root_stem: faces}
+    for cid, comp in model.components.items():
         if comp.kind != "tower_bar":
             continue
         props = comp.properties or {}
@@ -32,8 +53,10 @@ def physical_bar_counts(model: EngineeringModel, *, labeled_only: bool = True) -
             continue
         if labeled_only and bid.startswith("UNLABELED"):
             continue
-        counts[bid] += 1
-    return dict(counts)
+        stems.setdefault(bid, {}).setdefault(_root_stem(cid), set()).add(
+            str(props.get("face") or ""))
+    # 每 bar_id 取 root stem 数为物理根数；同 stem 内 front 为识别源头（记录用）
+    return {bid: len(stem_map) for bid, stem_map in stems.items()}
 
 
 def resolve_master_bom_path(

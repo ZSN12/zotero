@@ -295,6 +295,39 @@ def expand_4_face_symmetry_model(
             snapped_nodes, snapped_bars, boundary_tol_mm=stitch_tol,
         )
 
+    # 阶段 5.4：分册边界腿杆搭桥（P3 真实性治理）。多段立面各画各的段，
+    # 边界 [12000,13000]/[17000,18000] 等处腿链断裂（GT 实测 96 根杆跨越
+    # 07/06 边界）。按 overlay view_regions 的分册 z_offset 推导边界生成
+    # 搭桥腿杆，消除 degree=1 悬空腿端头 + 补回边界腿 FN。默认启用
+    # （真实结构缺口修复），overlay bridge_boundary_legs=false 可关闭。
+    if bool(spec.get("bridge_boundary_legs", True)):
+        from ..solve.tower_geometry import bridge_segment_boundary_legs
+        _bbl_bounds = spec.get("bridge_boundary_z") or []
+        if not _bbl_bounds and overlay is not None:
+            try:
+                import json as _json
+                from pathlib import Path as _Path
+                _ovj = _json.loads(_Path(str(overlay)).read_text(encoding="utf-8"))
+                _zs = set()
+                for _regs in (_ovj.get("view_regions") or {}).values():
+                    for _r in _regs or []:
+                        _zo = _r.get("z_offset")
+                        if _zo is not None:
+                            _zs.add(float(_zo))
+                _bbl_bounds = sorted(_zs)
+            except Exception:
+                _bbl_bounds = []
+        snapped_nodes, snapped_bars, _bbl_rep = bridge_segment_boundary_legs(
+            snapped_nodes, snapped_bars, boundaries=_bbl_bounds or [12000.0, 17000.0, 24000.0, 30000.0],
+        )
+        df_bbl = model.components.get("drawing_file")
+        if df_bbl is not None:
+            df_bbl.properties["boundary_leg_bridge_report"] = {
+                "bridged": int(_bbl_rep.get("bridged", 0)),
+                "boundaries": _bbl_rep.get("boundaries") or [],
+                "details": _bbl_rep.get("details") or [],
+            }
+
     # 阶段3.2：生产路径（非 GT）从立面主腿证据拟合 half_width(z)，替代 abs(t)。
     # 拟合失败时 half_width_fn 保持 None（仍走旧 abs(t) 路径，但打 review_required
     # 标记，不假装闭合）。
