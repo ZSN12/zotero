@@ -5492,12 +5492,23 @@ def reconstruct_terminal_pair_structure(
     )
 
     def _find_or_add(x: float, y: float, z: float) -> str:
+        """端点吸附：300mm 容差内选 z 偏差最小的节点（非先到先得）。
+
+        P3.5b：终止层端点 z 是结构标高（如 17000），容差内可能有多个
+        候选节点（17026 精确 vs 16879 偏 121）——先到先得会吸到偏节点，
+        损害高精度匹配（@100 TP 272→164 根因）。改为按
+        dx+dy+dz 欧氏距离取最近。"""
         nonlocal node_seq
+        best_nid, best_d = None, None
         for nid, p in new_nodes.items():
-            if (abs(float(p[0]) - x) <= 300.0
-                    and abs(float(p[1]) - y) <= 300.0
-                    and abs(float(p[2]) - z) <= 300.0):
-                return nid
+            d = math.sqrt(
+                (float(p[0]) - x) ** 2
+                + (float(p[1]) - y) ** 2
+                + (float(p[2]) - z) ** 2)
+            if d <= 300.0 and (best_d is None or d < best_d):
+                best_nid, best_d = nid, d
+        if best_nid is not None:
+            return best_nid
         node_seq += 1
         nid = f"{id_prefix}_n{node_seq}"
         new_nodes[nid] = (round(x, 3), round(y, 3), round(z, 3))
