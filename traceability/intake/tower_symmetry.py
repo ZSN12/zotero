@@ -476,6 +476,13 @@ def expand_4_face_symmetry_model(
             _df_pl.properties["panel_level_evidence"] = _pl_records
 
     _diag_levels = list(panel_levels) if panel_levels else []
+    # P3.6（2026-09-03）：GT 模式横隔层表覆盖——GT 横隔杆只出现在 13 个
+    # 标高（每层 13-32 杆），非全平台层。用专属 z-only 层表
+    # （gt_diaphragm_levels，与终止层表同纪律）。非 GT 模式保持
+    # panel_levels 全量。
+    if level_source == "gt":
+        from ..debug.gt_profile import gt_diaphragm_levels
+        _diag_levels = [float(z) for z in gt_diaphragm_levels()]
     _cld_layers: List[dict] = []
     _df_cap = model.components.get("drawing_file")
     if _df_cap is not None:
