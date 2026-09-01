@@ -5597,7 +5597,7 @@ def reconstruct_terminal_pair_structure(
                     # （z>=21000, gap<=1400）GT 有第二套对角体系：
                     # 中心线→角的大跨度对角（x[0,hw]）。每对 4 根。
                     if 21000.0 <= z_lo <= 23000.0 and 1200.0 <= gap <= 1400.0:
-                      for sxc in ((1,) if sy == -1 else (-1,)):
+                      for sxc in ((1, -1) if sy == 1 else (1,)):
                             c1 = (0.0, 0.0, z_lo)
                             c2 = (sxc * hw_hi, sxc * hw_hi, z_hi)
                             n5, n6 = _find_or_add(*c1), _find_or_add(*c2)
