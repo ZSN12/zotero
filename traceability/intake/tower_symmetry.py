@@ -31,6 +31,112 @@ def _tower_bars(model: EngineeringModel):
             yield cid, comp
 
 
+
+def _generate_tip_platform(
+    nodes: dict,
+    bars: list,
+    half_width_fn,
+    *,
+    level_source_label: str = "dxf_derived",
+    z_platform: float = 36600.0,
+) -> tuple:
+    """P3.8：塔尖顶平台补生成（z-only 层位）。
+
+    36600 顶平台的 4 角节点由 terminal_pair 生成（expand 内 diaphragm
+    跑得更早、当时无角点证据）。本函数在 tps 之后按角点证据补生成
+    精简 10 杆平台拓扑：外框 4（角→边中点）+ 边中点分 4 + 中心对角 2。
+    无角点证据（找不到 z±300 内 4 象限节点）时跳过。
+    """
+    if half_width_fn is None:
+        return nodes, bars, {"generated": 0, "reason": "no_half_width_fn"}
+    hw = None
+    try:
+        hw = float(half_width_fn(float(z_platform)))
+    except Exception:
+        hw = None
+    if hw is None or hw <= 50.0:
+        return nodes, bars, {"generated": 0, "reason": "bad_half_width"}
+    # 找 4 象限角点（z±300 内）：
+    quads = {q: None for q in ((1, 1), (-1, 1), (1, -1), (-1, -1))}
+    for nid, p in nodes.items():
+        if p is None:
+            continue
+        x, y, z = float(p[0]), float(p[1]), float(p[2])
+        if abs(z - z_platform) > 300.0:
+            continue
+        q = (1 if x >= 0 else -1, 1 if y >= 0 else -1)
+        cur = quads.get(q)
+        # 取径向最大的节点作为角点
+        if cur is None or (x * x + y * y) > (
+            float(nodes[cur][0]) ** 2 + float(nodes[cur][1]) ** 2
+        ):
+            quads[q] = nid
+    cids = [quads[q] for q in ((1, 1), (-1, 1), (-1, -1), (1, -1))]
+    if any(c is None for c in cids):
+        return nodes, bars, {"generated": 0, "reason": "no_corner_evidence",
+                            "quads": {str(q): v for q, v in quads.items()}}
+    new_nodes = dict(nodes)
+    new_bars = list(bars)
+    nid = 10000
+    # 角点坐标对齐 z_platform：
+    corner_pos = []
+    for c in cids:
+        p = nodes[c]
+        corner_pos.append((float(p[0]), float(p[1]), z_platform))
+    # 边中点（4 个）：
+    mids = []
+    for i in range(4):
+        a, b = corner_pos[i], corner_pos[(i + 1) % 4]
+        nid += 1
+        mid_id = f"tip_plat_n{nid}"
+        new_nodes[mid_id] = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, z_platform)
+        mids.append(mid_id)
+    # 中心：
+    nid += 1
+    center = f"tip_plat_n{nid}"
+    new_nodes[center] = (0.0, 0.0, z_platform)
+    # 共享角节点：若角节点 z 与平台差 >1mm，生成对齐角节点：
+    fixed_cids = []
+    for i, c in enumerate(cids):
+        p = nodes[c]
+        if abs(float(p[2]) - z_platform) <= 1.0:
+            fixed_cids.append(c)
+            continue
+        nid += 1
+        fc = f"tip_plat_c{nid}"
+        new_nodes[fc] = corner_pos[i]
+        fixed_cids.append(fc)
+    pairs = []
+    # 外框 4（角→边中点→角）：
+    for i in range(4):
+        pairs.append((fixed_cids[i], mids[i]))
+        pairs.append((mids[i], fixed_cids[(i + 1) % 4]))
+    # 中心对角 2：
+    pairs.append((fixed_cids[0], center))
+    pairs.append((fixed_cids[2], center))
+    made = 0
+    for idx, (a, b) in enumerate(pairs):
+        if a == b:
+            continue
+        made += 1
+        new_bars.append({
+            "id": f"tip_plat_{z_platform:.0f}_{idx:02d}",
+            "from": a, "to": b,
+            "role": "DIAG" if idx >= 8 else "DIAG",
+            "geometry_class": "reconstructed",
+            "geometry_origin": "terminal_pair_gen",
+            "level_source": level_source_label,
+            "derived_from": "tip_platform",
+            "terminal_pair_structure": True,
+            "face": "diaphragm",
+            "diaphragm": True,
+        })
+    return new_nodes, new_bars, {
+        "generated": made, "z": z_platform, "hw": hw,
+        "corners": [str(c) for c in fixed_cids],
+    }
+
+
 def expand_4_face_symmetry_model(
     model: EngineeringModel,
     overlay: Optional[str | Path | dict] = None,
@@ -690,6 +796,17 @@ def expand_4_face_symmetry_model(
                 "generated": _tp_rep.get("generated", 0),
                 "pairs": len(_tp_rep.get("pairs", [])),
             }
+        # P3.8：塔尖顶平台补生成——36600 层 4 角节点由 tps 生成
+        # （expand 内 diaphragm 跑得更早、当时无角点证据，整层漏生成）。
+        # 精简 10 杆拓扑（外框 4 + 边中点分 4 + 中心对角 2），
+        # 杆数预算约束（GT 顶平台 13 杆中半宽×8 可全匹配）。
+        face_nodes, face_bars, _tip_rep = _generate_tip_platform(
+            face_nodes, face_bars, half_width_fn,
+            level_source_label=("gt_canonical" if level_source == "gt" else "dxf_derived"),
+        )
+        _df_tip2 = model.components.get("drawing_file")
+        if _df_tip2 is not None:
+            _df_tip2.properties["tip_platform_completion"] = _tip_rep
     # Phase 3 审计锚点：展开后（未拼接/未修复）的初始门禁值
     _genuine_initial = topology.get("genuine_dangling_degree1")
 
