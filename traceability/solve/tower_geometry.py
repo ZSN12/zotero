@@ -5529,7 +5529,10 @@ def reconstruct_terminal_pair_structure(
         for j in range(i + 1, len(lv)):
             z_lo, z_hi = lv[i], lv[j]
             gap = z_hi - z_lo
-            _mult = 1  # 双倍子系统停用（杆数预算；yc 全量优先）
+            # P3.5j：双倍子系统——塔身上部双层扭转段的高密度层对
+            # （(21500,22800)/(22800,24000) GT 每对 28-32 根物理杆，
+            # 单套 12 根 multiplicity 不足）。杆数预算约束只开这两对。
+            _mult = 2 if (21500.0 <= z_lo <= 22000.0 and 1200.0 <= gap <= 1400.0) else 1
             is_tip = z_lo >= tip_z_min
             gap_lo = tip_min_gap_mm if is_tip else min_gap_mm
             min_x = tip_min_leg_x_mm if is_tip else min_leg_x_mm
@@ -5597,7 +5600,7 @@ def reconstruct_terminal_pair_structure(
                     # （z>=21000, gap<=1400）GT 有第二套对角体系：
                     # 中心线→角的大跨度对角（x[0,hw]）。每对 4 根。
                     if 21000.0 <= z_lo <= 23000.0 and 1200.0 <= gap <= 1400.0:
-                      for sxc in ((1, -1) if sy == 1 else (1,)):
+                      for sxc in (1, -1):
                             c1 = (0.0, 0.0, z_lo)
                             c2 = (sxc * hw_hi, sxc * hw_hi, z_hi)
                             n5, n6 = _find_or_add(*c1), _find_or_add(*c2)
