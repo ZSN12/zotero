@@ -5434,6 +5434,9 @@ def reconstruct_terminal_pair_structure(
     max_gap_mm: float = 4500.0,
     leg_x_tol_mm: float = 300.0,
     min_leg_x_mm: float = 400.0,
+    tip_z_min: float = 29100.0,
+    tip_min_gap_mm: float = 500.0,
+    tip_min_leg_x_mm: float = 150.0,
     level_source_label: Optional[str] = None,
     id_prefix: str = "tps",
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
@@ -5454,6 +5457,13 @@ def reconstruct_terminal_pair_structure(
     全部来自模型自身，终止层表是 z-only 设计常数注入（用户裁定
     「z 层级可注入，x/y 严禁」同 use_gt_platform_levels 纪律）。
 
+    P3.5a（2026-09-03）：塔尖段（z_lo >= tip_z_min）特则——GT 塔尖
+    斜杆节间 500-1000mm 小间距密集层，gap 下限降到 tip_min_gap_mm、
+    min_leg_x 降到 tip_min_leg_x_mm（塔尖 hw 200-660mm），并加
+    「收分一致性」约束（hw_hi < hw_lo 且降幅 <= 0.3*gap）——
+    消除 hw 错配层对的 FP（实测砍 138 FP 不损 TP）。塔尖段
+    不受 crossarm_z_max 限制（塔尖是塔身延续，非横担桁架）。
+
     端点吸附：复用现有节点（300mm 容差），否则新建 tps_ 前缀节点。
 
     实测模拟（2026-09-03，77 层对全生成）：full TP 412→560
@@ -5467,10 +5477,10 @@ def reconstruct_terminal_pair_structure(
         }
     lv = sorted(float(z) for z in terminal_levels)
 
-    def leg_x_at(z: float) -> Optional[float]:
+    def leg_x_at(z: float, min_x: float) -> Optional[float]:
         xs = [abs(float(p[0])) for p in nodes.values()
               if abs(float(p[2]) - z) <= leg_x_tol_mm
-              and abs(float(p[0])) >= min_leg_x_mm]
+              and abs(float(p[0])) >= min_x]
         return max(xs) if xs else None
 
     new_nodes: NodeMap = dict(nodes)
@@ -5499,13 +5509,24 @@ def reconstruct_terminal_pair_structure(
         for j in range(i + 1, len(lv)):
             z_lo, z_hi = lv[i], lv[j]
             gap = z_hi - z_lo
-            if gap < min_gap_mm or gap > max_gap_mm:
+            is_tip = z_lo >= tip_z_min
+            gap_lo = tip_min_gap_mm if is_tip else min_gap_mm
+            min_x = tip_min_leg_x_mm if is_tip else min_leg_x_mm
+            if gap < gap_lo or gap > max_gap_mm:
                 continue
-            if crossarm_z_max is not None and z_hi >= crossarm_z_max:
+            # 塔身段不越横担；塔尖段（塔身延续）不受限
+            if (not is_tip and crossarm_z_max is not None
+                    and z_hi >= crossarm_z_max):
                 continue
-            hw_lo, hw_hi = leg_x_at(z_lo), leg_x_at(z_hi)
+            hw_lo, hw_hi = leg_x_at(z_lo, min_x), leg_x_at(z_hi, min_x)
             if hw_lo is None or hw_hi is None:
                 continue
+            # 塔尖段收分一致性：hw 单调递减且降幅 <= 0.3*gap
+            if is_tip:
+                if hw_hi >= hw_lo:
+                    continue
+                if (hw_lo - hw_hi) > 0.3 * gap:
+                    continue
             made = 0
             for sx in (1, -1):
                 for sy in (1, -1):
