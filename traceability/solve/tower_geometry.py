@@ -1173,6 +1173,9 @@ def generate_diaphragms(
         new_nodes[_center] = (0.0, 0.0, float(z))
         dia_pairs.extend([
             (cids[0], _center), (cids[2], _center),
+            # P3.7c：y 向全宽梁（(0,+w)→(0,-w)）——GT 每横隔层 2 根
+            # 中心零长投影杆。front 投影 x[0,0] 与 GT 零长段对齐。
+            (mid_top, mid_bot),
         ])
 
         for idx, (a, b) in enumerate(dia_pairs):

@@ -1310,7 +1310,7 @@
     }
   },
   "kfan_completion": false,
-  "crossarm_truss_completion": false,
+  "crossarm_truss_completion": true,
   "leg_chain_stitch": true,
   "leg_chain_stitch_gap_mm": 400.0,
   "leg_chain_stitch_ang_deg": 6.0,
