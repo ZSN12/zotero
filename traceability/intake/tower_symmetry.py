@@ -804,6 +804,17 @@ def expand_4_face_symmetry_model(
             face_nodes, face_bars, half_width_fn,
             level_source_label=("gt_canonical" if level_source == "gt" else "dxf_derived"),
         )
+        # P3.10：镜像面 marker_synth 杆裁剪——A1 件号标记合成杆的
+        # 层位偏差（±350mm）在 4 面复制后是纯 FP 源（TP 5 / FP 883，
+        # 竞争释放后净损失仅 3 TP）。保留 A 面杆（A1 证据语义），
+        # 裁掉 b/l/r 镜像复制，腾杆数预算给 GT 层位环梁。
+        _n_before = len(face_bars)
+        face_bars = [
+            b for b in face_bars
+            if not (str(b.get("geometry_origin") or "") == "marker_synth"
+                    and str(b.get("face") or "") in ("b", "l", "r"))
+        ]
+        _n_pruned = _n_before - len(face_bars)
         _df_tip2 = model.components.get("drawing_file")
         if _df_tip2 is not None:
             _df_tip2.properties["tip_platform_completion"] = _tip_rep
