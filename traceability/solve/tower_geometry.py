@@ -1654,9 +1654,12 @@ def complete_k_fan_braces(
         za = round(float(zs) / _snap_step) * _snap_step
         if za != float(zs) and abs(za - float(zs)) <= 500.0:
             _anchor_set.add(float(za))
+    _twist_only_tgt = [z for z in _tgt_grid if z in {float(t) for t in _twist_levels}]
     for ztw in list(_twist_src) + sorted(_anchor_set):
         # 网格锚伴生源（_anchor_set）按定义落在网格上，跳过网格排除，
         # 否则永不生成；junction 排除仍生效（kfan 已覆盖 junction 源）。
+        # 锚源只朝扭结簇目标（证据层位）生成——网格目标由 kfan/junction
+        # 链与质心源覆盖，锚源对网格目标的面板实测 0 使用（纯 FP）。
         if ((ztw in _grid and ztw not in _anchor_set)
                 or ztw in set(junction_levels)
                 or ztw < 6000 or ztw >= twist_z_max):
@@ -1664,7 +1667,7 @@ def complete_k_fan_braces(
         wj = float(half_width_fn(ztw))
         if wj <= 0:
             continue
-        for tgt in _tgt_grid:
+        for tgt in (_twist_only_tgt if ztw in _anchor_set else _tgt_grid):
             d = float(ztw) - float(tgt)
             if not (twist_depth_lo <= d <= twist_depth_hi):
                 continue
