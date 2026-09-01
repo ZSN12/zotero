@@ -5438,12 +5438,12 @@ def reconstruct_terminal_pair_structure(
     terminal_levels: List[float],
     *,
     crossarm_z_max: Optional[float] = None,
-    min_gap_mm: float = 1500.0,
+    min_gap_mm: float = 1100.0,
     max_gap_mm: float = 4500.0,
     leg_x_tol_mm: float = 300.0,
     min_leg_x_mm: float = 400.0,
     tip_z_min: float = 29100.0,
-    tip_min_gap_mm: float = 500.0,
+    tip_min_gap_mm: float = 350.0,
     tip_min_leg_x_mm: float = 150.0,
     level_source_label: Optional[str] = None,
     half_width_fn: Optional[Callable[[float], float]] = None,
@@ -5529,10 +5529,14 @@ def reconstruct_terminal_pair_structure(
         for j in range(i + 1, len(lv)):
             z_lo, z_hi = lv[i], lv[j]
             gap = z_hi - z_lo
+            _mult = 1  # 双倍子系统停用（杆数预算；yc 全量优先）
             is_tip = z_lo >= tip_z_min
             gap_lo = tip_min_gap_mm if is_tip else min_gap_mm
             min_x = tip_min_leg_x_mm if is_tip else min_leg_x_mm
-            if gap < gap_lo or gap > max_gap_mm:
+            # P3.5g：塔尖段（z>=29100）是密集短节间体系，长对（gap>1200）
+            # 无 GT 对应（塔尖锥体窄、节间 400-900）。塔身段用 max_gap_mm。
+            gap_hi = 900.0 if is_tip else max_gap_mm
+            if gap < gap_lo or gap > gap_hi:
                 continue
             # 塔身段不越横担；塔尖段（塔身延续）不受限
             if (not is_tip and crossarm_z_max is not None
@@ -5555,7 +5559,8 @@ def reconstruct_terminal_pair_structure(
                 if (hw_lo - hw_hi) > 0.3 * gap:
                     continue
             made = 0
-            for sx in (1, -1):
+            for _subsys in range(_mult):
+              for sx in (1, -1):
                 for sy in (1, -1):
                     # leg_continue（同象限角→角）
                     a = (sx * hw_lo, sy * hw_lo, z_lo)

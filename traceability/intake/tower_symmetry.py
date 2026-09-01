@@ -672,7 +672,7 @@ def expand_4_face_symmetry_model(
             face_nodes, face_bars,
             [float(z) for z in gt_diagonal_terminal_levels()],
             crossarm_z_max=_crossarm_z_max_tp,
-            max_gap_mm=5200.0,
+            max_gap_mm=5600.0,
             level_source_label="gt_canonical",
             half_width_fn=half_width_fn,
         )
