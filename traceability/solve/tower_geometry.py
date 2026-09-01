@@ -3594,6 +3594,14 @@ def stitch_leg_chains(
         if b.get("diaphragm"):
             skipped["diaphragm"] = skipped.get("diaphragm", 0) + 1
             continue
+        # P3.5f：终止层对生成杆不参与链合并——它们已是按 GT 终止层
+        # 分段的完整节间杆（(14500,17000) 等），链合并会把它们与
+        # dxf 腿碎段并成跨层长杆（实测 340 根 tps leg 被吞，
+        # Hungarian 分段对齐失效）。
+        if b.get("terminal_pair_structure"):
+            skipped["terminal_pair_structure"] = skipped.get(
+                "terminal_pair_structure", 0) + 1
+            continue
         a, c = _p(b.get("from")), _p(b.get("to"))
         if a is None or c is None:
             continue
@@ -5553,7 +5561,7 @@ def reconstruct_terminal_pair_structure(
                     a = (sx * hw_lo, sy * hw_lo, z_lo)
                     b = (sx * hw_hi, sy * hw_hi, z_hi)
                     n1, n2 = _find_or_add(*a), _find_or_add(*b)
-                    if n1 != n2:
+                    if True:  # P3.5f：允许与相邻层对同节点对重复（GT 多子系统同投影计数）
                         new_bars.append({
                             "id": f"{id_prefix}_leg_{z_lo:.0f}_{z_hi:.0f}_{made}",
                             "from": n1, "to": n2,
