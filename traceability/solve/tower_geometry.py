@@ -3221,6 +3221,7 @@ def _role_pair_ok_stitch(
     platform_tol_mm: float,
     horiz_z_tol_mm: float,
     horiz_center_tol_mm: float,
+    cross_sheet_ok: bool = False,
 ) -> Tuple[bool, Optional[str]]:
     """P2.3：分角色拼接门禁。返回 (allowed, reject_reason)。"""
     if not role_specific:
@@ -3242,6 +3243,15 @@ def _role_pair_ok_stitch(
             return False, "leg_platform_break"
         return True, None
     if ra == "DIAG":
+        if cross_sheet_ok:
+            # P3.19（ZC1 泛化）：多册同段图纸（如 35A2-ZC1 的 05/09/12
+            # 都画 z26000+32000 段）——同一物理斜材的碎段可能来自不同册。
+            # cross_sheet_ok=true 时 evidence key 退化为仅 geometry_origin
+            # （dxf_geom vs 重建杆仍不许互拼），放开跨册拼接。
+            if str(pa.get("geometry_origin") or "dxf_geom") != str(
+                    pb.get("geometry_origin") or "dxf_geom"):
+                return False, "diag_origin_mismatch"
+            return True, None
         if _stitch_diag_evidence_key(pa) != _stitch_diag_evidence_key(pb):
             return False, "diag_source_mismatch"
         return True, None
@@ -3285,6 +3295,7 @@ def stitch_collinear_bars(
     platform_tol_mm: float = 80.0,
     horiz_z_tol_mm: float = 80.0,
     horiz_center_tol_mm: float = 300.0,
+    cross_sheet_ok: bool = False,
 ) -> Tuple[List[dict], Dict[str, object]]:
     """S4 贪心共线拼接：把断裂碎片杆拼回整杆（Phase 2 生产化）。
 
@@ -3409,6 +3420,7 @@ def stitch_collinear_bars(
             platform_tol_mm=platform_tol_mm,
             horiz_z_tol_mm=horiz_z_tol_mm,
             horiz_center_tol_mm=horiz_center_tol_mm,
+            cross_sheet_ok=cross_sheet_ok,
         )
         if not ok and reason:
             role_rejected[reason] = role_rejected.get(reason, 0) + 1

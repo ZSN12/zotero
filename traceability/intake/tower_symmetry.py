@@ -1057,6 +1057,9 @@ def expand_4_face_symmetry_model(
             max_segments=int(spec.get("collinear_stitch_max_segments", 2)),
             max_single_len_mm=float(spec.get("collinear_stitch_max_single_len_mm", 0.0)),
             role_specific=bool(spec.get("collinear_stitch_role_specific", True)),
+            # P3.19（ZC1）：多册同段图纸放开跨册 DIAG 拼接
+            # （cross_sheet_diagonal_stitch=true 时同段跨册碎段可拼回整杆）。
+            cross_sheet_ok=bool(spec.get("collinear_stitch_cross_sheet", False)),
             panel_levels=list(panel_levels) if panel_levels else None,
             platform_tol_mm=float(spec.get("collinear_stitch_platform_tol_mm", 80.0)),
             horiz_z_tol_mm=float(spec.get("collinear_stitch_horiz_z_tol_mm", 80.0)),
