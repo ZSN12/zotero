@@ -40,6 +40,7 @@ from traceability.eval.metrics import (
     bars_from_model_2d,
     bars_from_model_3d,
     _classify_3d,
+    _bar_caliber_class,
 )
 
 # 失败类别（阶段 7：删除伪分类 FN_OVERLAP/FN_SHORT——那些是「猜测」的失败原因，
@@ -328,6 +329,65 @@ def _stringify_buckets(buckets):
     return {f"{k[0]}={k[1]}": v for k, v in buckets.items()}
 
 
+def segment_gate(gt, model, segment, caliber, view, tol, gate_pct, all_window=False):
+    """Phase 1 段门禁：指定分册段的 A2 2D P/R（计划书「06 段单独评测门禁」，CI 可回归）。
+
+    - z 窗口从模型该分册杆件端点 z 现算（数据驱动，不硬编码标高带）；
+    - GT 子集 = z_mid 落在窗口内的 GT 杆；
+    - caliber=pure 时模型侧只留 recognized 层（复用 metrics 五层口径判定，
+      即「从图纸直接读出来的杆」——4face 镜像/横隔/标高辅助/模板补全全排除）；
+    - pass = P≥gate 且 R≥gate（计划书 D5：06 段 85/85）。
+    """
+    g = gt_bars_2d(gt, view)
+    m = bars_from_model_2d(model, view=view, mode="recognition")
+
+    seg_code = str(segment).strip()
+    def _is_seg(props):
+        sheet = _bar_sheet(props)
+        return sheet == seg_code or sheet.endswith("-" + seg_code) or sheet == f"35A1-JC1-{seg_code}"
+
+    def _zspan(seg):
+        return min(seg[1], seg[3]), max(seg[1], seg[3])
+
+    def _zmid(seg):
+        return (seg[1] + seg[3]) / 2.0
+
+    sheet_bars = [seg for seg, props in m if _is_seg(props)]
+    if not sheet_bars:
+        return {"error": f"模型无 {segment} 分册杆件，无法推 z 窗口", "pass": False}
+    lo = min(_zspan(seg)[0] for seg in sheet_bars)
+    hi = max(_zspan(seg)[1] for seg in sheet_bars)
+
+    # Phase 1 诊断发现：z_mid 落窗的 GT 会混入跨模块边界的杆（06 窗实测
+    # 200 根里 84 根 z 15000→19000 跨入 05 册）。跨模块杆不可能是本册图纸
+    # 的产出，按 z_mid 子集评召回会把「跨册杆」算成本册 FN，指标失真。
+    # 默认只评「完整落在窗内」的 GT（inside 子集）；--all-window 保留旧口径。
+    if not all_window:
+        gt_sel = [seg for seg, _, _ in g
+                  if lo - 1.0 <= min(seg[1], seg[3]) and max(seg[1], seg[3]) <= hi + 1.0]
+    else:
+        gt_sel = [seg for seg, _, _ in g if lo - 1.0 <= _zmid(seg) <= hi + 1.0]
+    m_sel = []
+    for seg, props in m:
+        if not (lo - 1.0 <= _zmid(seg) <= hi + 1.0):
+            continue
+        if caliber == "pure" and _bar_caliber_class(props) != "recognized":
+            continue
+        m_sel.append(seg)
+    matched, un_gt, un_m = hungarian_match(gt_sel, m_sel, segment_cost, tol)
+    tp, n_gt, n_m = len(matched), len(gt_sel), len(m_sel)
+    prec = tp / n_m * 100.0 if n_m else 0.0
+    rec = tp / n_gt * 100.0 if n_gt else 0.0
+    return {
+        "segment": segment, "caliber": caliber, "view": view, "tol_mm": tol,
+        "gt_subset": "inside" if not all_window else "z_mid_window",
+        "z_window_mm": [round(lo, 1), round(hi, 1)],
+        "n_gt": n_gt, "n_model": n_m, "tp": tp, "fn": n_gt - tp, "fp": n_m - tp,
+        "precision_pct": round(prec, 1), "recall_pct": round(rec, 1),
+        "gate_pct": gate_pct, "pass": prec >= gate_pct and rec >= gate_pct,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     # 兼容命名参数（--gt/--model，阶段 1.4 验收命令）与旧位置参数两种形式
@@ -341,6 +401,14 @@ def main():
     ap.add_argument("--max-fn", type=int, default=20)
     ap.add_argument("--max-fp", type=int, default=20)
     ap.add_argument("--save", help="把 FN/FP 样例导出为 hard-case JSON（错误回放数据集）")
+    ap.add_argument("--segment", help="Phase 1 段门禁：分册号（如 06），只评该 z 窗口 GT 子集；"
+                                      "输出 JSON 并以 pass/fail 决定退出码（CI 可回归）")
+    ap.add_argument("--caliber", choices=["all", "pure"], default="all",
+                    help="段门禁模型侧口径：all=全部识别模式杆；pure=仅 recognized 层")
+    ap.add_argument("--gate", type=float, default=85.0,
+                    help="段门禁 P/R 阈值（百分比，计划书 D5 默认 85）")
+    ap.add_argument("--all-window", action="store_true",
+                    help="GT 子集用 z_mid 落窗（旧口径，含跨模块杆）；默认只评完整在窗内的 GT")
     ap.add_argument("--miss-report", dest="miss_report", default=None,
                     help="追加生成阶段 3.1 FN/FP 漏检报告 JSON 到指定路径"
                          "（可几何验证口径，复用 --view/--tol-2d）")
@@ -353,6 +421,16 @@ def main():
 
     gt = json.loads(Path(gt_path).read_text(encoding="utf-8"))
     model = json.loads(Path(model_path).read_text(encoding="utf-8"))
+
+    if args.segment:
+        rep_gate = segment_gate(gt, model, args.segment, args.caliber,
+                                args.view, args.tol_2d, args.gate,
+                                all_window=args.all_window)
+        print(json.dumps(rep_gate, ensure_ascii=False, indent=2))
+        if args.save:
+            Path(args.save).write_text(
+                json.dumps(rep_gate, ensure_ascii=False, indent=2), encoding="utf-8")
+        sys.exit(0 if rep_gate.get("pass") else 1)
 
     print("=" * 70)
     print(f"召回诊断（只诊断，不调容差）: tol_2d={args.tol_2d}mm tol_3d={args.tol_3d}mm")

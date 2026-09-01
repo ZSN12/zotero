@@ -36,14 +36,17 @@ def test_legacy_signatures_unchanged():
 
 
 def test_degraded_export_and_glb_material_normals(tmp_path):
-    report = build(tmp_path, SHEET)
+    report = build(tmp_path, SHEET, fallback_dir=None)   # T5：关闭回退 → 真降级路径
     assert report['bolt_count'] == 56
-    # T5 回退目录（out/35A1-JC1-solid）提供 solid_angle_tower.glb 与
-    # gusset_attached.glb 后，装配不再缺件——missing 恒为空、非降级。
-    # （旧断言 set(missing)=={两文件} 是资产尚未生成时的历史行为。）
-    assert report['missing'] == []
-    assert report['degraded'] is False
-    assert set(report['parts']) == {'angle_tower', 'gusset'}
+    assert set(report['missing']) == {'solid_angle_tower.glb', 'gusset_attached.glb'}
+    assert report['degraded'] is True
+    # T5 回退查找：默认从标准 solid 目录找部件，产物齐时不再缺件
+    std = ROOT / 'out/35A1-JC1-solid'
+    if (std / 'solid_angle_tower.glb').exists() and (std / 'gusset_attached.glb').exists():
+        full = build(tmp_path, SHEET)
+        assert full['missing'] == []
+        assert full['degraded'] is False
+        assert set(full['parts']) == {'angle_tower', 'gusset'}
     blob = (tmp_path / 'assembly.glb').read_bytes()
     assert blob[:4] == b'glTF'
     loaded = trimesh.load(tmp_path / 'assembly.glb', force='scene')
