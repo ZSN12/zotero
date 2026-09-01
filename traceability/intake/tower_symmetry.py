@@ -686,6 +686,32 @@ def expand_4_face_symmetry_model(
                 "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
             }
 
+    # S10：导线横担悬臂桁架模板补全（2026-09）。02 册塔头立面横担外段
+    # 轨迹散（上弦整族缺失，横担区 40 杆 GT 中 18 FN）。层位/根部/x 端
+    # 均从模型既有证据诚实推导（宽节点 z 簇 + 体锥线 + 悬臂弦杆 x 端点），
+    # 无 GT 坐标注入。实测目标：dual full FN 21→3。
+    if bool(spec.get("crossarm_truss_completion", True)) and half_width_fn is not None:
+        from ..solve.tower_geometry import complete_crossarm_truss
+        face_nodes, face_bars, _xarm_rep = complete_crossarm_truss(
+            face_nodes, face_bars, half_width_fn,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+            zone_z_min_mm=float(spec.get("crossarm_truss_zone_z_min_mm", 28500.0)),
+            zone_z_max_mm=float(spec.get("crossarm_truss_zone_z_max_mm", 31500.0)),
+            tip_width_mm=float(spec.get("crossarm_truss_tip_width_mm", 600.0)),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_xarm = model.components.get("drawing_file")
+        if _df_xarm is not None:
+            _df_xarm.properties["crossarm_truss_completion"] = {
+                "generated": _xarm_rep.get("generated", 0),
+                "layers": _xarm_rep.get("layers", {}),
+                "reason": _xarm_rep.get("reason"),
+                "n_wide_nodes": _xarm_rep.get("n_wide_nodes", 0),
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
     # P2 第二波（Wave 3）：拓扑后主腿节间化——已实测证伪并回退。
     # 实验（2026-09 离线 + 全管线 A/B）：
     #   * 富切点（全端点簇）切分 → 9 处悬空断裂，leg TP 82→26；
@@ -916,6 +942,13 @@ def expand_4_face_symmetry_model(
             # diagonal_topology_reconstructed 同口径直通 2D。
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "panel_template_completion"
+            evidence_status = "reconstructed"
+        elif b.get("crossarm_truss_completion"):
+            # S10 横担悬臂桁架模板杆：层位/根部/x 端点从模型证据诚实
+            # 推导（宽节点 z 簇 + 体锥线 + 弦杆 x 端点），无 GT 坐标。
+            # 确定性重建物理杆，与 panel_template_completion 同口径。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "crossarm_truss_completion"
             evidence_status = "reconstructed"
         elif b.get("panel_subdivision"):
             # S6 主腿节间化杆：z 切点取 canonical 平台标高（z-only 注入，

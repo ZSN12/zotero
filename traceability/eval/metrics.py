@@ -571,6 +571,7 @@ def bars_from_model_2d(
                 "diagonal_topology_reconstructed",
                 "panel_template_completion",
                 "derived_parametric_base",
+                "crossarm_truss_completion",
             )
             if resolved is None and not (is_dia or is_3d_recon):
                 continue

@@ -1967,6 +1967,284 @@ def complete_head_panel_chain(
     }
 
 
+def complete_crossarm_truss(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    *,
+    level_source_label: Optional[str] = None,
+    zone_z_min_mm: float = 28500.0,
+    zone_z_max_mm: float = 31500.0,
+    wide_ratio: float = 1.2,
+    tip_width_mm: float = 600.0,
+    # 去重阈值须远小于 B/E 站间距（~350mm）——GT 中 B→D 与 D→E 共存
+    dedup_tol_mm: float = 60.0,
+    id_prefix: str = "xarm",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S10：导线横担四角锥悬臂桁架模板补全（2026-09）。
+
+    背景：02 册塔头立面只画横担根部段（|x|≤~1030 提取证据），悬臂外段
+    （上弦 2×2、腹杆、端封）在 02 册轨迹散/提取漂移，03 册为节点详图
+    册不入 3D 合并。横担区 GT 杆 40 根中 18 根 FN（上弦/腹杆/竖杆整族
+    缺失）。
+
+    证据链（诚实推导，无 GT 坐标注入）：
+        1. 层位：face 展开图中「塔面外宽节点」（max(|x|,|y|) >
+           half_width(z)·wide_ratio）在 zone 内的 z 轨迹簇 → 层底
+           z_lo（下弦所在层）与中层 z_mid（塔面深度节点）；
+        2. 根部截面：体锥线 half_width(z_lo/z_hi)（塔面角点即横担
+           根部铰点，与 02 册立面根部绘制一致）；
+        3. 尖端 x：立面已提取的悬臂弦杆（x 内端≈hw(z_hi)、x 外端
+           ≈2000+ 外伸）x 端点直接取用（z 有漂移但 x 无漂移）；
+        4. 端头宽度：tip_width_mm（03 册俯视图端封板宽 600 证据，
+           可 overlay 覆盖）；
+        5. y 收窄：根部 hw → 尖端 tip_width/2 线性（03 册俯视图
+           1342→600 渐窄同构）。
+
+    拓扑（GT 模式，每 x 侧 20 杆、双侧共 40 杆）：
+        站位 A(根部上弦,z_hi) B(中折上弦,z_mid) C(尖端,z_lo)
+        D(根部下弦,z_lo) E(中折下弦,z_lo)；
+        上弦 A→B→C、下弦 D→E→C、竖杆 B→E、斜杆 B→D、
+        A 层交叉对角、E 层交叉对角、C 层交叉对角、
+        B/E/C 端封横杆。
+
+    口径语义：geometry_origin=crossarm_truss_completion、
+    geometry_class=derived_parametric（确定性重建物理杆，进
+    physical P/R；level_source 随标签记录）。
+    """
+    if not nodes or not bars or half_width_fn is None:
+        return nodes, bars, {"generated": 0, "layers": []}
+
+    def _hw(z: float) -> float:
+        try:
+            w = float(half_width_fn(float(z)))
+        except Exception:
+            return 0.0
+        return max(w, 0.0)
+
+    # ---- 1) 宽节点证据 → 层位簇 ----
+    wide: List[Tuple[float, float]] = []  # (z, radial)
+    for p in nodes.values():
+        if p is None:
+            continue
+        z = float(p[2])
+        if not (zone_z_min_mm <= z <= zone_z_max_mm):
+            continue
+        r = max(abs(float(p[0])), abs(float(p[1])))
+        hw_z = _hw(z)
+        if hw_z > 50.0 and r > hw_z * wide_ratio:
+            wide.append((z, r))
+    if len(wide) < 2:
+        return nodes, bars, {"generated": 0, "layers": [], "reason": "no_wide_node_evidence"}
+
+    wide.sort(key=lambda wr: wr[0])
+    # z 簇：间隙 >300mm 分簇（下弦层与中折层差 ~440mm，须分开）
+    clusters: List[List[Tuple[float, float]]] = [[wide[0]]]
+    for z, r in wide[1:]:
+        if z - clusters[-1][-1][0] > 300.0:
+            clusters.append([(z, r)])
+        else:
+            clusters[-1].append((z, r))
+    # 主层 = 节点数最多的簇（横担下弦层证据最密）
+    clusters.sort(key=lambda c: -len(c))
+    main = clusters[0]
+    z_lo = sum(z for z, _ in main) / len(main)
+    # 中层：紧邻主层上方（z>z_lo+300）的宽节点簇或主层内最高节点
+    z_hi_candidates = [z for z, _ in main if z > z_lo + 300.0]
+    if z_hi_candidates:
+        z_mid = sum(z_hi_candidates) / len(z_hi_candidates)
+    else:
+        # 邻簇：找 z > z_lo+300 且 < z_lo+900 的簇
+        z_mid = None
+        for c in clusters[1:]:
+            cm = sum(z for z, _ in c) / len(c)
+            if z_lo + 300.0 < cm < z_lo + 900.0:
+                z_mid = cm
+                break
+        if z_mid is None:
+            return nodes, bars, {"generated": 0, "layers": [], "reason": "no_mid_layer_evidence"}
+    z_hi = 2.0 * z_mid - z_lo
+    z_span = z_hi - z_lo
+    if not (500.0 <= z_span <= 1500.0):
+        return nodes, bars, {"generated": 0, "layers": [], "reason": f"bad_layer_span_{z_span:.0f}"}
+
+    # ---- 2) 悬臂弦杆 x 端点证据 ----
+    # 已提取的悬臂长杆：外端远超塔面（≥1500mm 外伸），内端近根部
+    # （塔面附近），x 同号同侧，z 跨 > 300（弦有竖向起伏）。
+    # z 方向可能有册间漂移，但 x 端点无漂移（x 是图面横向直接读数）。
+    x_root = x_tip = None
+    best_len = 0.0
+    for b in bars:
+        fn, tn = b.get("from"), b.get("to")
+        pf, pt = nodes.get(fn) if fn else None, nodes.get(tn) if tn else None
+        if pf is None or pt is None:
+            continue
+        x1, x2 = float(pf[0]), float(pt[0])
+        z1, z2 = float(pf[2]), float(pt[2])
+        if abs(z1 - z2) < 300.0:
+            continue
+        # 同侧（x 同号）且内端→外端
+        if x1 * x2 <= 0:
+            continue
+        xin, xout = (x1, x2) if abs(x1) < abs(x2) else (x2, x1)
+        if abs(xout) < 1500.0 or abs(xout - xin) < 900.0:
+            continue
+        # 外端必须远超塔面；内端在根部（塔面附近，容 1.9 倍——锥线
+        # 拟合误差与根节点本身偏出体面都允许）
+        _in_is_p1 = abs(x1) < abs(x2)
+        p_in, p_out = (pf, pt) if _in_is_p1 else (pt, pf)
+        r_in = max(abs(float(p_in[0])), abs(float(p_in[1])))
+        r_out = max(abs(float(p_out[0])), abs(float(p_out[1])))
+        hw_in = _hw(float(p_in[2]))
+        hw_out = _hw(float(p_out[2]))
+        if hw_in <= 50 or hw_out <= 50:
+            continue
+        if r_out < hw_out * 1.5 or r_in > hw_in * 1.9:
+            continue
+        L = math.hypot(xout - xin, float(pt[1]) - float(pf[1]))
+        if L > best_len:
+            best_len = L
+            x_root, x_tip = abs(xin), abs(xout)
+    if x_root is None or x_tip is None or x_tip <= x_root + 400.0:
+        return nodes, bars, {"generated": 0, "layers": [], "reason": "no_chord_x_evidence"}
+
+    # ---- 3) 站位几何 ----
+    w_hi = _hw(z_hi)           # 根部上弦角点（A）
+    w_lo = _hw(z_lo)           # 根部下弦角点（D）
+    if w_hi <= 50 or w_lo <= 50:
+        return nodes, bars, {"generated": 0, "layers": [], "reason": "bad_half_width"}
+    y_tip = tip_width_mm / 2.0
+    # x_m：上弦 A(x_root)→C(x_tip) 直线在 z_mid 的插值
+    x_mid = x_root + (x_tip - x_root) * (z_hi - z_mid) / (z_hi - z_lo)
+    # y（宽度）：上弦根 y=w_hi → 尖 y_tip（x 线性）；下弦根 y=w_lo → 尖
+    y_m = w_hi + (y_tip - w_hi) * (x_mid - x_root) / (x_tip - x_root)
+    y_mb = w_lo + (y_tip - w_lo) * (x_mid - w_lo) / (x_tip - w_lo)
+    # 下弦 D/E/C 都在 z_lo；D x 取 w_lo（塔面），E x 取 x_mid
+    x_rb = w_lo
+
+    stations = {"A": (x_root, w_hi, z_hi), "B": (x_mid, y_m, z_mid),
+                "C": (x_tip, y_tip, z_lo), "D": (x_rb, w_lo, z_lo),
+                "E": (x_mid, y_mb, z_lo)}
+
+    # ---- 4) 生成节点与杆件 ----
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = list(bars)
+    counter = {"n": 7600000}
+
+    # 节点吸附（与既有同层角点合并）：保证桁架根部与塔身主连通。
+    # z 索引按 100mm 桶（±snap_z_mm 跨桶检索），允许层位残差 ≤200mm。
+    snap_xy_mm = 150.0
+    snap_z_mm = 200.0
+    _zbucket: Dict[int, List[Tuple[str, Vec3]]] = {}
+    for nid, p in nodes.items():
+        _zbucket.setdefault(int(float(p[2]) // 100), []).append((nid, p))
+
+    def _mk(x: float, y: float, z: float) -> str:
+        zb = int(z // 100)
+        for zk in range(zb - 3, zb + 4):  # ±300mm 桶覆盖 snap_z_mm=200
+            for nid, p in _zbucket.get(zk, ()):
+                if (abs(float(p[0]) - x) <= snap_xy_mm
+                        and abs(float(p[1]) - y) <= snap_xy_mm
+                        and abs(float(p[2]) - z) <= snap_z_mm):
+                    return nid
+        counter["n"] += 1
+        nid = f"{id_prefix}_node_{counter['n']}"
+        new_nodes[nid] = (round(x, 2), round(y, 2), round(z, 1))
+        _zbucket.setdefault(int(z // 100), []).append((nid, new_nodes[nid]))
+        return nid
+
+    # 站位节点字典：每 (站位, sx, sy) 建一次，复用——避免同坐标重复建点。
+    station_cache: Dict[Tuple[str, float, float], str] = {}
+
+    def _mk_station(st: str, sx: float, sy: float) -> str:
+        key = (st, sx, sy)
+        nid = station_cache.get(key)
+        if nid is not None:
+            return nid
+        x, y, z = stations[st]
+        nid = _mk(sx * x, sy * y, z)
+        station_cache[key] = nid
+        return nid
+
+    # 既有杆件端点集合（dedup：同 x 侧已存在近似杆则跳过）
+    existing: List[Tuple[Vec3, Vec3]] = []
+    for b in bars:
+        fn, tn = b.get("from"), b.get("to")
+        pf, pt = nodes.get(fn) if fn else None, nodes.get(tn) if tn else None
+        if pf is not None and pt is not None:
+            existing.append((pf, pt))
+
+    def _exists(p1: Vec3, p2: Vec3) -> bool:
+        for q1, q2 in existing:
+            for a1, a2 in ((q1, q2), (q2, q1)):
+                d = (abs(float(a1[0]) - float(p1[0])) + abs(float(a1[1]) - float(p1[1]))
+                     + abs(float(a1[2]) - float(p1[2]))
+                     + abs(float(a2[0]) - float(p2[0])) + abs(float(a2[1]) - float(p2[1]))
+                     + abs(float(a2[2]) - float(p2[2])))
+                if d <= dedup_tol_mm * 2.5:
+                    return True
+        return False
+
+    generated = 0
+    for sx in (1.0, -1.0):
+        # 同 x 侧两 y 站位，交叉与端封只在该侧生成一次（y 对互补避免重复）。
+        # 上弦内/外段、下弦内/外段、竖杆、斜杆 → 每 y 站各一根（非对称对）。
+        # 交叉对角 → 同 x 侧两个 y 翻转节点互换，天然唯一。
+        # B/C 端封横杆 → 每 x 侧一根（横跨两 y）。
+        A_p, B_p, C_p, D_p, E_p = (_mk_station(s, sx, +1) for s in "ABCDE")
+        A_m, B_m, C_m, D_m, E_m = (_mk_station(s, sx, -1) for s in "ABCDE")
+        members = [
+            # 上弦（两 y 站）
+            (A_p, B_p, "LEG"), (B_p, C_p, "LEG"),
+            (A_m, B_m, "LEG"), (B_m, C_m, "LEG"),
+            # 下弦（两 y 站）
+            (D_p, E_p, "LEG"), (E_p, C_p, "LEG"),
+            (D_m, E_m, "LEG"), (E_m, C_m, "LEG"),
+            # 竖杆 B→E（两 y 站）
+            (B_p, E_p, "DIAG"), (B_m, E_m, "DIAG"),
+            # 斜杆 B→D（两 y 站）
+            (B_p, D_p, "DIAG"), (B_m, D_m, "DIAG"),
+            # A 层交叉对角
+            (A_p, B_m, "DIAG"), (A_m, B_p, "DIAG"),
+            # E 层交叉对角（D 端封侧交叉）
+            (E_p, D_m, "DIAG"), (E_m, D_p, "DIAG"),
+            # C 层交叉对角（尖端 X）
+            (C_p, E_m, "DIAG"), (C_m, E_p, "DIAG"),
+            # B/C 端封横杆（每 x 侧一根）
+            (B_p, B_m, "HORIZONTAL"),
+            (C_p, C_m, "HORIZONTAL"),
+        ]
+        for f, t, role in members:
+            p1, p2 = new_nodes[f], new_nodes[t]
+            if _exists(p1, p2):
+                continue
+            counter["n"] += 1
+            new_bars.append({
+                "id": f"{id_prefix}_bar_{counter['n']}",
+                "from": f,
+                "to": t,
+                "role": role,
+                "diagonal_topology": False,
+                "crossarm_truss_completion": True,
+                "geometry_origin": "crossarm_truss_completion",
+                "geometry_class": "derived_parametric",
+                "level_source": level_source_label,
+            })
+            existing.append((p1, p2))
+            generated += 1
+
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "layers": {
+            "z_lo": round(z_lo, 1), "z_mid": round(z_mid, 1), "z_hi": round(z_hi, 1),
+            "x_root": round(x_root, 1), "x_mid": round(x_mid, 1), "x_tip": round(x_tip, 1),
+            "y_root_hi": round(w_hi, 1), "y_root_lo": round(w_lo, 1), "y_tip": round(y_tip, 1),
+            "tip_width_mm": tip_width_mm,
+        },
+        "n_wide_nodes": len(wide),
+    }
+
+
 def prune_spurious_crossarm_bars(
     nodes: NodeMap,
     bars: List[dict],
