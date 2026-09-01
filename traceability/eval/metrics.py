@@ -560,11 +560,17 @@ def bars_from_model_2d(
             # 对应杆同样无 face 直接投影——口径对称，任意 view 均纳入。
             # S8（2026-09）K-fan 面板补全杆（panel_template_completion）同理：
             # 节点层位（z-only）+ 锥线半宽推导的全塔 3D 实体杆，无 face 归属。
+            # S9（2026-09）裙底参数基准杆（derived_parametric_base）同理：
+            # extrapolate_base_segment 从立面证据外推的裙底跨层大角钢/扇骨
+            # （6500→0 大腿 + 井字扇骨），是全塔 3D 实体杆；四面展开给它们
+            # 带了 face 标记（f/b/l/r），但 GT 侧对应杆无 face 直接投影到
+            # 双视——口径对称要求它们不受单面过滤（实测 +3 TP）。
             _origin = str(p.get("geometry_origin") or "")
             is_dia = str(face or "").lower() == "diaphragm"
             is_3d_recon = _origin in (
                 "diagonal_topology_reconstructed",
                 "panel_template_completion",
+                "derived_parametric_base",
             )
             if resolved is None and not (is_dia or is_3d_recon):
                 continue

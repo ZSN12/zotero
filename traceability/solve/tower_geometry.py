@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -1619,7 +1619,14 @@ def complete_k_fan_braces(
                 _twist_levels.append(round(hz))
                 _twist_weights[round(hz)] = 4.0
         _twist_levels = sorted(set(_twist_levels))
-        # 源层：±500 内加权质心合并（独立列表）
+        # 源层：±500 内加权质心合并（独立列表）。
+        # 源层：±500 内加权质心合并（独立列表）。
+        # S9 网格锚伴生（2026-09）：保留证据质心源（已匹配面板不动），
+        # 同时对每个质心源派生一个「网格锚」伴生源（±500 内最近的
+        # spoke_step 网格层）——扭结 X 的物理锚点在节间网格层位上，
+        # 证据簇对它有系统性低偏（16614/16871/17136 → 17000，GT 实测
+        # 双层目标 14400/14500 需要源端 d1≈0 才能同时进入容差圈）。
+        # 伴生源只增不删：旧面板保留，新锚点面板新增匹配机会。
         _src_sorted = sorted(_twist_levels)
         _twist_src: List[float] = []
         _acc_z, _acc_w = 0.0, 0.0
@@ -1639,8 +1646,19 @@ def complete_k_fan_braces(
     # 17000→14400/14500→11800→8500，GT 实测扭结 X 常落在下一扭结层）
     _twist_set = {float(z) for z in _twist_levels}
     _tgt_grid = sorted(_grid | set(float(z) for z in junction_levels) | _twist_set)
-    for ztw in _twist_src:
-        if (ztw in _grid or ztw in set(junction_levels)
+    _snap_step = int(spoke_step_mm) if spoke_step_mm else 1000
+    _anchor_set: Set[float] = set()
+    for zs in _twist_src:
+        if zs in _grid or zs in set(junction_levels):
+            continue
+        za = round(float(zs) / _snap_step) * _snap_step
+        if za != float(zs) and abs(za - float(zs)) <= 500.0:
+            _anchor_set.add(float(za))
+    for ztw in list(_twist_src) + sorted(_anchor_set):
+        # 网格锚伴生源（_anchor_set）按定义落在网格上，跳过网格排除，
+        # 否则永不生成；junction 排除仍生效（kfan 已覆盖 junction 源）。
+        if ((ztw in _grid and ztw not in _anchor_set)
+                or ztw in set(junction_levels)
                 or ztw < 6000 or ztw >= twist_z_max):
             continue
         wj = float(half_width_fn(ztw))
