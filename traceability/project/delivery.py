@@ -666,6 +666,38 @@ def deliver_project(
             pruned_bars = keep_largest_connected_component(merged_model)
             save_model(merged_model, out_dir / "model.json")
 
+        # P3.15（JC2 泛化）：export 前清理悬空杆——引用不存在节点的
+        # 杆件（4f_headx 链在 JC2 上锚层错位时产生 50 根悬空杆，
+        # strict GLB 导出整体失败）。删杆不删节点，行为对 JC1 无影响
+        # （JC1 模型无悬空杆）。
+        _node_pos = {}
+        for cid, c in merged_model.components.items():
+            if c.kind == "tower_node":
+                p = c.properties
+                _node_pos[cid] = (p.get("x"), p.get("y"), p.get("z"))
+        import math as _math
+        _dangling = []
+        for cid, c in merged_model.components.items():
+            if c.kind != "tower_bar":
+                continue
+            f = _node_pos.get(c.properties.get("from_node"))
+            t = _node_pos.get(c.properties.get("to_node"))
+            if f is None or t is None:
+                _dangling.append(cid)
+                continue
+            try:
+                if _math.dist(f, t) < 1e-6:
+                    _dangling.append(cid)
+            except TypeError:
+                _dangling.append(cid)
+        if _dangling:
+            for cid in _dangling:
+                merged_model.components.pop(cid, None)
+            save_model(merged_model, out_dir / "model.json")
+            merged_model.meta = getattr(merged_model, "meta", {})
+            merged_model.meta["dropped_dangling_bars"] = len(_dangling)
+            print(f"[P3.15] 清理悬空杆 {len(_dangling)} 根（export 前）")
+
         skeleton_gate = tower_geometry_gate(merged_model, layer_map_path)
         if prune_before_gate:
             skeleton_gate["pruned_bars"] = pruned_bars

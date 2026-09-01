@@ -160,6 +160,7 @@ def _normalize_segment_view_y(
                 "span_mm": span_mm,
                 "z_off": view_z_offset(dv, kind, overlay=overlay),
                 "z_flip": bool((view_region(dv, kind, overlay=overlay) or {}).get("z_flip")),
+                "z_axis_up": bool((view_region(dv, kind, overlay=overlay) or {}).get("z_axis_up")),
                 "vals": [],
                 "nodes": [],
             })
@@ -174,6 +175,7 @@ def _normalize_segment_view_y(
         span_mm = float(g["span_mm"])
         z_off = float(g["z_off"])
         z_flip = bool(g["z_flip"])
+        z_axis_up = bool(g.get("z_axis_up"))
         # z_invert（S2 前置发现）：该段的「宽端」画在图框上部（view_y 小=段底）。
         # 注意与 z_flip 的本质区别：z_flip=True 会同时触发 tower_dxf 的 ly=-ly
         # 与本函数的公式切换，两者数学上恰好抵消（lo/hi 随符号翻转镜像，
@@ -207,6 +209,10 @@ def _normalize_segment_view_y(
             # lo→span_mm（段顶=z_offset+span_mm）。若 z_flip=True（tower_dxf
             # 已做过 ly=-ly），则 view_y=0 已是段底，直接 lo→0。
             if z_flip:
+                local = (raw - lo) / (hi - lo) * span_mm
+            elif z_axis_up:
+                # P3.15（JC2 泛化）：图纸 Y 轴向上（tower_dxf 未做 ly=-ly，
+                # view_y 小=段底）——正向映射 lo→z_offset。
                 local = (raw - lo) / (hi - lo) * span_mm
             else:
                 local = (hi - raw) / (hi - lo) * span_mm

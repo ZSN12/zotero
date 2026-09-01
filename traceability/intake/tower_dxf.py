@@ -1235,15 +1235,28 @@ def extract_tower_from_dxf(
 
     doc = ezdxf.readfile(dxf_path)
     msp = doc.modelspace()
-    # 比例尺自动标定（从 DIMENSION 实体中推断真实 scale，覆盖硬编码 overlay）
+    # 比例尺自动标定（从 DIMENSION 实体中推断真实 scale，覆盖硬编码 overlay）。
+    # P3.15（JC2 泛化）：overlay 声明 disable_scale_calibration=true 时跳过——
+    # JC2-05 的 DIM 样本噪声大（详图/材料表标注混入，簇聚出 10.65 伪
+    # scale 覆盖了手工精标定的 47.58/100.29，塔宽被压缩到 44%）。
+    # JC1 图册 DIM 集中准确，保持默认自动标定不变。
     try:
-        from .scale_calibration import extract_dim_samples, calibrate_region_scales
-        _dim_samples = extract_dim_samples(msp)
-        if _dim_samples and regions:
-            regions = calibrate_region_scales(_dim_samples, regions)
+        from .tower_spec import load_tower_spec
+        _disable_calib = bool(
+            (load_tower_spec(layer_map_path) or {}).get(
+                "disable_scale_calibration", False)
+        )
     except Exception:
-        # 标定异常时安全降级，不阻断 DXF 解析
-        pass
+        _disable_calib = False
+    if not _disable_calib:
+        try:
+            from .scale_calibration import extract_dim_samples, calibrate_region_scales
+            _dim_samples = extract_dim_samples(msp)
+            if _dim_samples and regions:
+                regions = calibrate_region_scales(_dim_samples, regions)
+        except Exception:
+            # 标定异常时安全降级，不阻断 DXF 解析
+            pass
     model = EngineeringModel(name=f"tower-{stem}")
 
     # P2.1 DIMENSION 节拍锚定（坐标链证据标定）：解析该册竖向主节拍链
@@ -1615,7 +1628,10 @@ def extract_tower_from_dxf(
             ly *= scale_y
             # CAD 通常 Y 向下；立面图的 view_y 映射到 Z 时需要翻转到「向上为正」。
             # 用 region.z_flip 显式声明（默认不翻，保持自画图/110kV 兼容）。
-            if region.get("z_flip"):
+            # P3.15（JC2 泛化）：z_axis_up=true 表示图纸 Y 轴向上（国网
+            # 35A2-JC2 立面塔底 y 小、塔顶 y 大）——view_y 已天然向上为正，
+            # 既不做 ly=-ly，归一化层也用正向映射。与 z_flip 互斥。
+            if region.get("z_flip") and not region.get("z_axis_up"):
                 ly = -ly
             z_level = region.get("z_level")
         cid = f"node_{nid}"

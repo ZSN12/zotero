@@ -1943,6 +1943,11 @@ def complete_head_panel_chain(
             diag = ((x, y, z1), (-x / w1 * w2, y / w1 * w2, z2), "DIAG")
             dep = ((x, y, z1), (x / w1 * w2, -y / w1 * w2, z2), "DIAG")
             for (f, t, role) in (src, diag, dep):
+                # P3.15（JC2 泛化）：零长杆防御——hw(z) 在无证据区返回
+                # 常数时，w1==w2 使 LEG 延续杆两端同点（JC2 实测 50 根
+                # 零长 4f_headx 杆导致 strict GLB 导出整体失败）。
+                if abs(t[0] - f[0]) + abs(t[1] - f[1]) + abs(t[2] - f[2]) < 50.0:
+                    continue
                 counter["n"] += 1
                 n_gen += 1
                 new_bars.append({
