@@ -5438,6 +5438,7 @@ def reconstruct_terminal_pair_structure(
     tip_min_gap_mm: float = 500.0,
     tip_min_leg_x_mm: float = 150.0,
     level_source_label: Optional[str] = None,
+    half_width_fn: Optional[Callable[[float], float]] = None,
     id_prefix: str = "tps",
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """P3.5（2026-09-03）：终止层对结构生成器。
@@ -5530,6 +5531,13 @@ def reconstruct_terminal_pair_structure(
                     and z_hi >= crossarm_z_max):
                 continue
             hw_lo, hw_hi = leg_x_at(z_lo, min_x), leg_x_at(z_hi, min_x)
+            # P3.5e：塔尖顶段无腿节点（模型 35500+ 无识别节点）时用
+            # 生产 taper fit（half_width_fn）外推半宽——GT 隔离纪律：
+            # 生产拟合函数非 GT 数据，外推是结构规则不是 GT 耦合。
+            if hw_lo is None and half_width_fn is not None:
+                hw_lo = float(half_width_fn(z_lo)) or None
+            if hw_hi is None and half_width_fn is not None:
+                hw_hi = float(half_width_fn(z_hi)) or None
             if hw_lo is None or hw_hi is None:
                 continue
             # 塔尖段收分一致性：hw 单调递减且降幅 <= 0.3*gap

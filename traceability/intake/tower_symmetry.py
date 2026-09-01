@@ -674,6 +674,7 @@ def expand_4_face_symmetry_model(
             crossarm_z_max=_crossarm_z_max_tp,
             max_gap_mm=5200.0,
             level_source_label="gt_canonical",
+            half_width_fn=half_width_fn,
         )
         roles = classify_members(face_nodes, face_bars)
         _df_tp2 = model.components.get("drawing_file")
