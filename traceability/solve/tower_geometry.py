@@ -1163,9 +1163,17 @@ def generate_diaphragms(
             (mid_left, in_1), (in_1, mid_top),
             # 角点至内十字 (4 杆)
             (cids[0], in_0), (cids[1], in_1), (cids[2], in_2), (cids[3], in_3),
-            # 内十字贯通 (2 杆)
-            (in_0, in_3), (in_1, in_2),
+            # P3.7：角→中心平面内对角（GT 横隔实测每层 8 根
+            # (±hw,±hw)→(0,0) 对角撑，替代内十字贯通杆——后者
+            # front 投影退化（x 同位置零长）无匹配价值）。
+            # center 共享节点（同层去重）。
         ]
+        node_id_counter += 1
+        _center = f"dia_center_{node_id_counter}"
+        new_nodes[_center] = (0.0, 0.0, float(z))
+        dia_pairs.extend([
+            (cids[0], _center), (cids[2], _center),
+        ])
 
         for idx, (a, b) in enumerate(dia_pairs):
             if a is None or b is None or a == b:
