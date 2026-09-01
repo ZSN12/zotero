@@ -238,13 +238,20 @@ function setLoading(on, text) { $('loading').style.display = on ? 'block' : 'non
 // ------------------------------------------------- component_id → 属性映射
 // Phase 6.6：来源分组配色改为金属质感口径（银/蓝/黄/暗灰），图例同步
 const ORIGIN_GROUPS = {
-  recognized: { label: '识别',   color: '#cdd3da', origins: ['dxf_geom'] },
-  assisted:   { label: '辅助重建', color: '#3f6fd8', origins: ['diaphragm_reconstructed', 'panel_subdivision'] },
+  recognized: { label: '识别',   color: '#cdd3da', origins: ['dxf_geom', 'centerline_extract'] },
+  assisted:   { label: '辅助重建', color: '#3f6fd8', origins: ['diaphragm_reconstructed', 'panel_subdivision',
+    'diagonal_topology_reconstructed', 'panel_cross_reconstructed', 'boundary_leg_bridge'] },
   stitch:     { label: '拼接',   color: '#d8b62a', origins: ['collinear_stitch'] },
   derived:    { label: '派生',   color: '#5a6068', origins: ['derived_4face'] },
+  // P2/G1：S8/S10 模板补全杆默认隐藏（eval-only，非默认识图交付）
+  template:   { label: '模板补全', color: '#3d3d45', origins: ['panel_template_completion', 'crossarm_truss_completion'] },
   // P4：底段参数化外推（z<6500 无图纸来源）——半透明紫，图例带免责声明
   parametric: { label: '参数化底段', color: '#a855f7', origins: ['derived_parametric_base'] },
 };
+const ORIGIN_DEFAULT_ON = { template: false };  // 其余组默认可见
+function defaultOriginSet() {
+  return new Set(Object.keys(ORIGIN_GROUPS).filter(g => ORIGIN_DEFAULT_ON[g] !== false));
+}
 const originToGroup = {};
 for (const [g, def] of Object.entries(ORIGIN_GROUPS))
   for (const o of def.origins) originToGroup[o] = g;
@@ -259,6 +266,8 @@ const MATS = {
   // 非图纸识别），不遮挡上层图纸来源构件
   parametric: new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.20, roughness: 0.70,
     transparent: true, opacity: 0.55, depthWrite: false }),
+  template:   new THREE.MeshStandardMaterial({ color: 0x3d3d45, metalness: 0.10, roughness: 0.90,
+    transparent: true, opacity: 0.35, depthWrite: false }),
   galvanized: new THREE.MeshStandardMaterial({ color: 0xb0b6c0, metalness: 0.85, roughness: 0.40,
     emissive: 0x333a45, envMapIntensity: 1.8 }),   // 任务书钉死 0.85/0.4；emissive 兜底大平面反射暗区发黑
   darksteel:  new THREE.MeshStandardMaterial({ color: 0x262a31, metalness: 0.60, roughness: 0.55 }),
@@ -316,7 +325,7 @@ function applyProvenanceMaterials(group) {
 // ---------------------------------------------------------------- 过滤状态
 const state = {
   mode: 'model',           // model | diff | detail | gt
-  origins: new Set(Object.keys(ORIGIN_GROUPS)),
+  origins: defaultOriginSet(),
   sheets: new Set(),
   roles: new Set(Object.keys(ROLE_LABELS)),
   review: true,
@@ -368,7 +377,7 @@ function applyModelFilters() {
     if (!obj.isMesh) return;
     const name = meshNameOf(obj);
     const a = ATTRS[name];
-    if (!a) { obj.visible = true; return; }
+    if (!a) { obj.visible = false; return; }  // 无 bar_map 元数据的 mesh 不展示（防漏网）
     total++;
     if (a.isReview) { obj.visible = false; return; }   // 红球由 reviewGroup 统一画
     let v = true;
@@ -639,7 +648,7 @@ function checkbox(parentId, key, label, checked, onChange, swColor) {
 function buildLayerPanel() {
   $('originFilters').innerHTML = '';
   for (const [g, def] of Object.entries(ORIGIN_GROUPS))
-    checkbox('originFilters', g, def.label, true, (k, v) => {
+    checkbox('originFilters', g, def.label, ORIGIN_DEFAULT_ON[g] !== false, (k, v) => {
       v ? state.origins.add(k) : state.origins.delete(k); applyFilters();
     }, def.color);
 
