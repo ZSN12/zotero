@@ -219,6 +219,156 @@ def _dist(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
     return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
 
 
+# ----------------------------------------------------------------------------
+# P2.1 DIMENSION 节拍锚定（坐标链校准，2026-09-02）
+# ----------------------------------------------------------------------------
+
+def _collect_vertical_beat_dimensions(
+    msp,
+    region: dict,
+    *,
+    beat_min_mm: float = 350.0,
+    beat_max_mm: float = 800.0,
+    match_tol: float = 0.08,
+) -> List[Tuple[float, float, float, float]]:
+    """收集竖向主节拍 DIMENSION（面板高标注）。
+
+    返回 [(y_lo, y_hi, value_mm, x_mid)]（图纸单位 y）。
+    筛选：type=0 线性标注、竖向（y 跨度 > x 跨度）、数值文本落在
+    [beat_min_mm, beat_max_mm]、实测跨度与文本值一致（±match_tol）——
+    即「面板高度」标注（400/430/444/450 等），排除总高/横杆/杆件
+    细部标注（5000/2500/95/105 等）。
+    """
+    out: List[Tuple[float, float, float, float]] = []
+    for e in msp.query("DIMENSION"):
+        try:
+            if int(e.dimtype) != 0:
+                continue
+            text = str(getattr(e.dxf, "text", "") or "").strip()
+            try:
+                v = float(text)
+            except (TypeError, ValueError):
+                continue
+            if not (beat_min_mm <= v <= beat_max_mm):
+                continue
+            p1 = e.dxf.defpoint
+            p2 = e.dxf.defpoint2
+            x1, y1 = float(p1[0]), float(p1[1])
+            x2, y2 = float(p2[0]), float(p2[1])
+            if abs(y2 - y1) <= abs(x2 - x1):
+                continue
+            scale_y = float(region.get("scale_y") or 20.0)
+            span_mm = abs(y2 - y1) * scale_y
+            if span_mm <= 0 or abs(span_mm - v) / v > match_tol:
+                continue
+            out.append((min(y1, y2), max(y1, y2), v, (x1 + x2) / 2.0))
+        except Exception:
+            continue
+    return out
+
+
+def _chain_beat_dimensions(
+    dims: List[Tuple[float, float, float, float]],
+    *,
+    link_tol_u: float = 1.5,
+) -> List[Tuple[float, float, float, float]]:
+    """把散的面板高 DIMENSION 链成「底→顶」连续节拍序列。
+
+    链规则：按 y 升序（图纸 y 小=顶部），从最底（最小 y_lo？——注意
+    CAD y 向下：y 绝对值大=图纸下方=塔底）……实际以边界共享为链：
+    下一节拍的 y_lo ≈ 上一节拍的 y_hi（±link_tol_u）。从最底节拍
+    （y 最小，即图纸最下）开始逐级向上。返回链序（底→顶）。
+    """
+    if not dims:
+        return []
+    # CAD y 向下：图纸下方 y 值更小（更负）。塔底 = y 最小。
+    # 链方向：从塔底（y 最小）向上（y 增大）。
+    ordered = sorted(dims, key=lambda d: d[0])  # 按 y_lo 升序（底→顶）
+    chain = [ordered[0]]
+    used = {0}
+    cur_edge = ordered[0][1]  # 该节拍的上边界 y_hi
+    while True:
+        nxt = None
+        for i, (lo, hi, _v, _x) in enumerate(ordered):
+            if i in used:
+                continue
+            if abs(lo - cur_edge) < link_tol_u:
+                nxt = i
+                break
+        if nxt is None:
+            break
+        chain.append(ordered[nxt])
+        used.add(nxt)
+        cur_edge = ordered[nxt][1]
+    return chain
+
+
+def dimension_beat_anchors(
+    msp,
+    region: dict,
+    z_base_mm: float,
+    *,
+    beat_min_mm: float = 350.0,
+    beat_max_mm: float = 800.0,
+) -> Optional[Dict[str, Any]]:
+    """P2.1：DIMENSION 主节拍链 → view_y 域锚点（坐标链证据标定）。
+
+    返回 {"vy": [...], "z": [...], "y_draw": [...], "n_beats": n, "z_top": z}
+    （vy = (y_draw − region.origin_y) × scale_y，与 tower_dxf 节点 view_y
+    同域，供 tower_views 分段线性映射直接使用）；无法构建链（<3 节拍）
+    返回 None（调用方回退分位数归一化）。
+
+    依据：06 册实测——节点 view_y 分位跨度 5544mm ≠ 模块高 5030mm，
+    分位数线性归一化在段底/段顶各偏 ~300-550mm；DIMENSION 节拍链
+    （400×4+450+400×3+430+450×2+444=5024mm）与 GT 层位吻合到
+    50-115mm（14051↔14000、14447↔14500、16115↔16000）。
+    离线验证：TP@500 从 0（线性）→ 19（节拍分段）。
+    """
+    dims = _collect_vertical_beat_dimensions(
+        msp, region, beat_min_mm=beat_min_mm, beat_max_mm=beat_max_mm)
+    if len(dims) < 3:
+        return None
+    # 按 DIMENSION x 中点分两簇（左右视图），取链最长的一簇
+    xs = sorted(d[3] for d in dims)
+    x_mid_gap = 0.0
+    x_split = None
+    for i in range(1, len(xs)):
+        gap = xs[i] - xs[i - 1]
+        if gap > x_mid_gap:
+            x_mid_gap = gap
+            x_split = (xs[i] + xs[i - 1]) / 2.0
+    if x_split is not None and x_mid_gap > 50.0:
+        left = [d for d in dims if d[3] <= x_split]
+        right = [d for d in dims if d[3] > x_split]
+        cl = _chain_beat_dimensions(left)
+        cr = _chain_beat_dimensions(right)
+        chain = cl if len(cl) >= len(cr) else cr
+    else:
+        chain = _chain_beat_dimensions(dims)
+    if len(chain) < 3:
+        return None
+    # 锚点（drawing y → 全局 z）：链底 → z_base，逐节拍累加
+    oy = float(region["origin"][1])
+    scale_y = float(region.get("scale_y") or 20.0)
+    y_draws: List[float] = [chain[0][0]]
+    zs: List[float] = [float(z_base_mm)]
+    zc = float(z_base_mm)
+    for lo, hi, v, _x in chain:
+        zc += v
+        y_draws.append(hi)
+        zs.append(zc)
+    # view_y 域（与 tower_dxf 节点 ly 同域：ly = (y − oy) × scale_y）
+    vys = [round((y - oy) * scale_y, 2) for y in y_draws]
+    return {
+        "vy": vys,
+        "z": [round(z, 1) for z in zs],
+        "y_draw": [round(y, 2) for y in y_draws],
+        "n_beats": len(chain),
+        "z_top": round(zc, 1),
+        "source": "dxf_dimension_beats",
+    }
+
+
 def _merge_double_line_segments(raw_segments: List[Dict], cfg: Optional[dict]) -> List[Dict]:
     """P0-1：把「同一构件画成两条近似平行线」合并为一条中心线。
 
@@ -252,6 +402,11 @@ def _merge_double_line_segments(raw_segments: List[Dict], cfg: Optional[dict]) -
     for i, a in enumerate(segs):
         if used[i]:
             continue
+        # P1.2：marker_synth 合成横杆是单线终态（非双线对），跳过双线
+        # 配对——同层重叠段曾在此被误配对吞掉 95/195 段且属性丢失。
+        if str(a.get("layer") or "") == "marker_synth":
+            merged.append(a)
+            continue
         la = _dist(a["start"], a["end"])
         if la < min_len:
             merged.append(a)
@@ -262,6 +417,9 @@ def _merge_double_line_segments(raw_segments: List[Dict], cfg: Optional[dict]) -
             if used[j]:
                 continue
             b = segs[j]
+            # P1.2：synth 段不做任何双线配对（单线终态）
+            if str(b.get("layer") or "") == "marker_synth":
+                continue
             lb = _dist(b["start"], b["end"])
             if lb < min_len:
                 continue
@@ -368,6 +526,17 @@ def _merge_collinear_fragments(
             r.get("kind"),
         )
 
+    # P1.2：marker_synth 合成横杆是「相邻分段」终态（leg↔inner↔center
+    # 断点对），共线合并会把同层相邻段熔成一根通长杆（gap 0 <
+    # gap_tol 30）——GT 横杆拓扑是分段式（[0,891]+[891,1782]），通长
+    # 杆端点对不上分段 GT。预标记 used 使 synth 段既不做链种子、也不
+    # 被后续链吸收（链内吸收会丢分段属性并改变端点）。
+    _synth_is = [k for k, s in enumerate(segs)
+                 if str(s.get("layer") or "") == "marker_synth"]
+    for k in _synth_is:
+        used[k] = True
+    merged.extend(segs[k] for k in _synth_is)
+
     for i in range(len(segs)):
         if used[i]:
             continue
@@ -447,6 +616,15 @@ def _merge_collinear_fragments(
             "fragments": len(chain),
             "fragments_handles": [s["handle"] for s in chain],
         })
+        # P1.2 证据属性透传：合并链的 origin/extractor 等从链首继承
+        # （此前全部丢弃——marker_synth 合成横杆合并后 origin 丢失，杆件
+        # 创建回退 dxf_geom、se=None，pure 口径证据链断裂）。
+        for _ek in ("geometry_origin", "source_extractor", "geometry_class",
+                    "evidence_status", "view_type", "scale_ratio"):
+            if chain[0].get(_ek) is not None:
+                merged[-1][_ek] = chain[0][_ek]
+        if chain[0].get("region") is not None:
+            merged[-1]["region"] = chain[0]["region"]
     return merged
 
 
@@ -638,9 +816,17 @@ def _stitch_collinear_with_geometry(
 
     if not segments:
         return segments
+    # P1.2：marker_synth 合成横杆不参与缝合（同 _merge_collinear_fragments
+    # 的豁免——相邻分段终态，缝合会熔成通长杆、端点对不上分段 GT）。
+    _synth = [s for s in segments
+              if str(s.get("layer") or "") == "marker_synth"]
+    _normal = [s for s in segments
+               if str(s.get("layer") or "") != "marker_synth"]
+    if not _normal:
+        return list(segments)
     nodes: Dict[str, Tuple[float, float, float]] = {}
     bars: List[dict] = []
-    for i, seg in enumerate(segments):
+    for i, seg in enumerate(_normal):
         na, nb = f"SA{i}", f"SB{i}"
         nodes[na] = (seg["start"][0], seg["start"][1], 0.0)
         nodes[nb] = (seg["end"][0], seg["end"][1], 0.0)
@@ -652,15 +838,16 @@ def _stitch_collinear_with_geometry(
     merged: List[Dict] = []
     for bar in nb:
         idx = int(bar.get("_seg_idx", 0))
-        if idx >= len(segments):
+        if idx >= len(_normal):
             continue
-        base = dict(segments[idx])
+        base = dict(_normal[idx])
         p_from = nn[bar["from"]]
         p_to = nn[bar["to"]]
         base["start"] = (float(p_from[0]), float(p_from[1]))
         base["end"] = (float(p_to[0]), float(p_to[1]))
         base["stitched_geometry"] = True
         merged.append(base)
+    merged.extend(_synth)
     return merged
 
 
@@ -1059,21 +1246,46 @@ def extract_tower_from_dxf(
         pass
     model = EngineeringModel(name=f"tower-{stem}")
 
+    # P2.1 DIMENSION 节拍锚定（坐标链证据标定）：解析该册竖向主节拍链
+    # （面板高标注 400/430/444/450…），生成 view_y 域锚点存入 drawing_file
+    # 属性，供 tower_views 归一化用分段线性映射替代分位数线性（消除
+    # 「节点分布跨度 ≠ 模块高度」的系统性畸变）。overlay 未声明或链
+    # 构建失败（<3 节拍）时不写入，下游回退分位数旧行为。
+    from .tower_spec import dimension_beat_anchor_config
+    _beat_cfg = dimension_beat_anchor_config(stem, overlay=layer_map_path)
+    _beat_anchors: Optional[Dict[str, Any]] = None
+    if _beat_cfg is not None:
+        _front_region = next(
+            (r for r in regions if _region_kind(r) == "front"), None)
+        if _front_region is not None:
+            try:
+                _beat_anchors = dimension_beat_anchors(
+                    msp, _front_region,
+                    float(_beat_cfg.get("z_base_mm", 0.0)),
+                    beat_min_mm=float(_beat_cfg.get("beat_min_mm", 350.0)),
+                    beat_max_mm=float(_beat_cfg.get("beat_max_mm", 800.0)),
+                )
+            except Exception:
+                _beat_anchors = None
+
     # 图纸文件上下文（带 drawing_kind，供 B2 分流与验收）
+    _df_props: Dict[str, Any] = {
+        "path": dxf_path,
+        "drawing_kind": drawing_kind["kind"],
+        "sheet_role": drawing_kind.get("role", canonical_sheet_role(drawing_kind["kind"])),
+        "spatial_mergeable": sheet_is_spatial_mergeable(stem, overlay=layer_map_path),
+        "drawing_view": stem,
+        "parse_bars": drawing_kind["parse_bars"],
+        "kind_reason": drawing_kind["reason"],
+    }
+    if _beat_anchors is not None:
+        _df_props["dimension_beat_anchors"] = _beat_anchors
     model.add_component(Component(
         id="drawing_file",
         name=stem,
         kind="drawing_file",
         source=SourceRef(SourceType.DRAWING, dxf_path, confidence=1.0),
-        properties={
-            "path": dxf_path,
-            "drawing_kind": drawing_kind["kind"],
-            "sheet_role": drawing_kind.get("role", canonical_sheet_role(drawing_kind["kind"])),
-            "spatial_mergeable": sheet_is_spatial_mergeable(stem, overlay=layer_map_path),
-            "drawing_view": stem,
-            "parse_bars": drawing_kind["parse_bars"],
-            "kind_reason": drawing_kind["reason"],
-        },
+        properties=_df_props,
     ))
 
     # ---- 1) 杆件：展开 INSERT 后的 LINE/LWPOLYLINE on bar_layers ----

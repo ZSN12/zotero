@@ -5543,6 +5543,7 @@ def reconstruct_terminal_pair_structure(
                             "geometry_origin": "terminal_pair_gen",
                             "level_source": level_source_label,
                             "derived_from": "terminal_pair_structure",
+                            "terminal_pair_structure": True,
                         })
                         made += 1
                     # x_cross（x 翻转）
@@ -5557,6 +5558,7 @@ def reconstruct_terminal_pair_structure(
                             "geometry_origin": "terminal_pair_gen",
                             "level_source": level_source_label,
                             "derived_from": "terminal_pair_structure",
+                            "terminal_pair_structure": True,
                         })
                         made += 1
                     # y_cross（y 翻转）
@@ -5571,6 +5573,7 @@ def reconstruct_terminal_pair_structure(
                             "geometry_origin": "terminal_pair_gen",
                             "level_source": level_source_label,
                             "derived_from": "terminal_pair_structure",
+                            "terminal_pair_structure": True,
                         })
                         made += 1
             generated += made

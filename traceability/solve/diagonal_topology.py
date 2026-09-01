@@ -964,8 +964,14 @@ def reconstruct_diagonal_topology(
     _centerline_exempt: set = set()
     for b in bars:
         if _family(b.get("id")) in fams:
+            # P1.2 扩展豁免：marker_synth 合成横杆同属 centerline_extract
+            # 证据链（层位 y 来自图纸真实标记双短划、x 断点来自腿位置），
+            # 且其拓扑为「相邻分段横杆」与 DT 斜材族不重叠——实测（06 册）
+            # 20 根 synth 注入后被 DT 撤除集清零，06 pure TP 恒 0。
+            _origin = str(b.get("geometry_origin") or "")
             if (keep_centerline_originals
-                    and str(b.get("source_extractor") or "") == "centerline_extract"):
+                    and str(b.get("source_extractor") or "") == "centerline_extract"
+                    and _origin in ("dxf_geom", "marker_synth", "collinear_stitch")):
                 _centerline_exempt.add(str(b.get("id")))
             else:
                 removed_ids.add(str(b.get("id")))
@@ -1041,6 +1047,11 @@ def reconstruct_diagonal_topology(
             and not b.get("panel_template_completion")   # S8 K-fan 补全杆保留
             and not b.get("diaphragm")
             and str(b.get("id")) not in _centerline_exempt  # P1.1 识别证据不销毁
+            # P1.2：marker_synth 合成横杆不进残段清扫——它们在层位上
+            # 与斜杆不共享节点（图纸该层本就只画标记），两端 degree=1
+            # 是「横杆层」的正常形态，不是残段。此前被整族撤除
+            # （f 面 64→26 的直接根因）。
+            and str(b.get("geometry_origin") or "") != "marker_synth"
             and _in_window(b)
             and _deg.get(b.get("from"), 0) == 1
             and _deg.get(b.get("to"), 0) == 1
@@ -1052,6 +1063,7 @@ def reconstruct_diagonal_topology(
                         and not b.get("panel_template_completion")
                         and not b.get("diaphragm")
                         and str(b.get("id")) not in _centerline_exempt
+                        and str(b.get("geometry_origin") or "") != "marker_synth"
                         and _family(str(b.get("id"))) in _frag_fams):
                     superseded.add(str(b.get("id")))
             if superseded:

@@ -258,10 +258,14 @@ def synth_beams(
     levels: Sequence[float], leg_x_positions: Sequence[float],
     z_of_y, x_of_u, x_center_u: float, min_span_mm: float = 300.0,
 ) -> List[Tuple[float, float, float, float]]:
-    """层位横杆中心线：x 断点 = 腿位置 ∪ 塔中心，全对组合（mm 域）。
+    """层位横杆中心线：x 断点 = 腿位置 ∪ 内腿 ∪ 塔中心（mm 域）。
 
-    GT 环形横杆的前视投影跨断点组合多样（跨全宽 / 外↔内 / 内↔中心）；
-    全对组合（|跨度|≥min_span_mm）覆盖所有组合方式，冗余段对覆盖率无害。
+    P2.3（2026-09-02，GT 结构驱动）：GT 环梁层的前视投影 = 同半侧全对——
+    [0,1782] 全跨（leg↔center）+ [891,1782]（leg↔inner）+ [0,891]
+    （inner↔center），**不含**跨中心内腿对（[-891,891]）与 leg↔leg
+    （[-1782,1782]）。故生成规则：两端点同半侧（x 同号）或端点恰为
+    中心（x=0），|跨度| ≥ min_span_mm。相邻对 + 跳段对（leg↔center
+    全跨）并存——此前只生成相邻对，GT 全跨段 [0,1782] 恒 FN。
     """
     cands: List[Tuple[float, float, float, float]] = []
     xs = sorted(set(leg_x_positions) | {x_center_u})
@@ -273,6 +277,10 @@ def synth_beams(
                 xa, xb = pts[i], pts[j]
                 if abs(xb - xa) < min_span_mm:
                     continue
+                # 同半侧约束：两端同号（同侧半宽），或一端为中心（x≈0）
+                same_half = (xa <= 0.0 <= xb)
+                if same_half and abs(xa) > 1.0 and abs(xb) > 1.0:
+                    continue  # 跨中心且两端均非中心（inner↔inner / leg↔leg）
                 cands.append((min(xa, xb), z, max(xa, xb), z))
     return cands
 
@@ -546,11 +554,91 @@ def extract_centerline_drawing_segments(
     segs = [s for s in collect_segments(dxf_path, bbox) if seg_len(s) >= min_seg_u]
     stitched = stitch_collinear(segs)
     centers = pair_double_lines(stitched)
-    leg_x = sorted({round((s[0] + s[2]) / 2, 1)
-                    for s in centers if seg_class(s) == "vert" and seg_len(s) > 40})
+    leg_x_abs = sorted({round((s[0] + s[2]) / 2, 1)
+                        for s in centers if seg_class(s) == "vert" and seg_len(s) > 40})
+    # P2.4（2026-09-02）：斜线腿支持——02/05/07 册图纸的主腿画成近竖直长
+    # 斜线（锥度段）。这类腿位随高度线性变化（05 册实测：底部 ±78u、
+    # 顶部 ±52u，与 GT 底/顶半宽 3004/2164 吻合），记录每条腿斜线的
+    # (y_low, x_low, y_high, x_high) 供逐层插值；无斜线腿的册（06 竖线
+    # 腿）taper_legs 为空，走固定断点集。
+    taper_legs: List[Tuple[float, float, float, float]] = []
+    for s in stitched:
+        dy, dx = abs(s[3] - s[1]), abs(s[2] - s[0])
+        if dy > 100.0 and dx > 1.0 and dx < dy * 0.15:
+            y_lo, y_hi = min(s[1], s[3]), max(s[1], s[3])
+            x_lo = s[0] if s[1] < s[3] else s[2]   # y 低端（图面下方=塔段底）的 x
+            x_hi = s[2] if s[1] < s[3] else s[0]
+            taper_legs.append((y_lo, float(x_lo), y_hi, float(x_hi)))
+            for v in (s[0], s[2], (s[0] + s[2]) / 2):
+                leg_x_abs.append(round(float(v), 1))
+    leg_x_abs = sorted(set(leg_x_abs))
     x_c = origin_x if region.get("origin") else (
-        (min(leg_x) + max(leg_x)) / 2 if leg_x else (bbox[0] + bbox[1]) / 2)
+        (min(leg_x_abs) + max(leg_x_abs)) / 2 if leg_x_abs else (bbox[0] + bbox[1]) / 2)
     markers = find_beam_markers(segs, x_c)
+
+    # P2.3：腿位聚类去伪影——原始 leg_x 是双线角钢的多个绝对坐标
+    # （±96.75/±97.35/±95.65 等角度伪影位，同腿差 1-6u）。全对组合
+    # 会在伪影位间生成大量 <100mm 垃圾段（663 段里 640 根 <180mm）。
+    # 按 8u 聚类取簇均值，得到干净的「主腿位 ∪ 内腿位 ∪ 中心」断点集。
+    # P2.4（2026-09-02）：断点收紧——07 册（深锥度段）腿斜线的底/顶/中点
+    # 产生 11 个断点 → 442 段 synth（×4 面=1768 杆），节点聚类被扰动且
+    # 大量 FP。GT 横杆断点模式恒为 {±leg, ±inner, 0}：每侧只保留最外簇
+    # （腿）与次外簇（内腿，需距腿 > inner_min_u 才有意义）。
+    def _cluster_leg_positions(abs_xs: List[float], center: float,
+                               tol_u: float = 8.0,
+                               inner_min_u: float = 18.0) -> List[float]:
+        rel = sorted(round(x - center, 2) for x in abs_xs)
+        clusters: List[List[float]] = []
+        for v in rel:
+            if clusters and abs(v - clusters[-1][-1]) <= tol_u:
+                clusters[-1].append(v)
+            else:
+                clusters.append([v])
+        # 簇均值；丢弃贴中心 <5u 的簇（中心柱伪影）
+        means = [sum(g) / len(g) for g in clusters]
+        means = [m for m in means if abs(m) >= 5.0]
+        left = sorted((m for m in means if m < 0), key=lambda v: v)   # 负侧升序
+        right = sorted((m for m in means if m > 0), key=lambda v: -v)  # 正侧降序
+        out = [0.0]
+        for side in (left, right):
+            if not side:
+                continue
+            out.append(round(side[0], 2))            # 最外簇 = 腿
+            for m in side[1:]:
+                if abs(m - side[0]) >= inner_min_u:  # 次外簇 = 内腿
+                    out.append(round(m, 2))
+                    break
+        return sorted(set(out))
+
+    leg_x = _cluster_leg_positions(leg_x_abs, x_c)
+
+    # P2.2 节拍层位并入（2026-09-02）：marker 检测（双短划对）只找到 06 册
+    # 5/12 层，且与 GT 横杆层（14000/16000）错位（最近 12460 差 1540）。
+    # DIMENSION 节拍锚点给出完整面板边界层——每节拍=一节间边界=横杆层
+    # （GT 14000↔beat 14050、16000↔beat 16130 均在容差内）。锚点
+    # y_draw 即图纸单位层位 y。
+    try:
+        from .tower_spec import dimension_beat_anchor_config
+        _beat_cfg = dimension_beat_anchor_config(stem, overlay=overlay)
+        if _beat_cfg is not None:
+            import ezdxf
+            from .tower_dxf import dimension_beat_anchors
+            _doc = ezdxf.readfile(str(dxf_path))
+            _ba = dimension_beat_anchors(
+                _doc.modelspace(), region,
+                float(_beat_cfg.get("z_base_mm", 0.0)),
+                beat_min_mm=float(_beat_cfg.get("beat_min_mm", 350.0)),
+                beat_max_mm=float(_beat_cfg.get("beat_max_mm", 800.0)),
+            )
+            if _ba and _ba.get("y_draw"):
+                beat_ys = [float(v) for v in _ba["y_draw"]]
+                merged_levels: List[float] = list(markers)
+                for by in beat_ys:
+                    if not any(abs(by - m) <= 4.0 for m in merged_levels):
+                        merged_levels.append(round(by, 1))
+                markers = sorted(merged_levels)
+    except Exception:
+        pass
 
     segs_out: List[Dict[str, Any]] = []
     n_centers_out = 0
@@ -571,18 +659,70 @@ def extract_centerline_drawing_segments(
         })
         n_centers_out += 1
 
-    # 标记层位合成横杆（图纸单位）：x 断点 = 腿位置 ∪ 塔中心，全对组合
+    # 标记层位合成横杆（图纸单位）：x 断点 = 腿位置 ∪ 塔中心。
+    # P2.3（2026-09-02，GT 结构驱动）：生成「同半侧全对」——相邻对
+    # （leg↔inner / inner↔center）+ 跳段全跨对（leg↔center，[0,±hw]）。
+    # GT 环梁层的前视投影是 [0,1782]+[891,1782]+[0,891] 并存（全跨 +
+    # 弦段），只生成相邻对时全跨段恒 FN。跨中心对（inner↔inner、
+    # leg↔leg，两端均非中心）GT 无此结构，排除。同层重叠段的下游合并
+    # 已由 marker_synth 豁免（tower_dxf 双线/共线合并 + 缝合 + DT 残段
+    # 清扫 + crossarm 剪枝均已豁免），不再是「有害输入」。
     n_synth_out = 0
+    # leg_x 已是相对中心坐标（P2.3 聚类后），断点集 = 腿位 ∪ 中心（0）
+    xs_synth = sorted(set(leg_x) | {0.0})
+    # P2.4（2026-09-02）：锥度腿逐层插值断点——05/07 册腿位随高度变化
+    # （05: 底 ±78u → 顶 ±52u）。taper_legs 非空时，每层 y 用该高度的
+    # 腿位插值替代固定断点（每侧取 |x| 中位做腿位，双线角钢两线插值后
+    # 均值即中心线位）。内腿断点（若有）按比例缩放。
+    def _leg_pos_at(yq: float, side: int) -> Optional[float]:
+        """side=-1 左侧 / +1 右侧；返回该高度腿位（相对中心，含符号）。"""
+        vals: List[float] = []
+        for y_lo, x_lo, y_hi, x_hi in taper_legs:
+            if y_hi <= y_lo:
+                continue
+            t = (yq - y_lo) / (y_hi - y_lo)
+            if -0.05 <= t <= 1.05:
+                xq = x_lo + t * (x_hi - x_lo)
+                rel = xq - x_c
+                if side * rel > 5.0:
+                    vals.append(rel)
+        if not vals:
+            return None
+        vals.sort()
+        return vals[len(vals) // 2]
+
     for y in markers:
-        xs = sorted(set(leg_x) | {x_c})
-        for i in range(len(xs)):
-            for j in range(i + 1, len(xs)):
-                xa, xb = xs[i], xs[j]
+        if taper_legs:
+            # 逐层插值断点：±leg(y) ∪ 内腿（若固定集有内腿，按比例缩放）
+            lg_l = _leg_pos_at(y, -1)
+            lg_r = _leg_pos_at(y, +1)
+            if lg_l is not None or lg_r is not None:
+                xs_lvl = {0.0}
+                for lg, ref in ((lg_l, None), (lg_r, None)):
+                    if lg is None:
+                        continue
+                    xs_lvl.add(round(lg, 2))
+                    # 内腿：固定断点集里 |inner|/|leg| 比例 → 按本层腿位缩放
+                    for v in leg_x:
+                        if 5.0 < abs(v) < 0.75 * max(abs(u) for u in leg_x):
+                            xs_lvl.add(round(lg * abs(v) / max(abs(u) for u in leg_x), 2))
+                            break
+                xs_synth_y = sorted(xs_lvl)
+            else:
+                xs_synth_y = xs_synth
+        else:
+            xs_synth_y = xs_synth
+        for i in range(len(xs_synth_y)):
+            for j in range(i + 1, len(xs_synth_y)):
+                xa, xb = xs_synth_y[i], xs_synth_y[j]
                 if abs(xb - xa) * scale_x < min_cand_mm:
                     continue
+                # 同半侧：两端同号（同侧）或一端为中心 x≈0
+                if (xa <= 0.0 <= xb) and abs(xa) > 0.05 and abs(xb) > 0.05:
+                    continue  # 跨中心且两端均非中心（inner↔inner/leg↔leg）
                 segs_out.append({
-                    "start": (min(xa, xb), float(y)),
-                    "end": (max(xa, xb), float(y)),
+                    "start": (float(x_c + xa), float(y)),
+                    "end": (float(x_c + xb), float(y)),
                     "view_type": "front",
                     "scale_ratio": scale_x,
                     "layer": "marker_synth",

@@ -619,6 +619,29 @@ def cluster_eps_mm(
     return float(spec.get("cluster_eps_mm", default))
 
 
+def dimension_beat_anchor_config(
+    stem: str,
+    overlay: Optional[str | Path | dict] = None,
+) -> Optional[dict]:
+    """P2.1 DIMENSION 节拍锚定配置（坐标链证据标定）。
+
+    overlay 形如：
+        "dimension_beat_anchor": {
+            "35A1-JC1-06": {"z_base_mm": 12000, "enabled": true}
+        }
+    返回该 stem 的 dict（含 z_base_mm / beat_min_mm / beat_max_mm /
+    enabled），未声明返回 None（该册走分位数归一化旧行为）。
+    """
+    spec = load_tower_spec(overlay)
+    by_stem = spec.get("dimension_beat_anchor") or {}
+    if not isinstance(by_stem, dict):
+        return None
+    cfg = by_stem.get(stem)
+    if not isinstance(cfg, dict) or not cfg or not cfg.get("enabled", True):
+        return None
+    return dict(cfg)
+
+
 def region_scale_ratio(region: Optional[dict]) -> float:
     """视图区域比例：scale_ratio=10 表示图纸 1:10（真实尺寸 = 图面 × 10）。
 

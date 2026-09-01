@@ -226,6 +226,7 @@ def merge_cross_file_views(
 
     merged = EngineeringModel(name="tower-cross-file-merged")
     view_kinds: set = set()
+    beat_by_sheet: Dict[str, Any] = {}
     source_files: List[str] = []
     skipped_sheets: List[str] = []
 
@@ -242,6 +243,11 @@ def merge_cross_file_views(
         if df:
             vk = df.properties.get("view_kinds") or []
             view_kinds.update(vk)
+            # P2.1：透传该册 DIMENSION 节拍锚点到合并模型（供
+            # merge_view_coordinates 的分位数归一化替换为节拍分段映射）
+            _ba = df.properties.get("dimension_beat_anchors")
+            if isinstance(_ba, dict) and _ba.get("vy") and _ba.get("z"):
+                beat_by_sheet[stem] = _ba
 
         for cid, comp in model.components.items():
             if comp.kind == "drawing_file":
@@ -297,11 +303,7 @@ def merge_cross_file_views(
             primary = stem
             break
 
-    merged.add_component(Component(
-        id="drawing_file",
-        name="跨文件合并",
-        kind="drawing_file",
-        properties={
+    _merged_df_props: Dict[str, Any] = {
             "drawing_view": primary,
             "path": primary,
             "view_mode": "cross_file_multi_view",
@@ -311,7 +313,15 @@ def merge_cross_file_views(
             # Phase A2：被空间合并边界剔除的图纸（大样/模块页/目录等）
             "spatial_merge_skipped_sheets": skipped_sheets,
             "spatial_merge_filter": "elevation|plan|section" if layer_map_path is not None else "none",
-        },
+    }
+    if beat_by_sheet:
+        # P2.1：各册 DIMENSION 节拍锚点（key = stem/drawing_view）
+        _merged_df_props["dimension_beat_anchors_by_sheet"] = beat_by_sheet
+    merged.add_component(Component(
+        id="drawing_file",
+        name="跨文件合并",
+        kind="drawing_file",
+        properties=_merged_df_props,
     ))
     return merged
 

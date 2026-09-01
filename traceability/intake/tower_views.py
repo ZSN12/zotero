@@ -92,6 +92,7 @@ def _robust_segment_span(
 def _normalize_segment_view_y(
     nodes_by_view: Dict[str, List[Tuple[str, Component]]],
     overlay: Optional[str | Path | dict] = None,
+    beat_anchors_by_view: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Tuple[float, float]]:
     """阶段5.1：把分段立面/侧立面的局部 view_y 归一化为全局 Z（原地改写 view_y）。
 
@@ -104,12 +105,40 @@ def _normalize_segment_view_y(
     `z = view_y` 的路径（front 单立面、front+side 配对、peer-fill、gusset
     锚定）都自动拿到正确高程，无需逐路径传参。
 
+    P2.1 DIMENSION 节拍锚定（beat_anchors_by_view）：若该 drawing_view
+    存在 DIMENSION 主节拍链锚点（tower_dxf 解析、drawing_file 属性透传，
+    key = drawing_view 即 stem），则用节拍分段线性映射替代分位数线性——
+    消除「节点分布跨度 ≠ 模块高度」的系统性畸变（06 册实测：节点跨度
+    5544mm vs 模块高 5030mm，分位数线性在段底/顶各偏 300-550mm；
+    节拍链 TP@500 0→19）。
+
     只改写「带 z_span_mm 声明」的分段图；无 z_span_mm 的单立面/详图不改。
     返回 {key: (lo, hi)}（key = (drawing_view, view_kind)），供审计。
 
     注意：原局部 view_y 会保存在 `view_y_local`（若非 None），保持可追溯。
     """
     from .tower_spec import view_z_offset, view_z_span_mm, view_region
+
+    def _piecewise_beat_z(anchors: Dict[str, Any], vy: float) -> Optional[float]:
+        """节拍锚点分段线性映射 view_y → z（锚点已按 vy 升序）。"""
+        vys = anchors.get("vy") or []
+        zs = anchors.get("z") or []
+        if len(vys) < 2 or len(vys) != len(zs):
+            return None
+        pairs = sorted(zip(vys, zs))
+        if vy <= pairs[0][0]:
+            (y0, z0), (y1, z1) = pairs[0], pairs[1]
+        elif vy >= pairs[-1][0]:
+            (y0, z0), (y1, z1) = pairs[-2], pairs[-1]
+        else:
+            (y0, z0), (y1, z1) = pairs[0], pairs[1]
+            for i in range(len(pairs) - 1):
+                if pairs[i][0] <= vy <= pairs[i + 1][0]:
+                    (y0, z0), (y1, z1) = pairs[i], pairs[i + 1]
+                    break
+        if y1 == y0:
+            return z0
+        return z0 + (vy - y0) / (y1 - y0) * (z1 - z0)
 
     # 1) 按 (drawing_view, view_kind) 收集 front/side 节点的 view_y。
     #    只有声明了 z_span_mm 的段才参与归一化（否则保持原样）。
@@ -137,6 +166,7 @@ def _normalize_segment_view_y(
             g["vals"].append(float(vy))
             g["nodes"].append((cid, comp))
 
+    beat_anchors_by_view = beat_anchors_by_view or {}
     bounds: Dict[str, Tuple[float, float]] = {}
     # 2) 逐组归一化并原地改写 view_y。
     for key, g in groups.items():
@@ -152,11 +182,25 @@ def _normalize_segment_view_y(
         # DXF 层——用于「图框顶=宽端」的图纸（35A1-JC1 的 07/06/05/04 段，
         # 实测主腿锥度 +0.076/mm 与 GT -0.07/mm 镜像，翻转后吻合到 3~11mm）。
         z_invert = bool((view_region(dv, kind, overlay=overlay) or {}).get("z_invert"))
+        # P2.1：DIMENSION 节拍锚点优先（仅 front 面——节拍链来自正立面
+        # 竖向标注；side 面若无独立节拍链则回退分位数）。
+        anchors = beat_anchors_by_view.get(dv) if kind == "front" else None
         lo, hi = _robust_segment_span(g["vals"])
         bounds[f"{dv}__{kind}"] = (lo, hi)
+        n_beat_mapped = 0
         for cid, comp in g["nodes"]:
             p = comp.properties
             raw = float(p["view_y"])
+            z_val = None
+            if anchors is not None:
+                z_val = _piecewise_beat_z(anchors, raw)
+            if z_val is not None:
+                p["view_y_local"] = p.get("view_y")
+                p["view_y"] = round(float(z_val), 2)
+                p["segment_z_normalized"] = True
+                p["segment_z_beat_anchored"] = True
+                n_beat_mapped += 1
+                continue
             # view_y 语义：CAD 通常 Y 向下，view_y=0 落在段顶（几何窄端），
             # view_y=hi 落在段底（宽端）。若 region 未声明 z_flip（默认），
             # 需把几何翻转成「向上为正」：hi→0（段底=z_offset）、
@@ -173,6 +217,9 @@ def _normalize_segment_view_y(
             p["segment_z_normalized"] = True
             if z_invert:
                 p["segment_z_inverted"] = True
+        if anchors is not None and g["nodes"]:
+            # 审计：节拍映射覆盖率（0 = 锚点域异常，全部回退分位数）
+            bounds[f"{dv}__{kind}__beat"] = (n_beat_mapped, len(g["nodes"]))
     return bounds
 
 
@@ -782,7 +829,24 @@ def merge_view_coordinates(
     # 阶段5.1：分段立面/侧立面局部 view_y → 全局 Z 归一化（原地改写 view_y）。
     # 必须在此处（所有分桶/配对之前）执行，否则 front+side 配对与 peer-fill
     # 路径会用未归一化的 view_y 当 Z，把段间接头重叠累加进高程（733.8mm 漂移）。
-    _normalize_segment_view_y(nodes_by_view, overlay=overlay)
+    # P2.1：优先用 tower_dxf 解析的 DIMENSION 节拍锚点（drawing_file 属性，
+    # key = drawing_view/stem），节拍分段线性替代分位数线性。
+    _df_beat = model.components.get("drawing_file")
+    _beat_by_view: Dict[str, Dict[str, Any]] = {}
+    if _df_beat is not None:
+        _ba = _df_beat.properties.get("dimension_beat_anchors")
+        if isinstance(_ba, dict) and _ba.get("vy") and _ba.get("z"):
+            _stem = _model_stem(model) or str(_df_beat.properties.get("drawing_view") or "")
+            if _stem:
+                _beat_by_view[_stem] = _ba
+        # 跨文件合并模型：各册锚点在 by_sheet 字典里（tower_batch 透传）
+        _by_sheet = _df_beat.properties.get("dimension_beat_anchors_by_sheet")
+        if isinstance(_by_sheet, dict):
+            for _s, _a in _by_sheet.items():
+                if isinstance(_a, dict) and _a.get("vy") and _a.get("z"):
+                    _beat_by_view[str(_s)] = _a
+    _normalize_segment_view_y(
+        nodes_by_view, overlay=overlay, beat_anchors_by_view=_beat_by_view)
 
     # front/side/section 的分桶键：view_y（即 Z，已在上面归一化为全局）
     def bucket(z: Optional[float]) -> Optional[int]:

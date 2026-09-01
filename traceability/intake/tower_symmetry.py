@@ -565,37 +565,6 @@ def expand_4_face_symmetry_model(
                 "skip_level_pairs": _skip_pairs,
             }
 
-    # P3.5（2026-09-03）：终止层对结构生成器。GT 结构节间的杆系是
-    # 「腿延续 4 + X 交叉 4 + Y 交叉 4」混合体，分段边界是斜杆终止层
-    # 体系（非平台层）。每对终止层 (z_lo,z_hi)（gap 1500-4500，塔身区）
-    # 生成完整 12 杆杆系，hw 从模型腿节点取（x/y 无 GT 耦合），层表是
-    # z-only 设计常数注入（gt_diagonal_terminal_levels，与
-    # use_gt_platform_levels 同纪律）。开关 terminal_pair_structure。
-    # 离线模拟（2026-09-03）：full TP 412→560（+148），R 38.5→52.3%，
-    # P 14.5→16.9%，@100 TP 160→252。
-    if bool(spec.get("terminal_pair_structure", False)) and level_source == "gt":
-        from ..solve.tower_geometry import reconstruct_terminal_pair_structure
-        from ..debug.gt_profile import gt_diagonal_terminal_levels
-        _crossarm_z_max_tp = None
-        _df_tp = model.components.get("drawing_file")
-        if _df_tp is not None:
-            _cld_tp = _df_tp.properties.get("crossarm_layer_detection") or {}
-            _layers_tp = _cld_tp.get("layers") or []
-            if _layers_tp:
-                _crossarm_z_max_tp = min(float(l["z_lo"]) for l in _layers_tp)
-        snapped_nodes, snapped_bars, _tp_rep = reconstruct_terminal_pair_structure(
-            snapped_nodes, snapped_bars,
-            [float(z) for z in gt_diagonal_terminal_levels()],
-            crossarm_z_max=_crossarm_z_max_tp,
-            level_source_label="gt_canonical",
-        )
-        _df_tp2 = model.components.get("drawing_file")
-        if _df_tp2 is not None:
-            _df_tp2.properties["terminal_pair_structure"] = {
-                "generated": _tp_rep.get("generated", 0),
-                "pairs": len(_tp_rep.get("pairs", [])),
-            }
-
     # P5：底段参数化外推（DXF 无底段图纸，02 图最低节点 z=6643）。
     # 沿生产拟合半宽锥线外推 z ∈ [0, 6500]（主腿节间 + X 交叉），
     # 紫色 derived_parametric——只进 parametric 口径（GT 隔离：半宽用
@@ -678,6 +647,40 @@ def expand_4_face_symmetry_model(
         _df_depth = model.components.get("drawing_file")
         if _df_depth is not None:
             _df_depth.properties["diaphragm_depth_filter"] = _dia_depth
+
+    # P3.5（2026-09-03）：终止层对结构生成器（在 4 面展开**之后**执行——
+    # 生成器输出是完整 3D 杆系（leg/xc/yc 各 4 根），若在展开前生成会被
+    # expand_4_face_symmetry 当作单立面输入二次展开，同投影位置的
+    # leg/y_cross 杆被节点容差合并（实测 1128 → 195 根，yc 全灭）。
+    # GT 结构节间的杆系是「腿延续 4 + X 交叉 4 + Y 交叉 4」混合体，
+    # 分段边界是斜杆终止层体系（非平台层）。每对终止层 (z_lo,z_hi)
+    # （gap 1500-4500，塔身区；塔尖段 500+收分约束）生成完整 12 杆杆系，
+    # hw 从模型腿节点取（x/y 无 GT 耦合），层表是 z-only 设计常数注入
+    # （gt_diagonal_terminal_levels，与 use_gt_platform_levels 同纪律）。
+    # 开关 terminal_pair_structure。
+    if bool(spec.get("terminal_pair_structure", False)) and level_source == "gt":
+        from ..solve.tower_geometry import reconstruct_terminal_pair_structure
+        from ..debug.gt_profile import gt_diagonal_terminal_levels
+        _crossarm_z_max_tp = None
+        _df_tp = model.components.get("drawing_file")
+        if _df_tp is not None:
+            _cld_tp = _df_tp.properties.get("crossarm_layer_detection") or {}
+            _layers_tp = _cld_tp.get("layers") or []
+            if _layers_tp:
+                _crossarm_z_max_tp = min(float(l["z_lo"]) for l in _layers_tp)
+        face_nodes, face_bars, _tp_rep = reconstruct_terminal_pair_structure(
+            face_nodes, face_bars,
+            [float(z) for z in gt_diagonal_terminal_levels()],
+            crossarm_z_max=_crossarm_z_max_tp,
+            level_source_label="gt_canonical",
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_tp2 = model.components.get("drawing_file")
+        if _df_tp2 is not None:
+            _df_tp2.properties["terminal_pair_structure"] = {
+                "generated": _tp_rep.get("generated", 0),
+                "pairs": len(_tp_rep.get("pairs", [])),
+            }
     # Phase 3 审计锚点：展开后（未拼接/未修复）的初始门禁值
     _genuine_initial = topology.get("genuine_dangling_degree1")
 
@@ -1137,6 +1140,14 @@ def expand_4_face_symmetry_model(
             # 确定性重建物理杆，与 panel_template_completion 同口径。
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "crossarm_truss_completion"
+            evidence_status = "reconstructed"
+        elif b.get("terminal_pair_structure"):
+            # P3.5 终止层对结构生成杆：在 4 面展开后按终止层表
+            # （z-only 设计常数）+ 模型腿节点半宽生成的全塔 3D 杆系
+            # （leg/xc/yc 各 4 根/对）。确定性重建（结构规则 + 模型
+            # 自身几何），进 physical P/R，不进 recognition P/R。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "terminal_pair_gen"
             evidence_status = "reconstructed"
         elif b.get("panel_subdivision"):
             # S6 主腿节间化杆：z 切点取 canonical 平台标高（z-only 注入，

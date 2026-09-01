@@ -541,17 +541,28 @@ def bars_from_model_2d(
         if not filter_fn(p):
             continue
         # 阶段1.6 严格 view 过滤：指定 view 时，必须显式匹配。
-        # view_type 缺失时回退到 face 字段映射（f→front, b/l/r→side 等）。
-        # 两者都缺失 → unknown_view（不得静默进入指定 view 指标）。
+        # view_type 缺失时回退到 face 字段映射。
+        # 对称口径修正（2026-09-02，P2.2）：四面展开杆（face=f/b/l/r）与 GT
+        # 侧「无 face、直接投影 (x,z)/(y,z)」对称——GT front 投影把 4 面
+        # 杆全部投进 (x,z)（环梁 multiplicity：f+b 面 x 梁非退化、l/r 面
+        # y 梁退化为点），模型侧此前把 b/l/r 映射到 side 视图排除出 front，
+        # 每环恒少 3/4 可匹配杆（06 册 z=16000 环：GT 22 根 vs 模型仅 f 面
+        # 4 根可参与 Hungarian）。修正：face 杆在两个视图都纳入，由投影
+        # 坐标本身决定形态（front 视图 l/r 杆退化为点、side 视图 f/b 杆
+        # 退化为点——与 GT 完全同构）。view_type 杆（未展开模型）仍按
+        # view_type 严格过滤。
         if view is not None:
             vt = p.get("view_type")
             face = p.get("face")
-            # face → view 映射：四面展开后杆件只有 face，无 view_type
             resolved = None
             if vt is not None:
                 resolved = vt
             elif face is not None:
-                resolved = _face_to_view(str(face))
+                _f4 = str(face).strip().lower()
+                if _f4 in ("f", "b", "l", "r", "center", "corner", "diaphragm"):
+                    resolved = view  # 对称投影：face 杆不限定视图
+                else:
+                    resolved = _face_to_view(str(face))
             # 横隔（diaphragm）是水平面内的真实物理杆，投影到 front(x-z) 与
             # side(y-z) 均为水平段，GT 在两个视图投影中都存在横隔。故横隔不按
             # face 过滤，任意 view 均纳入（与 GT 侧「无 face、直接投影」口径一致）。
@@ -572,6 +583,10 @@ def bars_from_model_2d(
                 "panel_template_completion",
                 "derived_parametric_base",
                 "crossarm_truss_completion",
+                # P3.5（2026-09-03）：终止层对结构生成杆——在 4 面展开后
+                # 生成的全塔 3D 实体杆系（leg/xc/yc 各 4 根/对），
+                # 无 face 归属，GT 侧对应杆同样无 face 直接投影。
+                "terminal_pair_gen",
             )
             if resolved is None and not (is_dia or is_3d_recon):
                 continue
