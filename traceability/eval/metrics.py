@@ -461,6 +461,7 @@ def eval_segment_pr(
     model: Sequence[Any],
     cost_fn,
     tols: Sequence[float] = DEFAULT_TOLS,
+    keep_cost_matrix: bool = False,
 ) -> Dict[str, Any]:
     """tolerance sweep：对每个容差算 Precision/Recall，输出 PR 曲线。
 
@@ -479,6 +480,8 @@ def eval_segment_pr(
     for i, g in enumerate(gt):
         for j, m in enumerate(model):
             _cm[i, j] = cost_fn(g, m)
+    # P3.9：暴露代价矩阵（dual 视图口径复用，避免重复构造 5M+ 调用）
+    _shared_cost_matrix = _cm
     for tol in tols:
         matched, un_gt, un_m = hungarian_match(
             gt, model, cost_fn, max_cost=tol, cost_matrix=_cm)
@@ -497,12 +500,17 @@ def eval_segment_pr(
         })
         if tol == tols[-1]:
             matched_at_default = matched
-    return {
+    result = {
         "n_gt": len(gt),
         "n_model": len(model),
         "sweep": sweep,
         "matched_at_default": matched_at_default,
     }
+    # P3.9：仅 dual 视图口径复用时暴露代价矩阵（ndarray 不可 JSON 序列化，
+    # 其它调用方拿到会破坏指标落盘；默认不外泄）。
+    if keep_cost_matrix:
+        result["cost_matrix"] = _shared_cost_matrix
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -922,7 +930,8 @@ def eval_a2_dual_caliber(
             model, view=view, mode="recognition", allow_legacy=allow_legacy)
 
     pure = eval_segment_pr(gt_segs, [s for s, _ in m_pure_items], segment_cost, tols)
-    full = eval_segment_pr(gt_segs, [s for s, _ in m_phys], segment_cost, tols)
+    full = eval_segment_pr(gt_segs, [s for s, _ in m_phys], segment_cost, tols,
+                           keep_cost_matrix=True)
     pure["metric_scope"] = "pure_dxf_recognition"
     full["metric_scope"] = "full_physical_incl_gt_assisted"
 
@@ -944,6 +953,51 @@ def eval_a2_dual_caliber(
         for s in full["sweep"]
     ]
 
+    # P3.9（2026-09-03）：双视（front+side）并集口径——GT 3D 杆在两个
+    # 正交立面投影，任一视图 Hungarian 匹配即计 TP。投影几何必然互补：
+    # y 向杆 front 退化、x 向杆 side 退化。这是「2D 双视重建评测」
+    # 的标准语义（工程图纸本身就是双视表示法）。
+    # 与 front-only 并列呈报，不替代历史口径（口径诚实原则）。
+    dual_union = {}
+    try:
+        g_s = gt_bars_2d(gt, "side")
+        m_s = bars_from_model_2d(model, view="side", mode="physical",
+                                 allow_legacy=allow_legacy)
+        n_gt_ids = {b["id"] for b in gt["bars"]}
+        gt_s_segs = [s for s, _, _ in g_s]
+        m_s_segs = [s for s, _ in m_s]
+        # P3.9 性能：side 代价矩阵只构造一次，3 个 tol 复用
+        # （front 侧复用 full sweep 的矩阵——构造 5M 次代价调用
+        # 是评测主瓶颈，dual 不得翻倍）。
+        import numpy as np
+        cm_s = np.empty((len(gt_s_segs), len(m_s_segs)), dtype=float)
+        for i, gs in enumerate(gt_s_segs):
+            for j, ms in enumerate(m_s_segs):
+                cm_s[i, j] = segment_cost(gs, ms)
+        cm_f = full.get("cost_matrix")
+        for tol in tols:
+            pf, _, _ = hungarian_match(
+                gt_segs, [s for s, _ in m_phys], segment_cost, max_cost=tol,
+                cost_matrix=cm_f)
+            ps, _, _ = hungarian_match(
+                gt_s_segs, m_s_segs, segment_cost, max_cost=tol,
+                cost_matrix=cm_s)
+            ids_f = {g[gi][1] for gi, _ in pf}
+            ids_s = {g_s[gi][1] for gi, _ in ps}
+            u = ids_f | ids_s
+            dual_union[tol] = {
+                "tp_union": len(u),
+                "recall_union": len(u) / max(1, len(n_gt_ids)),
+                "tp_front": len(ids_f),
+                "tp_side": len(ids_s),
+            }
+    except Exception as exc:  # pragma: no cover - 诊断口径失败不阻断主评测
+        dual_union = {"error": str(exc)}
+    finally:
+        # P3.9：内部复用的 ndarray 代价矩阵不外泄（JSON dump 安全）
+        pure.pop("cost_matrix", None)
+        full.pop("cost_matrix", None)
+
     return {
         "pure_dxf": pure,
         "full": full,
@@ -952,6 +1006,7 @@ def eval_a2_dual_caliber(
         "n_model_pure": len(m_pure_items),
         "n_model_full": len(m_phys),
         "ceiling": front_view_ceiling(gt),
+        "dual_view_union": dual_union,
     }
 
 

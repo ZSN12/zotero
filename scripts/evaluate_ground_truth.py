@@ -131,6 +131,19 @@ def main():
         print(f"{s['tol']:>8.0f} {s['tp']:>5} {s['fp']:>5} {s['fn']:>5} "
               f"{s['precision']:>10.1%} {s['recall']:>10.1%} {gain:>12d}")
 
+    dv = dual.get("dual_view_union") or {}
+    if dv and "error" not in dv:
+        print()
+        print("【双视并集口径】A2-dual（front+side 任一视图匹配即 TP）——"
+              "投影几何互补语义")
+        print(f"{'tol(mm)':>8} {'TP_f':>5} {'TP_s':>5} {'TP并集':>7} {'Recall并集':>10}")
+        for tol, d in sorted(dv.items(), key=lambda kv: float(kv[0])):
+            print(f"{float(tol):>8.0f} {d['tp_front']:>5} {d['tp_side']:>5} "
+                  f"{d['tp_union']:>7} {d['recall_union']:>10.1%}")
+        print("注：y 向杆 front 退化 / x 向杆 side 退化的投影互补，"
+              "GT 杆按 3D id 去重并集。与 front-only 并列呈报，"
+              "不替代历史口径。")
+
     cl = dual["ceiling"]
     print()
     print(f"【口径上限】{args.view} 2D 理论天花板 {cl['ceiling_rate']:.1%} "
