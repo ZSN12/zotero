@@ -1348,18 +1348,43 @@ def merge_view_bars(
         # 已把 side 节点 view_y 原地改写为全局 Z（同 front 同域，节拍/锚
         # 分段线性），view_x 即 y 深度轴（与 z_pair 的 yp 同一变量，expand=0
         # 时 y'=yp）。据此 z=view_y、y=view_x 可独立解算，无需 front 配对。
+        # 门禁：仅当该节点组确实被归一化过（view_y_local 已写入）才信任
+        # view_y 是全局 Z——ZC1 实测：side 组未归一化（z_axis_up 等特殊
+        # 布置）时 view_y 是局部值，直接当 z 用会污染跨册合并。
         for _pp in (_pf, _pt):
-            if _pp.get("z") is None and _pp.get("view_y") is not None:
+            if (_pp.get("z") is None and _pp.get("view_y") is not None
+                    and _pp.get("view_y_local") is not None):
                 _pp["z"] = round(float(_pp["view_y"]), 2)
             if _pp.get("y") is None and _pp.get("view_x") is not None:
                 _pp["y"] = round(float(_pp["view_x"]), 2)
         if any(_pf.get(_a) is None for _a in ("y", "z")) or \
            any(_pt.get(_a) is None for _a in ("y", "z")):
             continue
+        # P2.4b-3：z 端点层位吸附（z-only 设计常数，同 marker_synth 纪律）。
+        # 实测（02 册）：配对平均 z 落在 GT 层位中间（如 34452 介于 34200/
+        # 34900 之间），端点误差 +130~+500mm 系统性超差；把读取端点 z 吸附
+        # 到来源册 beam_marker_levels_mm（±300mm 内）消差后近失 FP 转 TP。
+        _stem = str(_c.properties.get("source_file") or _c.properties.get("drawing_view") or "")
+        _lv = []
+        try:
+            from .centerline_extract import _overlay_cfg
+            _ce = _overlay_cfg(_stem, overlay) or {}
+            _lv = [float(v) for v in (_ce.get("beam_marker_levels_mm") or [])]
+        except Exception:
+            _lv = []
+        if _lv:
+            for _pp in (_pf, _pt):
+                _dz = float(_pp["z"])
+                _best = min(_lv, key=lambda v: abs(v - _dz))
+                if abs(_best - _dz) <= 300.0:
+                    _pp["z"] = round(_best, 2)
         _z1, _z2 = float(_pf["z"]), float(_pt["z"])
         _y1, _y2 = float(_pf["y"]), float(_pt["y"])
         _x1, _x2 = _pf.get("x"), _pt.get("x")
         _x_src = "z_pair"
+        _z_snapped = _lv and (
+            any(abs(_z1 - v) < 1e-6 for v in _lv) or
+            any(abs(_z2 - v) < 1e-6 for v in _lv))
         if _x1 is None or _x2 is None:
             if _hw_freeze is None:
                 continue
@@ -1375,6 +1400,7 @@ def merge_view_bars(
             "from": [round(float(_x1), 2), round(_y1, 2), round(_z1, 2)],
             "to": [round(float(_x2), 2), round(_y2, 2), round(_z2, 2)],
             "x_source": _x_src,
+            "z_snapped": bool(_z_snapped),
             "bar_id": _c.properties.get("bar_id"),
             "section": _c.properties.get("section"),
             "source_file": _c.properties.get("source_file") or _c.properties.get("drawing_view"),
