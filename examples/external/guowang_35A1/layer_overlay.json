@@ -1562,11 +1562,21 @@
    "z_base_mm": 24000.0,
    "beat_min_mm": 800.0,
    "beat_max_mm": 2200.0,
-   "enabled": true
+   "enabled": true,
+   "mode": "region_span_linear",
+   "z_span_mm": [
+    24000,
+    30800
+   ]
   },
   "35A1-JC1-05": {
    "z_base_mm": 18000.0,
-   "enabled": true
+   "enabled": true,
+   "mode": "region_span_linear",
+   "z_span_mm": [
+    17000,
+    24000
+   ]
   },
   "35A1-JC1-06": {
    "z_base_mm": 12000.0,

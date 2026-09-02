@@ -661,8 +661,11 @@ def extract_centerline_drawing_segments(
                 float(_beat_cfg.get("z_base_mm", 0.0)),
                 beat_min_mm=float(_beat_cfg.get("beat_min_mm", 350.0)),
                 beat_max_mm=float(_beat_cfg.get("beat_max_mm", 800.0)),
+                mode=str(_beat_cfg.get("mode", "beats")),
+                z_span_mm=tuple(_beat_cfg.get("z_span_mm", ()))
+                if _beat_cfg.get("z_span_mm") else None,
             )
-            if _ba and _ba.get("y_draw"):
+            if _ba and _ba.get("y_draw") and str(_ba.get("source")) != "region_span_linear":
                 beat_ys = [float(v) for v in _ba["y_draw"]]
                 merged_levels: List[float] = list(markers)
                 for by in beat_ys:

@@ -310,6 +310,8 @@ def dimension_beat_anchors(
     *,
     beat_min_mm: float = 350.0,
     beat_max_mm: float = 800.0,
+    mode: str = "beats",
+    z_span_mm: Optional[Tuple[float, float]] = None,
 ) -> Optional[Dict[str, Any]]:
     """P2.1：DIMENSION 主节拍链 → view_y 域锚点（坐标链证据标定）。
 
@@ -323,7 +325,37 @@ def dimension_beat_anchors(
     （400×4+450+400×3+430+450×2+444=5024mm）与 GT 层位吻合到
     50-115mm（14051↔14000、14447↔14500、16115↔16000）。
     离线验证：TP@500 从 0（线性）→ 19（节拍分段）。
+
+    P2.4a（2026-09-04）mode="region_span_linear"：不信任 DIMENSION 节拍
+    累加，改用「视图区域 y 跨度 ↔ z_span_mm 线性映射」两点锚链。
+    背景：05 册节拍链 z 赋值系统性错误——链仅覆盖图纸内容 81%（底缺
+    621mm/顶缺 662mm），节拍斜率 1.0 vs 内容真实斜率 0.929，顶端累计
+    +912mm 漂移（dxf_geom 斜杆端点 cost 1302 vs 线性 176 实证）。
+    两点锚链保持 beam_marker_levels_mm 反解（_y_of_z）与 leg_synth
+    机制兼容（z 一切来自层位/锚点表，y 一切来自图纸），画线几何回归
+    线性映射。
     """
+    oy = float(region["origin"][1])
+    scale_y = float(region.get("scale_y") or 20.0)
+    if mode == "region_span_linear":
+        if not z_span_mm:
+            return None
+        rx = region.get("region") or []
+        if len(rx) < 4:
+            return None
+        y_lo, y_hi = float(rx[2]), float(rx[3])
+        if y_hi - y_lo < 1e-6:
+            return None
+        z_lo, z_hi = float(z_span_mm[0]), float(z_span_mm[1])
+        return {
+            "vy": [round((y_lo - oy) * scale_y, 2),
+                   round((y_hi - oy) * scale_y, 2)],
+            "z": [round(z_lo, 1), round(z_hi, 1)],
+            "y_draw": [round(y_lo, 2), round(y_hi, 2)],
+            "n_beats": 0,
+            "z_top": round(z_hi, 1),
+            "source": "region_span_linear",
+        }
     dims = _collect_vertical_beat_dimensions(
         msp, region, beat_min_mm=beat_min_mm, beat_max_mm=beat_max_mm)
     if len(dims) < 3:
@@ -1277,6 +1309,9 @@ def extract_tower_from_dxf(
                     float(_beat_cfg.get("z_base_mm", 0.0)),
                     beat_min_mm=float(_beat_cfg.get("beat_min_mm", 350.0)),
                     beat_max_mm=float(_beat_cfg.get("beat_max_mm", 800.0)),
+                    mode=str(_beat_cfg.get("mode", "beats")),
+                    z_span_mm=tuple(_beat_cfg.get("z_span_mm", ()))
+                    if _beat_cfg.get("z_span_mm") else None,
                 )
             except Exception:
                 _beat_anchors = None
