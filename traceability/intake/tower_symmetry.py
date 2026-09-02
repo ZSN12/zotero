@@ -713,10 +713,14 @@ def expand_4_face_symmetry_model(
             half_width_fitted
             and str(_hw_fit_report.get("method")) == "taper"
         )
-        if not _taper_fit_ok:
+        _extrap_fn = None
+        if not (_extrap_fn := None) and not _taper_fit_ok:
             _extrap_fn = leg_chain_extrapolator(
                 snapped_nodes, snapped_bars, base_fn=half_width_fn)
         _hw_for_base = _extrap_fn if _extrap_fn is not None else half_width_fn
+        # S9：多面板裙部堆叠（panel_tops 来自 overlay——z-only 设计常数
+        # 表，如 07 册跨度边界 [6500, 8500, 11500]）。
+        _pb_tops_cfg = spec.get("parametric_base_panel_tops") or None
         _pb_nodes, _pb_bars, _pb_rep = extrapolate_base_segment(
             snapped_nodes, snapped_bars, _hw_for_base,
             z_top=float(_z_top_pb),
@@ -725,19 +729,28 @@ def expand_4_face_symmetry_model(
             ),
             skirt_depth_mm=float(
                 spec.get("parametric_base_skirt_depth_mm", 2500.0)),
+            panel_tops=(
+                [float(v) for v in _pb_tops_cfg] if _pb_tops_cfg else None),
         )
         snapped_nodes.update(_pb_nodes)
         snapped_bars.extend(_pb_bars)
         _df_pb = model.components.get("drawing_file")
         if _df_pb is not None:
             _df_pb.properties["base_segment_declaration"] = {
-                **_pb_rep,
+                **{k: v for k, v in _pb_rep.items()
+                   if not callable(v)},
                 "reason": "DXF 图纸无底段（02 图最低节点 z=6643 > 6500）",
                 "declared_missing": True,
             }
         # expand 的 face_maps 重投影（body 节点 |t|>=0.85*w_gt → ±w_gt）
         # 必须用延拓版半宽，否则外推腿节点会被 snap 回夹紧常数。
-        if _extrap_fn is not None:
+        # S9：延拓函数直接取 extrapolate_base_segment 内部解析结果
+        # （腿线延拓 → 锥线斜率延拓 → 原闭包），与底段生成同一函数。
+        _pb_hw = _pb_rep.get("hw_fn_extrapolated")
+        if callable(_pb_hw):
+            half_width_fn = _pb_hw
+            half_width_fitted = True
+        elif _extrap_fn is not None:
             half_width_fn = _extrap_fn
             half_width_fitted = True
 

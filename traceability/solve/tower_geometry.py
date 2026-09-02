@@ -5842,6 +5842,51 @@ def leg_chain_extrapolator(
 
 
 
+def _taper_slope_extrap(
+    hw_fn: Callable[[float], float],
+    *,
+    probe_lo: float = 7000.0,
+    probe_hi: float = 20000.0,
+    probe_step: float = 500.0,
+) -> Optional[Callable[[float], float]]:
+    """锥线斜率向下延拓：z < probe_lo 区域用锥线自身斜率外推。
+
+    probe 区间取锥线闭包的采样值（须在闭包采样域内——调用方传生产
+    fit，JC1 实测采样域 z >= ~6500）。probe 点两两回归取中位斜率
+    （鲁棒于单点噪声）；斜率非负（物理约束）返回 None。
+    """
+    pts: List[Tuple[float, float]] = []
+    z = probe_lo
+    while z <= probe_hi + 1e-6:
+        try:
+            pts.append((z, float(hw_fn(z))))
+        except Exception:
+            return None
+        z += probe_step
+    if len(pts) < 4:
+        return None
+    slopes = []
+    for i in range(len(pts) - 1):
+        (z1, w1), (z2, w2) = pts[i], pts[i + 1]
+        if z2 - z1 < 1e-6:
+            continue
+        slopes.append((w2 - w1) / (z2 - z1))
+    if not slopes:
+        return None
+    slopes.sort()
+    k = slopes[len(slopes) // 2]
+    if k >= -1e-6:
+        return None
+    z_lo, w_lo = pts[0][0], pts[0][1]
+
+    def _f(z: float) -> float:
+        if z >= z_lo - 1e-6:
+            return float(hw_fn(z))
+        return w_lo + k * (z - z_lo)
+
+    return _f
+
+
 def extrapolate_base_segment(
     nodes: NodeMap,
     bars: List[dict],
@@ -5853,6 +5898,7 @@ def extrapolate_base_segment(
     add_spokes: bool = True,
     skirt_depth_mm: float = 2500.0,
     prefer_passed_half_width: bool = False,
+    panel_tops: Optional[List[float]] = None,
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """P5：底段参数化外推（DXF 无底段图纸的显式补全，紫色 derived_parametric）。
 
@@ -5922,74 +5968,109 @@ def extrapolate_base_segment(
     if _extrap is not None:
         _hw = _extrap
     else:
-        _hw = half_width_fn  # type: ignore[assignment]
+        # S9 修正：taper 锥线闭包在采样下界以下夹紧成常数（JC1 实测
+        # 底段恒 2308.7 vs GT 2649——端点差 340mm，裙部杆全 FN）。锥体
+        # 本身是全局直线：用锥线自身斜率向下延拓（z >= 采样下界回落
+        # 原闭包，上段零改变）。
+        _hw = _taper_slope_extrap(half_width_fn) or half_width_fn  # type: ignore[assignment]
 
     def _leg_x(zz: float) -> float:
         return abs(float(_hw(zz)))
 
-    # 腿节点（spoke 层 + z_top 的 ±hw 角节点）+ z_top 边中点节点（t=0）。
-    # front 面只生成 (x, 0, z) 平面内节点（b/l/r 由 4-face 展开镜像——
-    # 调用方在本函数后接 expand_4_face_symmetry）。
-    seq = 900000
-    node_ids: Dict[float, Dict[str, str]] = {}
-    for zz in sorted(set(spoke_levels + [float(z_top)])):
-        x = _leg_x(zz)
-        node_ids[zz] = {}
-        for sx in (-1.0, 1.0):
-            nid = f"pbase_{seq}"
-            seq += 1
-            new_nodes[nid] = (round(sx * x, 2), 0.0, round(zz, 1))
-            node_ids[zz][sx] = nid
-    mid_id = f"pbase_{seq}"
-    new_nodes[mid_id] = (0.0, 0.0, round(float(z_top), 1))
-
-    # 主腿杆（通长斜杆）：z_top 角 → 每个 spoke 层角，沿锥线。
-    # GT 底段实测主腿为 (z_k → 6500) 通长斜杆（非 1000mm 节间柱）。
+    # S9（2026-09-05 夜班）：多面板裙部堆叠泛化。GT 实测（35A1-JC1
+    # 底段解剖）：裙部不止一个面板——面板 A 8500→4000（60 杆）+
+    # 面板 B 6500→1000（24 杆），每个主层位一个向下 fan。panel_tops
+    # 给出多个面板顶（z-only 设计常数，如 07 册跨度边界 [6500, 8500,
+    # 11500]），每面板独立生成腿+辐条；默认 None = 单面板（旧行为）。
+    _panel_tops = sorted({round(float(t), 1) for t in (panel_tops or [z_top])})
     _z_top_lvl = float(z_top)
-    for z0 in spoke_levels:
-        for sx in (-1.0, 1.0):
-            new_bars.append({
-                "id": f"pbase_leg_{int(z0)}_{int(_z_top_lvl)}_{'p' if sx > 0 else 'n'}",
-                "from": node_ids[_z_top_lvl][sx],
-                "to": node_ids[z0][sx],
-                "role": "LEG",
-                "parametric_struct": "parametric_leg",
-                "geometry_origin": "derived_parametric_base",
-                "geometry_class": "derived_parametric",
-                "level_source": "parametric_extrapolation",
-                "evidence_status": "reconstructed",
-            })
-
-    # 裙部辐条（fan spokes）：z_top 边中点（pattern t=0）→ 各 spoke 层
-    # ±角。4-face 展开后每 spoke 层 8 根（每面 mid → 相邻 2 角），
-    # 与 GT 底段 40 辐条同构。
-    if add_spokes:
-        for z0 in spoke_levels:
+    seq = 900000
+    _n_legs_total = 0
+    _n_spokes_total = 0
+    _panels_report = []
+    for _pt in _panel_tops:
+        # 每面板的 spoke 层：panel_step 整数倍，从面板顶往下到
+        # max(0, pt - skirt_depth)，且不超过下一更低面板顶（避免跨面板
+        # 重复层）。
+        _lower_tops = [t for t in _panel_tops if t < _pt]
+        _floor = max(_lower_tops) if _lower_tops else 0.0
+        # spoke 层 = panel_step 整数倍，且 ∈ [floor, pt - skirt_depth]
+        _lo_cap = max(_floor, _pt - skirt_depth)
+        _p_spoke_levels = []
+        _k = int(math.floor((_lo_cap + 1e-6) / panel_step_mm))
+        while _k * panel_step_mm >= _floor - 1e-6 and _k >= 0:
+            _zz = round(_k * panel_step_mm, 1)
+            if _zz <= _lo_cap + 1e-6:
+                _p_spoke_levels.append(_zz)
+            _k -= 1
+        _p_spoke_levels = sorted(set(_p_spoke_levels))
+        if not _p_spoke_levels:
+            continue
+        # 腿节点（spoke 层 + 面板顶的 ±hw 角节点）+ 面板顶边中点
+        _p_node_ids: Dict[float, Dict[str, str]] = {}
+        for zz in sorted(set(_p_spoke_levels + [_pt])):
+            x = _leg_x(zz)
+            _p_node_ids[zz] = {}
+            for sx in (-1.0, 1.0):
+                nid = f"pbase_{seq}"
+                seq += 1
+                new_nodes[nid] = (round(sx * x, 2), 0.0, round(zz, 1))
+                _p_node_ids[zz][sx] = nid
+        _mid_id = f"pbase_{seq}"
+        seq += 1
+        new_nodes[_mid_id] = (0.0, 0.0, round(_pt, 1))
+        # 主腿杆（面板顶角 → spoke 层角，沿锥线通长斜杆）
+        for z0 in _p_spoke_levels:
             for sx in (-1.0, 1.0):
                 new_bars.append({
-                    "id": f"pbase_spoke_{int(_z_top_lvl)}_{int(z0)}_"
-                          f"{'p' if sx > 0 else 'n'}",
-                    "from": mid_id,
-                    "to": node_ids[z0][sx],
-                    "role": "DIAG",
-                    "parametric_struct": "parametric_spoke",
+                    "id": f"pbase_leg_{int(z0)}_{int(_pt)}_{'p' if sx > 0 else 'n'}",
+                    "from": _p_node_ids[_pt][sx],
+                    "to": _p_node_ids[z0][sx],
+                    "role": "LEG",
+                    "parametric_struct": "parametric_leg",
                     "geometry_origin": "derived_parametric_base",
                     "geometry_class": "derived_parametric",
                     "level_source": "parametric_extrapolation",
                     "evidence_status": "reconstructed",
                 })
+                _n_legs_total += 1
+        # 裙部辐条（fan spokes）：面板顶边中点 → spoke 层 ±角
+        if add_spokes:
+            for z0 in _p_spoke_levels:
+                for sx in (-1.0, 1.0):
+                    new_bars.append({
+                        "id": f"pbase_spoke_{int(_pt)}_{int(z0)}_"
+                              f"{'p' if sx > 0 else 'n'}",
+                        "from": _mid_id,
+                        "to": _p_node_ids[z0][sx],
+                        "role": "DIAG",
+                        "parametric_struct": "parametric_spoke",
+                        "geometry_origin": "derived_parametric_base",
+                        "geometry_class": "derived_parametric",
+                        "level_source": "parametric_extrapolation",
+                        "evidence_status": "reconstructed",
+                    })
+                    _n_spokes_total += 1
+        _panels_report.append({
+            "panel_top": _pt,
+            "spoke_levels": _p_spoke_levels,
+            "floor": _floor,
+        })
 
     report = {
-        "z_range": [0.0, float(z_top)],
+        "z_range": [0.0, float(max(_panel_tops) if _panel_tops else z_top)],
         "levels": [round(z, 1) for z in levels],
         "spoke_levels": [round(z, 1) for z in spoke_levels],
         "skirt_depth_mm": round(skirt_depth, 1),
-        "leg_segments": len(spoke_levels) * 2,
-        "spokes": len(spoke_levels) * 2 if add_spokes else 0,
+        "leg_segments": _n_legs_total,
+        "spokes": _n_spokes_total if add_spokes else 0,
         "leg_topology": "skirt_fan_spokes",
         "source": "parametric_extrapolation",
+        "panels": _panels_report,
+        "panel_tops": _panel_tops if len(_panel_tops) > 1 else None,
         "half_width_at_base_mm": round(_leg_x(0.0), 1),
         "half_width_at_top_mm": round(_leg_x(float(z_top)), 1),
+        "hw_fn_extrapolated": _hw,
     }
     return new_nodes, new_bars, report
 

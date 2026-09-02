@@ -1709,5 +1709,6 @@
  "panel_cross_skip_pairs": false,
  "leg_chain_stitch_break_terminal": true,
  "terminal_pair_structure": true,
- "side_horiz_synth": true
+ "side_horiz_synth": true,
+ "parametric_base_skirt_depth_mm": 2500.0
 }
