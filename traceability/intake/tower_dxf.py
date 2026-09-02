@@ -402,9 +402,9 @@ def _merge_double_line_segments(raw_segments: List[Dict], cfg: Optional[dict]) -
     for i, a in enumerate(segs):
         if used[i]:
             continue
-        # P1.2：marker_synth 合成横杆是单线终态（非双线对），跳过双线
-        # 配对——同层重叠段曾在此被误配对吞掉 95/195 段且属性丢失。
-        if str(a.get("layer") or "") == "marker_synth":
+        # P1.2：marker_synth / leg_synth 合成杆是单线终态（非双线对），
+        # 跳过双线配对——同层重叠段曾在此被误配对吞掉 95/195 段且属性丢失。
+        if str(a.get("layer") or "") in ("marker_synth", "leg_synth"):
             merged.append(a)
             continue
         la = _dist(a["start"], a["end"])
@@ -418,7 +418,7 @@ def _merge_double_line_segments(raw_segments: List[Dict], cfg: Optional[dict]) -
                 continue
             b = segs[j]
             # P1.2：synth 段不做任何双线配对（单线终态）
-            if str(b.get("layer") or "") == "marker_synth":
+            if str(b.get("layer") or "") in ("marker_synth", "leg_synth"):
                 continue
             lb = _dist(b["start"], b["end"])
             if lb < min_len:
@@ -532,7 +532,7 @@ def _merge_collinear_fragments(
     # 杆端点对不上分段 GT。预标记 used 使 synth 段既不做链种子、也不
     # 被后续链吸收（链内吸收会丢分段属性并改变端点）。
     _synth_is = [k for k, s in enumerate(segs)
-                 if str(s.get("layer") or "") == "marker_synth"]
+                 if str(s.get("layer") or "") in ("marker_synth", "leg_synth")]
     for k in _synth_is:
         used[k] = True
     merged.extend(segs[k] for k in _synth_is)
@@ -819,9 +819,9 @@ def _stitch_collinear_with_geometry(
     # P1.2：marker_synth 合成横杆不参与缝合（同 _merge_collinear_fragments
     # 的豁免——相邻分段终态，缝合会熔成通长杆、端点对不上分段 GT）。
     _synth = [s for s in segments
-              if str(s.get("layer") or "") == "marker_synth"]
+              if str(s.get("layer") or "") in ("marker_synth", "leg_synth")]
     _normal = [s for s in segments
-               if str(s.get("layer") or "") != "marker_synth"]
+               if str(s.get("layer") or "") not in ("marker_synth", "leg_synth")]
     if not _normal:
         return list(segments)
     nodes: Dict[str, Tuple[float, float, float]] = {}
@@ -1556,14 +1556,14 @@ def extract_tower_from_dxf(
                 # 与既有分段重复（06 册实测 12 段→16 段，下游去重后全跨段
                 # 恒丢失，GT [0,±hw] 全跨横杆恒 FN）。豁免后全跨段原样保留。
                 _t_segs = [s for s in view_segs
-                           if str(s.get("layer") or "") != "marker_synth"]
+                           if str(s.get("layer") or "") not in ("marker_synth", "leg_synth")]
                 _t_out = _subdivide_at_t_junctions(
                     _t_segs, snap_tol=sub_tol,
                     max_splits_per_seg=int(coll_cfg.get("subdivide_max_splits", 24)),
                 )
                 subdivided.extend(_t_out)
                 subdivided.extend(s for s in view_segs
-                                  if str(s.get("layer") or "") == "marker_synth")
+                                  if str(s.get("layer") or "") in ("marker_synth", "leg_synth"))
             bar_segments = subdivided
 
         # 阶段2.5（方案A）：按斜材端点 y 聚类导出的节间水平对通长主材做参数化打断。
@@ -1573,13 +1573,26 @@ def extract_tower_from_dxf(
             subdivided: List[Dict] = []
             for vk in sorted({seg["view_type"] or "_all" for seg in bar_segments}):
                 view_segs = [s for s in bar_segments if (s["view_type"] or "_all") == vk]
+                # P2.2（2026-09-04）：leg_synth 跨型段豁免 levels 打断——
+                # 它们是显式跨型表（z-only 设计常数）的终态分段，
+                # 按斜材端点 y 聚类打断会把 [7000,11500] 劈成
+                # (7000,7322)+(7322,8323)+...（07 册实测 20 段→76 段，
+                # 端点 z 全漂，下游与碎段族撞车去重后只剩 1 根）。
+                # 注意 marker_synth 仍进池：它是横杆不会被切，但其端点
+                # 参与 y 聚类——剔出会改变聚类保留节点坐标（05 册实测
+                # 全册端点 -2mm 平移 → 跨册合并后 Hungarian 重分配 →
+                # full 口径 -12 TP / dual 95.0→94.0 跌破红线）。
+                _lv_segs = [s for s in view_segs
+                            if str(s.get("layer") or "") != "leg_synth"]
                 subdivided.extend(_subdivide_at_levels(
-                    view_segs,
+                    _lv_segs,
                     level_cluster_tol=float(coll_cfg.get("level_cluster_tol", 4.0)),
                     min_seg_len=float(coll_cfg.get("subdivide_min_seg_len", 3.0)),
                     min_member_len=float(coll_cfg.get("subdivide_min_member_len", 40.0)),
                     min_diag_len=float(coll_cfg.get("subdivide_min_diag_len", 35.0)),
                 ))
+                subdivided.extend(s for s in view_segs
+                                  if str(s.get("layer") or "") == "leg_synth")
             bar_segments = subdivided
 
     # P2.4：keep_drop 分册几何 centerline 滤噪（ezdxf 路径，无需 MLLM）

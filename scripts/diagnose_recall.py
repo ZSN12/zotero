@@ -342,6 +342,12 @@ def segment_gate(gt, model, segment, caliber, view, tol, gate_pct, all_window=Fa
     m = bars_from_model_2d(model, view=view, mode="recognition")
 
     seg_code = str(segment).strip()
+    # 2026-09-04 段码归一化：允许 "06" 与 "35A1-JC1-06" 两种写法——
+    # overlay stem 构造为 f"35A1-JC1-{seg_code}"，带前缀写法会拼成
+    # "35A1-JC1-35A1-JC1-06" 查不到 view_regions 条目，回退数据驱动
+    # 窗口（不同杆池→窗口抖动）使两种写法结果不一致（单测红线）。
+    if seg_code.startswith("35A1-JC1-"):
+        seg_code = seg_code[len("35A1-JC1-"):]
     def _is_seg(props):
         sheet = _bar_sheet(props)
         return sheet == seg_code or sheet.endswith("-" + seg_code) or sheet == f"35A1-JC1-{seg_code}"

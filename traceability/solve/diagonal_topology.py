@@ -971,7 +971,8 @@ def reconstruct_diagonal_topology(
             _origin = str(b.get("geometry_origin") or "")
             if (keep_centerline_originals
                     and str(b.get("source_extractor") or "") == "centerline_extract"
-                    and _origin in ("dxf_geom", "marker_synth", "collinear_stitch")):
+                    and _origin in ("dxf_geom", "marker_synth", "collinear_stitch",
+                                    "leg_synth")):
                 _centerline_exempt.add(str(b.get("id")))
             else:
                 removed_ids.add(str(b.get("id")))
@@ -1051,7 +1052,7 @@ def reconstruct_diagonal_topology(
             # 与斜杆不共享节点（图纸该层本就只画标记），两端 degree=1
             # 是「横杆层」的正常形态，不是残段。此前被整族撤除
             # （f 面 64→26 的直接根因）。
-            and str(b.get("geometry_origin") or "") != "marker_synth"
+            and str(b.get("geometry_origin") or "") not in ("marker_synth", "leg_synth")
             and _in_window(b)
             and _deg.get(b.get("from"), 0) == 1
             and _deg.get(b.get("to"), 0) == 1
@@ -1063,7 +1064,7 @@ def reconstruct_diagonal_topology(
                         and not b.get("panel_template_completion")
                         and not b.get("diaphragm")
                         and str(b.get("id")) not in _centerline_exempt
-                        and str(b.get("geometry_origin") or "") != "marker_synth"
+                        and str(b.get("geometry_origin") or "") not in ("marker_synth", "leg_synth")
                         and _family(str(b.get("id"))) in _frag_fams):
                     superseded.add(str(b.get("id")))
             if superseded:

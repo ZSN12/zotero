@@ -778,6 +778,86 @@ def extract_centerline_drawing_segments(
                 })
                 n_synth_out += 1
 
+    # P2.2（2026-09-04）：腿杆层位重参数化 leg_synth。
+    # 图纸腿线是「全高连续线」（layer4 双线角钢 / 锥度斜线，taper_legs
+    # 已收集），但 GT 主材按「分段制造」表达（06 册 8 种跨型：
+    # 12000→14000/14500/16000、13000→16000、14000→16000/17000、
+    # 14400→17000、14500→17000）。直读腿线碎段（图纸断裂+节点聚类
+    # 劈裂，400-1200mm）与 GT 分段（2000-3000mm）端点差 629mm+，
+    # 恒 cost>500 FN。本通道把图纸腿链在显式跨型表（z-only 设计常数，
+    # 与 beam_marker_levels_mm 同纪律——x 一切来自图纸腿线插值，z 跨
+    # 型端点来自生产常数表）上重参数化：跨型两端 y=_y_of_z(z)（beat
+    # 边缘延拓反解），x=腿链线性插值（允许 ≤15u 轻外推）。
+    n_leg_synth_out = 0
+    try:
+        _leg_cfg = (cfg or {}).get("leg_synth_spans_mm")
+        if (_leg_cfg and _ba is not None and _ba.get("y_draw")
+                and _ba.get("z") and taper_legs):
+            _leg_pairs = sorted(zip(
+                (float(v) for v in _ba["y_draw"]),
+                (float(v) for v in _ba["z"]),
+            ))
+
+            _spans = []
+            for _sp in _leg_cfg:
+                try:
+                    _z1, _z2 = float(_sp[0]), float(_sp[1])
+                    if _z2 > _z1:
+                        _spans.append((_z1, _z2))
+                except Exception:
+                    continue
+            for (z1, z2) in _spans:
+                if (z2 - z1) * 1.0 < 800.0:
+                    continue  # 最小主材长 800mm（设计常数跨型均 ≥1500）
+                y1, y2 = _y_of_z(z1), _y_of_z(z2)
+                if y1 is None or y2 is None or y2 - y1 < 20.0:
+                    continue
+                for (cy_lo, cx_lo, cy_hi, cx_hi) in taper_legs:
+                    # 链覆盖检查：允许 ≤15u（≈300mm）外推——腿线常画满
+                    # 全高，跨型端点略超链端是图框裁剪，非结构缺失。
+                    if y1 < cy_lo - 15.0 or y2 > cy_hi + 15.0:
+                        continue
+                    if cy_hi - cy_lo < 1e-6:
+                        continue
+
+                    def _x_on_chain(yq: float, _lo=cy_lo, _hi=cy_hi,
+                                    _xl=cx_lo, _xh=cx_hi) -> float:
+                        t = (yq - _lo) / (_hi - _lo)
+                        # P2.2（2026-09-04 修订）：x 严格钳位链内 [0,1]。
+                        # 初版允许 ±8% 外推——跨型端点被推到腿链端之外，
+                        # 成为下游 merge_view_bars「主立面 X 中心归零」
+                        # x_center=(min+max)/2 的新极值（07 册实测 x_max
+                        # +2313.34→+2316.77，x_center -4.26→-2.55，全塔
+                        # 节点 -1.71mm 刚性平移，05 册节点聚类边界重排 →
+                        # full 口径 -12 TP、dual 95.0→94.0 破红线）。
+                        # x 钳在链端（链端 x 即碎段节点位置，不引入新极值）；
+                        # y（z）仍取跨型表常数端点，pure 口径分段精度不受
+                        # 影响（钳位只发生在链外 ≤15u 的图框裁剪区，x 偏
+                        # 差为锥度×外推量 ≤0.3mm）。
+                        t = max(0.0, min(1.0, t))
+                        return _xl + t * (_xh - _xl)
+
+                    xa, xb = _x_on_chain(y1), _x_on_chain(y2)
+                    # 跨型倾角上限：主材 |dx|/|dy| ≤ 0.30（排除 K 撑
+                    # 斜线混入 taper_legs 的情形——它们不是层位跨型目标）
+                    if abs(xb - xa) / (y2 - y1) > 0.30:
+                        continue
+                    segs_out.append({
+                        "start": (float(xa), float(y1)),
+                        "end": (float(xb), float(y2)),
+                        "view_type": "front",
+                        "scale_ratio": scale_x,
+                        "layer": "leg_synth",
+                        "geometry_origin": "leg_synth",
+                        "geometry_class": "recognized",
+                        "evidence_status": "reconstructed",
+                        "source_extractor": "centerline_extract",
+                        "_stem": stem,
+                    })
+                    n_leg_synth_out += 1
+    except Exception:
+        pass
+
     audit = {
         "stem": stem,
         "n_raw_segments": len(segs),

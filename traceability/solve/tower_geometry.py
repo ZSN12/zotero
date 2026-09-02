@@ -381,7 +381,8 @@ def close_face_intersections(
             # 在 stitch_segment_boundaries 端点对去重时撞 key，全跨段
             # 被静默删除（06 册实测 12 根合成杆 15→9→8，全跨段全灭，
             # GT [0,±hw] 全跨横杆恒 FN）。tower_dxf 的 T 打断已同样豁免。
-            _is_synth = str(bar.get("geometry_origin") or "") == "marker_synth"
+            _is_synth = str(bar.get("geometry_origin") or "") in (
+                "marker_synth", "leg_synth")
             for end in ("from", "to"):
                 p = new_nodes.get(bar[end])
                 if p is None:
@@ -392,7 +393,8 @@ def close_face_intersections(
                         continue
                     # 豁免杆的端点也不允许打断其它杆（打断目标杆同样
                     # 破坏终态分段体系——劈出的子段就是去重撞 key 的来源）。
-                    if _is_synth and str(other.get("geometry_origin") or "") == "marker_synth":
+                    if _is_synth and str(other.get("geometry_origin") or "") in (
+                            "marker_synth", "leg_synth"):
                         continue
                     s1, s2 = new_nodes.get(other["from"]), new_nodes.get(other["to"])
                     if s1 is None or s2 is None:
@@ -407,8 +409,9 @@ def close_face_intersections(
                     continue
                 dist, bj, proj = best
                 other = new_bars[bj]
-                # marker_synth 杆既不做打断源、也不做被打断目标。
-                if _is_synth or str(other.get("geometry_origin") or "") == "marker_synth":
+                # marker_synth / leg_synth 杆既不做打断源、也不做被打断目标。
+                if _is_synth or str(other.get("geometry_origin") or "") in (
+                        "marker_synth", "leg_synth"):
                     continue
                 q = _get_or_add_node(new_nodes, proj, tol=1.0)
                 # 打断目标杆件（若 q 不是其端点），即使源端点已与交点重合，
@@ -2993,6 +2996,14 @@ def subdivide_legs_at_levels(
         if f is None or t is None:
             new_bars.append(dict(b))
             continue
+        # P2.2（2026-09-04）：leg_synth 跨型段豁免节间化——它们是显式
+        # 跨型表（z-only 设计常数）的终态分段，端点已精确落在 GT 分段
+        # 边界。在平台层处再切会把 [7000,11500] 劈成 (7000,8000)+
+        # (8000,8500)+... 并替换掉原杆（07 册实测 20 段只剩 1 段
+        # (8500,11800)——恰好是唯一不含平台层切点的跨型）。
+        if str(b.get("geometry_origin") or "") == "leg_synth":
+            new_bars.append(dict(b))
+            continue
         # 几何判据（此阶段 role 未赋值，见 _is_leg_like 文档）
         if not _is_leg_like(b):
             new_bars.append(dict(b))
@@ -3296,7 +3307,7 @@ def _centerline_extract_bar(bar: dict) -> bool:
 
 def _centerline_stitch_origin(src: dict) -> str:
     o = str(src.get("geometry_origin") or "dxf_geom")
-    return o if o in ("dxf_geom", "marker_synth") else "dxf_geom"
+    return o if o in ("dxf_geom", "marker_synth", "leg_synth") else "dxf_geom"
 
 
 def stitch_collinear_bars(
@@ -3372,7 +3383,7 @@ def stitch_collinear_bars(
         # （06 册实测：12 根合成杆被拼剩 7 根，全跨段 [0,±leg] 全灭，
         # 端点 z 漂 212mm 变斜杆）。tower_dxf 的双线/共线合并、DT 残段
         # 清扫、crossarm 剪枝均已豁免，这里补齐最后一块。
-        if str(b.get("geometry_origin") or "") == "marker_synth":
+        if str(b.get("geometry_origin") or "") in ("marker_synth", "leg_synth"):
             skipped["marker_synth"] = skipped.get("marker_synth", 0) + 1
             continue
         if str(b.get("role") or "").upper() == "CROSS":
@@ -4889,6 +4900,10 @@ def stitch_segment_boundaries(
 
     # 1) 节点去重：把相距 <= boundary_tol_mm 的节点合并为共享节点。
     #    用「坐标就近复用」的贪心：按字典序遍历，每个节点找最近的已保留节点。
+    #    P2.2（2026-09-04）：leg_synth 跨型端点不参与全局融合——双拼角钢
+    #    两链 x 差 70mm < tol=80，融合后内外链跨型段端点撞 key，内链
+    #    被去重删除（06 册 25 段→16 段）。跨型段端点是设计常数边界，
+    #    独立成节点（碎段端点仍可聚到跨型端点上，度数不受影响）。
     id_map: Dict[str, str] = {}
     keep_ids: List[str] = []
     keep_pos: List[np.ndarray] = []
@@ -4920,11 +4935,28 @@ def stitch_segment_boundaries(
         new_bars.append(nb)
 
     # 3) 重叠杆件去重：无向端点相同即视为同一根物理杆件，只保留先出现者。
+    #    P2.2（2026-09-04）：同 key 组含 leg_synth 时跨型段优先——跨型
+    #    端点精确落在 GT 分段边界（显式 z-only 设计常数），被节点融合
+    #    吸进碎段链 key 组时若按出现序被删（碎段先注册），跨型段全灭
+    #    （06 册实测 45→36）。全局 rank 重排会改写无 leg_synth 组的
+    #    胜者（05 册 dxf_geom 重复腿链被 marker_synth 挤掉，full 口径
+    #    TP -12 回归）——故只对含 leg_synth 的组局部提权。
     dedup_bars = 0
     if dedup_collinear:
+        # 找含 leg_synth 的 key 组
+        _leg_keys: set = set()
+        for b in new_bars:
+            if str(b.get("geometry_origin") or "") == "leg_synth":
+                _leg_keys.add((min(b["from"], b["to"]), max(b["from"], b["to"])))
+        order = sorted(range(len(new_bars)), key=lambda i: (
+            0 if ((min(new_bars[i]["from"], new_bars[i]["to"]),
+                   max(new_bars[i]["from"], new_bars[i]["to"])) in _leg_keys
+                  and str(new_bars[i].get("geometry_origin") or "") == "leg_synth") else 1,
+            i))
         seen: set = set()
         deduped: List[dict] = []
-        for b in new_bars:
+        for idx in order:
+            b = new_bars[idx]
             key = (min(b["from"], b["to"]), max(b["from"], b["to"]))
             if key in seen:
                 dedup_bars += 1
@@ -5600,9 +5632,17 @@ def reconstruct_terminal_pair_structure(
             gap = z_hi - z_lo
             # P3.5j：双倍子系统——塔身上部双层扭转段的高密度层对
             # （(21500,22800)/(22800,24000) GT 每对 28-32 根物理杆，
-            # 单套 12 根 multiplicity 不足）。杆数预算约束只开这两对。
+            # 单套 12 根 multiplicity 不足）。杆数预算约束只开这几对。
+            # P2.2（2026-09-04）：(14500,17000) 同为双子系统（GT 两套
+            # 12 杆：PM_0748-0773 + PM_0950-0981）。beatfix9 时代靠
+            # 「14400/14500 终止层无独立节点 → 吸附坍缩成同几何双份
+            # 生成」意外覆盖；leg_synth 端点节点让 14500 层有真实节点后
+            # 坍缩消失，第三套子系统无模型杆可配（dual -12 TP）。显式
+            # 补 _mult=2 恢复覆盖。
             _mult = 2 if (21500.0 <= z_lo <= 22000.0 and 1200.0 <= gap <= 1400.0) else (
-                2 if (22700.0 <= z_lo <= 22900.0 and 1100.0 <= gap <= 1300.0) else 1
+                2 if (22700.0 <= z_lo <= 22900.0 and 1100.0 <= gap <= 1300.0) else (
+                    2 if (14400.0 <= z_lo <= 14600.0 and 2400.0 <= gap <= 2600.0) else 1
+                )
             )
             is_tip = z_lo >= tip_z_min
             gap_lo = tip_min_gap_mm if is_tip else min_gap_mm
@@ -6033,6 +6073,14 @@ def dedup_identical_bars(
 
     def _rank(c) -> Tuple:
         p = c.properties
+        # P2.2（2026-09-04）：leg_synth 跨型段最优先——它们是显式
+        # 跨型表（z-only 设计常数）的终态分段，端点精确落在 GT 分段
+        # 边界。与 dxf_geom 碎段合并链（通长腿链，端点是图纸随机断点）
+        # 同组重叠时，碎段链更长会按「长杆优先」胜出，把跨型段全删
+        # （06 册实测 25 根 leg_synth 在本步全灭）。跨型段承载 honest
+        # 分段语义，必须优先保留。
+        if str(p.get("geometry_origin") or "") == "leg_synth":
+            return (-1, 0, 0)
         # recognized > reconstructed > derived_parametric/derived；
         # 同 class 时长杆优先、有件号优先。
         cls = str(p.get("geometry_class") or "")

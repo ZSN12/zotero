@@ -485,8 +485,19 @@ def expand_4_face_symmetry_model(
         # 须 overlay 显式启用——与 snap_dangling_endpoints 同纪律。
         taper = bool(spec.get("half_width_taper", False))
         _hw_fit_report: Dict[str, Any] = {}
+        # P2.2（2026-09-04）：半宽拟合排除 leg_synth 跨型重参数化杆。
+        # 实测（legsynth10 vs beatfix9）：leg_synth 腿进入采样池后
+        # Theil-Sen 系数漂移（b 2734.1→2733.56，k -0.067393→-0.067478），
+        # 塔尖 hw(36600) 267→264、塔头 X 交叉 (30000,31300) 层对消失、
+        # 36600 顶平台 Hungarian 重分配翻转——40 册丢 7 增 3（dual -4）。
+        # 跨型杆几何与碎段腿端点有 ≤数 mm 差（链端钳位），不是独立证据
+        # 源；拟合只看碎段（= beatfix9 输入），生成下游与基线逐杆一致。
+        _hw_fit_bars = [
+            b for b in snapped_bars
+            if str(b.get("geometry_origin") or "") != "leg_synth"
+        ]
         fitted = fit_tower_half_width_from_face(
-            snapped_nodes, snapped_bars,
+            snapped_nodes, _hw_fit_bars,
             method="taper" if taper else "monotone",
             taper_max_residual_mm=float(
                 spec.get("half_width_taper_max_residual_mm", 150.0)),
