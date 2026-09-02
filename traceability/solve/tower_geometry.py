@@ -5899,6 +5899,7 @@ def extrapolate_base_segment(
     skirt_depth_mm: float = 2500.0,
     prefer_passed_half_width: bool = False,
     panel_tops: Optional[List[float]] = None,
+    taper_extrap: bool = False,
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """P5：底段参数化外推（DXF 无底段图纸的显式补全，紫色 derived_parametric）。
 
@@ -5968,11 +5969,15 @@ def extrapolate_base_segment(
     if _extrap is not None:
         _hw = _extrap
     else:
-        # S9 修正：taper 锥线闭包在采样下界以下夹紧成常数（JC1 实测
-        # 底段恒 2308.7 vs GT 2649——端点差 340mm，裙部杆全 FN）。锥体
-        # 本身是全局直线：用锥线自身斜率向下延拓（z >= 采样下界回落
-        # 原闭包，上段零改变）。
-        _hw = _taper_slope_extrap(half_width_fn) or half_width_fn  # type: ignore[assignment]
+        # S9 机制（默认关——overlay 侧 parametric_base_taper_extrap 开启
+        # 才激活）：taper 锥线闭包在采样下界以下夹紧成常数。锥体本身是
+        # 全局直线，用锥线自身斜率向下延拓（z >= 采样下界回落原闭包）。
+        # 实测全链修好后裙部杆仍 0 TP（生成阶段被合并丢弃+拓扑形态
+        # 不符），默认关闭保持 S8 行为。
+        if taper_extrap:
+            _hw = _taper_slope_extrap(half_width_fn) or half_width_fn  # type: ignore[assignment]
+        else:
+            _hw = half_width_fn  # type: ignore[assignment]
 
     def _leg_x(zz: float) -> float:
         return abs(float(_hw(zz)))
