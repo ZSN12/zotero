@@ -1344,21 +1344,29 @@ def merge_view_bars(
         if _nf is None or _nt is None or _nf is _nt:
             continue
         _pf, _pt = _nf.properties, _nt.properties
-        # P2.4b-2：未配对 side 节点的视图域求解——_normalize_segment_view_y
-        # 已把 side 节点 view_y 原地改写为全局 Z（同 front 同域，节拍/锚
-        # 分段线性），view_x 即 y 深度轴（与 z_pair 的 yp 同一变量，expand=0
-        # 时 y'=yp）。据此 z=view_y、y=view_x 可独立解算，无需 front 配对。
+        # P2.4b-2：未配对 side 节点的视图域求解（本地计算，零共享态修改）。
+        # _normalize_segment_view_y 已把 side 节点 view_y 原地改写为全局 Z
+        # （同 front 同域，节拍/锚分段线性），view_x 即 y 深度轴（与 z_pair
+        # 的 yp 同一变量，expand=0 时 y'=yp）。据此 z=view_y、y=view_x 可
+        # 独立解算，无需 front 配对。
         # 门禁：仅当该节点组确实被归一化过（view_y_local 已写入）才信任
         # view_y 是全局 Z——ZC1 实测：side 组未归一化（z_axis_up 等特殊
-        # 布置）时 view_y 是局部值，直接当 z 用会污染跨册合并。
+        # 布置）时 view_y 是局部值。一切只在本地计算，绝不回写组件属性
+        # （先前回写版本曾让 ZC1 05 册跨册合并从 73 杆崩到 25 杆）。
+        _zys = []
         for _pp in (_pf, _pt):
-            if (_pp.get("z") is None and _pp.get("view_y") is not None
-                    and _pp.get("view_y_local") is not None):
-                _pp["z"] = round(float(_pp["view_y"]), 2)
-            if _pp.get("y") is None and _pp.get("view_x") is not None:
-                _pp["y"] = round(float(_pp["view_x"]), 2)
-        if any(_pf.get(_a) is None for _a in ("y", "z")) or \
-           any(_pt.get(_a) is None for _a in ("y", "z")):
+            _zz = _pp.get("z")
+            if _zz is None and _pp.get("view_y") is not None \
+                    and _pp.get("view_y_local") is not None:
+                _zz = round(float(_pp["view_y"]), 2)
+            _yy = _pp.get("y")
+            if _yy is None and _pp.get("view_x") is not None:
+                _yy = round(float(_pp["view_x"]), 2)
+            if _zz is None or _yy is None:
+                _zys = None
+                break
+            _zys.append((_yy, _zz))
+        if _zys is None:
             continue
         # P2.4b-3：z 端点层位吸附（z-only 设计常数，同 marker_synth 纪律）。
         # 实测（02 册）：配对平均 z 落在 GT 层位中间（如 34452 介于 34200/
@@ -1373,13 +1381,11 @@ def merge_view_bars(
         except Exception:
             _lv = []
         if _lv:
-            for _pp in (_pf, _pt):
-                _dz = float(_pp["z"])
-                _best = min(_lv, key=lambda v: abs(v - _dz))
-                if abs(_best - _dz) <= 300.0:
-                    _pp["z"] = round(_best, 2)
-        _z1, _z2 = float(_pf["z"]), float(_pt["z"])
-        _y1, _y2 = float(_pf["y"]), float(_pt["y"])
+            _zys = [
+                (_yy, round(min(_lv, key=lambda v: abs(v - _zz)), 2)
+                 if abs(min(_lv, key=lambda v: abs(v - _zz)) - _zz) <= 300.0 else _zz)
+                for _yy, _zz in _zys]
+        (_y1, _z1), (_y2, _z2) = _zys
         _x1, _x2 = _pf.get("x"), _pt.get("x")
         _x_src = "z_pair"
         _z_snapped = _lv and (
