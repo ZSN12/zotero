@@ -1416,10 +1416,14 @@ def extract_tower_from_dxf(
                 if front_region is not None:
                     _seg["region"] = front_region
                 bar_segments.append(_seg)
-            _df_cle = model.components.get("drawing_file")
-            if _df_cle is not None:
-                _df_cle.properties["centerline_extract"] = _cle_audit
-            raw_segments = []  # 阻止下方常规区域过滤再注入原始碎双线
+            # 仅阻止 front 区域重复注入原始碎双线，保留 side 等其它带轴区域继续常规提取
+            if front_region is not None:
+                raw_segments = [s for s in raw_segments
+                                if _find_region((s["start"][0] + s["end"][0]) / 2,
+                                               (s["start"][1] + s["end"][1]) / 2,
+                                               [front_region]) is None]
+            else:
+                raw_segments = []
 
     if regions and raw_segments:
         for seg in raw_segments:

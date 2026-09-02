@@ -259,8 +259,8 @@
     "scale_x": 20.0,
     "scale_y": 20.0,
     "z_flip": false,
-    "z_offset": 25036.0,
-    "z_span_mm": 5926.0,
+    "z_offset": 24000.0,
+    "z_span_mm": 6000.0,
     "z_invert": true
    }
   ],
@@ -1191,7 +1191,7 @@
    "min_length_units": 3.0
   }
  },
- "min_diag_len_mm": 500.0,
+ "min_diag_len_mm": 400.0,
  "max_stub_len_mm": 400.0,
  "use_gt_platform_levels": true,
  "snap_dangling_endpoints": true,
@@ -1286,11 +1286,15 @@
  "multiview_hypothesis_sheets": [],
  "mllm_confidence_gate_block_inject": false,
  "centerline_extract": {
-  "_comment": "P1.1/P2 候选中心线提取（A2-pure 主路径）。z 锚点 = 斜杆端点簇跨度（腿范围内）→ z_anchor_[lo|hi]_mm 线性映射。锚点推导：图纸自身证据（面板尺寸链 + 邻段界面 + 接头几何）。06=[13000,17000]、07=[7000,12000]、05=[18000,24000]（GT 节点 18000..24000 + 06 册顶界 17000 接头）、04/02 用 view_region 原锚点（面板链自洽）。40 底段裙部纯斜线无竖腿，暂不启用（裙部由 derived_parametric_base 承担）。",
+  "_comment": "P1.1/P2 候选中心线提取（A2-pure 主路径）。z 锚点 = 斜杆端点簇跨度（腿范围内）→ z_anchor_[lo|hi]_mm 线性映射。锚点推导：图纸自身证据（面板尺寸链 + 邻段界面 + 接头几何）。06=[13000,17000]、07=[7000,12000]、05=[17000,24000]、04=[24000,30000]、02=[30000,36600]。",
   "35A1-JC1-06": {
    "enabled": true,
    "z_anchor_lo_mm": 12000.0,
    "z_anchor_hi_mm": 17000.0,
+   "gap_tol": 8.0,
+   "col_tol": 1.8,
+   "ang_tol": 6.0,
+   "min_cand_mm": 250.0,
    "beam_marker_levels_mm": [
     14000.0,
     16000.0
@@ -1334,6 +1338,10 @@
    "enabled": true,
    "z_anchor_lo_mm": 7000.0,
    "z_anchor_hi_mm": 12000.0,
+   "gap_tol": 10.0,
+   "col_tol": 2.0,
+   "ang_tol": 6.0,
+   "min_cand_mm": 250.0,
    "beam_marker_levels_mm": [
     6500.0,
     8500.0,
@@ -1366,6 +1374,10 @@
    "enabled": true,
    "z_anchor_lo_mm": 17000.0,
    "z_anchor_hi_mm": 24000.0,
+   "gap_tol": 8.0,
+   "col_tol": 1.8,
+   "ang_tol": 6.0,
+   "min_cand_mm": 250.0,
    "beam_marker_levels_mm": [
     19000.0,
     20700.0,
@@ -1431,10 +1443,107 @@
    "_comment_leg_synth": "P2.2 扩展到 05 册（2026-09-04）：腿杆层位重参数化，跨型端点 z-only 设计常数，x 全部来自图纸腿链插值（taper_legs 5 条覆盖 y -9917.5..-9540.7）。起点 <18000 的跨型超出腿链覆盖（≤15u 外推限）自动跳过，仅作文档。"
   },
   "35A1-JC1-04": {
-   "enabled": true
+   "enabled": true,
+   "z_anchor_lo_mm": 24000.0,
+   "z_anchor_hi_mm": 30000.0,
+   "gap_tol": 8.0,
+   "col_tol": 1.5,
+   "ang_tol": 6.0,
+   "min_cand_mm": 250.0,
+   "beam_marker_levels_mm": [
+    24000.0,
+    26100.0,
+    27800.0,
+    29100.0,
+    30000.0
+   ],
+   "leg_synth_spans_mm": [
+    [
+     24000,
+     26100
+    ],
+    [
+     26100,
+     27800
+    ],
+    [
+     27800,
+     29100
+    ],
+    [
+     29100,
+     30000
+    ],
+    [
+     24000,
+     30000
+    ]
+   ]
   },
   "35A1-JC1-02": {
-   "enabled": true
+   "enabled": true,
+   "z_anchor_lo_mm": 30000.0,
+   "z_anchor_hi_mm": 36600.0,
+   "gap_tol": 8.0,
+   "col_tol": 1.5,
+   "ang_tol": 6.0,
+   "min_cand_mm": 250.0,
+   "beam_marker_levels_mm": [
+    30000.0,
+    30400.0,
+    30800.0,
+    31800.0,
+    32700.0,
+    33500.0,
+    33850.0,
+    34200.0,
+    34900.0,
+    35500.0,
+    36100.0,
+    36600.0
+   ],
+   "leg_synth_spans_mm": [
+    [
+     30000,
+     30800
+    ],
+    [
+     30800,
+     31800
+    ],
+    [
+     31800,
+     32700
+    ],
+    [
+     32700,
+     33500
+    ],
+    [
+     33500,
+     34200
+    ],
+    [
+     34200,
+     34900
+    ],
+    [
+     34900,
+     35500
+    ],
+    [
+     35500,
+     36100
+    ],
+    [
+     36100,
+     36600
+    ],
+    [
+     30000,
+     36600
+    ]
+   ]
   }
  },
  "kfan_completion": true,
@@ -1445,10 +1554,14 @@
  "dimension_beat_anchor": {
   "35A1-JC1-02": {
    "z_base_mm": 30000.0,
+   "beat_min_mm": 450.0,
+   "beat_max_mm": 1100.0,
    "enabled": true
   },
   "35A1-JC1-04": {
-   "z_base_mm": 24836.0,
+   "z_base_mm": 24000.0,
+   "beat_min_mm": 800.0,
+   "beat_max_mm": 2200.0,
    "enabled": true
   },
   "35A1-JC1-05": {

@@ -315,12 +315,10 @@ class HybridM3MergeRegressionTest(unittest.TestCase):
         merged = merge_view_coordinates(m, overlay=self._overlay())
         zs = [v["z"] for v in merged.values() if v.get("z") is not None]
         self.assertEqual(len(zs), 2)
-        # 04 段 z_offset=25036（P2 Wave 2 z 仿射校正：X 端点簇→GT 层
-        # LSQ 拟合 z_gt=0.8715·z_m+4013 的等价归一化参数），
-        # z_span_mm=5926，解出的 Z 应落在该区间内
+        # 04 段 z_offset=24000.0，z_span_mm=6000.0，解出的 Z 应落在该区间内
         for z in zs:
-            self.assertGreaterEqual(z, 25036.0)
-            self.assertLessEqual(z, 30962.0)
+            self.assertGreaterEqual(z, 24000.0)
+            self.assertLessEqual(z, 30000.0)
 
 
 if __name__ == "__main__":

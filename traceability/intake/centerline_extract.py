@@ -95,11 +95,10 @@ def stitch_collinear(
     segs: List[Segment], gap_tol: float = 6.0, ang_tol: float = 6.0,
     col_tol: float = 1.5,
 ) -> List[Segment]:
-    """共线缝合：同向近角 + 端点缺口 ≤ gap_tol → 链式拼通长线。
+    """共线缝合：同向近角 + 端点缺口 ≤ gap_tol + 严格向外延伸 → 链式拼通长线。
 
-    四向拼接：尾接首 / 尾接尾 / 首接尾 / 首接首（缺口两两对齐），再以
-    「新段自由端点到当前链直线的垂距 ≤ col_tol」校验共线。旧实现只在
-    链尾追加，链首方向的碎段（如 06 册腿下部）永远接不上。
+    四向拼接：尾接首 / 尾接尾 / 首接尾 / 首接首（缺口两两对齐），严格要求新段
+    自由端向链外延伸（t-check 杜绝回折逆向截短），且锚点与自由端双重满足垂距公差。
     """
     chains: List[Segment] = []
     used = [False] * len(segs)
@@ -113,35 +112,54 @@ def stitch_collinear(
         while grew:
             grew = False
             x1, y1, x2, y2 = cur[:4]
-            dd = math.hypot(x2 - x1, y2 - y1)
-            if dd < 1e-9:
+            dx, dy = x2 - x1, y2 - y1
+            dd2 = dx * dx + dy * dy
+            if dd2 < 1e-9:
                 break
+            cur_ang = seg_angle(cur)
+            cs, ce = (x1, y1), (x2, y2)
             for j in range(len(segs)):
                 if used[j]:
                     continue
                 s = segs[j]
-                if (abs(seg_angle(s) - seg_angle(cur)) > ang_tol
-                        and abs(seg_angle(s) - seg_angle(cur) - 180) > ang_tol):
+                d_ang = abs(seg_angle(s) - cur_ang)
+                d_ang = min(d_ang, 180.0 - d_ang)
+                if d_ang > ang_tol:
                     continue
-                cs, ce = (cur[0], cur[1]), (cur[2], cur[3])
                 ss, se = (s[0], s[1]), (s[2], s[3])
-                # (链端锚点, 新段锚点, 新段自由端, 拼接后的新链)
+                # (模式: 'append'|'prepend', 链锚点 ca, 新段锚点 sa, 自由端 free, 新链)
                 joins = [
-                    (ce, ss, se, (cur[0], cur[1], s[2], s[3])),  # 追加
-                    (ce, se, ss, (cur[0], cur[1], s[0], s[1])),  # 追加(反向)
-                    (cs, se, ss, (s[0], s[1], cur[2], cur[3])),  # 前插
-                    (cs, ss, se, (s[2], s[3], cur[2], cur[3])),  # 前插(反向)
+                    ("append",  ce, ss, se, (x1, y1, se[0], se[1])),  # 尾接首
+                    ("append",  ce, se, ss, (x1, y1, ss[0], ss[1])),  # 尾接尾
+                    ("prepend", cs, se, ss, (ss[0], ss[1], x2, y2)),  # 首接尾
+                    ("prepend", cs, ss, se, (se[0], se[1], x2, y2)),  # 首接首
                 ]
-                for ca, sa, free, new_seg in joins:
+                for mode, ca, sa, free, new_seg in joins:
                     if math.hypot(ca[0] - sa[0], ca[1] - sa[1]) > gap_tol:
                         continue
-                    t = ((free[0] - x1) * (x2 - x1)
-                         + (free[1] - y1) * (y2 - y1)) / (dd * dd)
-                    perp = math.hypot(
-                        free[0] - (x1 + t * (x2 - x1)),
-                        free[1] - (y1 + t * (y2 - y1)))
-                    if perp > col_tol:
+                    t_free = ((free[0] - x1) * dx + (free[1] - y1) * dy) / dd2
+                    t_sa = ((sa[0] - x1) * dx + (sa[1] - y1) * dy) / dd2
+
+                    # 几何不变量：必须向链外单调延伸，严禁回折逆向截短
+                    if mode == "append" and t_free <= 1.0 + 1e-4:
                         continue
+                    if mode == "prepend" and t_free >= -1e-4:
+                        continue
+
+                    # 共线垂距检查（同时约束 sa 和 free）
+                    perp_free = math.hypot(
+                        free[0] - (x1 + t_free * dx),
+                        free[1] - (y1 + t_free * dy),
+                    )
+                    if perp_free > col_tol:
+                        continue
+                    perp_sa = math.hypot(
+                        sa[0] - (x1 + t_sa * dx),
+                        sa[1] - (y1 + t_sa * dy),
+                    )
+                    if perp_sa > col_tol:
+                        continue
+
                     cur = (new_seg[0], new_seg[1], new_seg[2], new_seg[3], cur[4])
                     used[j] = True
                     grew = True
@@ -444,12 +462,18 @@ def extract_calibrated_centerlines(
     bbox = tuple(float(v) for v in region["region"])
     origin_x = float(region["origin"][0])
     scale_x = float(region.get("scale_x") or 20.0)
-    scale_y = float(region.get("scale_y") or 20.0)
+    cfg = _overlay_cfg(stem, overlay)
+    gap_tol = float((cfg or {}).get("gap_tol") or (cfg or {}).get("stitch_gap_tol") or 6.0)
+    col_tol = float((cfg or {}).get("col_tol") or (cfg or {}).get("stitch_col_tol") or 1.5)
+    ang_tol = float((cfg or {}).get("ang_tol") or (cfg or {}).get("stitch_ang_tol") or 6.0)
+    min_cand_mm = float((cfg or {}).get("min_cand_mm") or min_cand_mm)
+    min_seg_u = float((cfg or {}).get("min_seg_u") or min_seg_u)
+    pair_max_off = float((cfg or {}).get("pair_max_off") or 6.0)
 
     # ---- 图纸几何整理 ----
     segs = [s for s in collect_segments(dxf_path, bbox) if seg_len(s) >= min_seg_u]
-    stitched = stitch_collinear(segs)
-    centers = pair_double_lines(stitched)
+    stitched = stitch_collinear(segs, gap_tol=gap_tol, ang_tol=ang_tol, col_tol=col_tol)
+    centers = pair_double_lines(stitched, max_off=pair_max_off)
 
     # 腿位置（图纸域 x）：vert 类长线的 x 中点；腿 y 范围（簇裁剪边界）
     leg_x = sorted({round((s[0] + s[2]) / 2, 1)
@@ -550,10 +574,17 @@ def extract_centerline_drawing_segments(
     bbox = tuple(float(v) for v in region["region"])
     origin_x = float(region["origin"][0])
     scale_x = float(region.get("scale_x") or 20.0)
+    cfg = _overlay_cfg(stem, overlay)
+    gap_tol = float((cfg or {}).get("gap_tol") or (cfg or {}).get("stitch_gap_tol") or 6.0)
+    col_tol = float((cfg or {}).get("col_tol") or (cfg or {}).get("stitch_col_tol") or 1.5)
+    ang_tol = float((cfg or {}).get("ang_tol") or (cfg or {}).get("stitch_ang_tol") or 6.0)
+    min_cand_mm = float((cfg or {}).get("min_cand_mm") or min_cand_mm)
+    min_seg_u = float((cfg or {}).get("min_seg_u") or min_seg_u)
+    pair_max_off = float((cfg or {}).get("pair_max_off") or 6.0)
 
     segs = [s for s in collect_segments(dxf_path, bbox) if seg_len(s) >= min_seg_u]
-    stitched = stitch_collinear(segs)
-    centers = pair_double_lines(stitched)
+    stitched = stitch_collinear(segs, gap_tol=gap_tol, ang_tol=ang_tol, col_tol=col_tol)
+    centers = pair_double_lines(stitched, max_off=pair_max_off)
     leg_x_abs = sorted({round((s[0] + s[2]) / 2, 1)
                         for s in centers if seg_class(s) == "vert" and seg_len(s) > 40})
     # P2.4（2026-09-02）：斜线腿支持——02/05/07 册图纸的主腿画成近竖直长
