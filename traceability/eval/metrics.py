@@ -1124,7 +1124,7 @@ def _bar_caliber_class(p: Dict[str, Any]) -> str:
         face = p.get("face")
         if face in (None, "f") and origin in (
                 "dxf_geom", "marker_synth", "collinear_stitch", "leg_synth",
-                "diag_synth"):
+                "diag_synth", "diag_complete"):
             if is_recognized_bar(p):
                 return "recognized"
     if origin == "collinear_stitch":

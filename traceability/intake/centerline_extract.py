@@ -819,6 +819,155 @@ def complete_truncated_diags(
 
 
 # ----------------------------------------------------------------------------
+# 4e) X→K 拓扑转换（diag_x2k，mm 域）：跨中心 X 撑 → 转换为层位 K 撑（人字撑）
+# ----------------------------------------------------------------------------
+
+def x_to_k_braces(
+    segments: Sequence[Any],
+    leg_lines: Sequence[Any],
+    levels: Sequence[float],
+    *,
+    snap_tol: float = 650.0,
+    min_span_x: float = 1200.0,
+    min_span_z: float = 800.0,
+    center_cross_tol: float = 300.0,
+    fine_levels: Optional[Sequence[float]] = None,
+    geometry_origin: str = "diag_synth",
+    max_copies_per_panel: int = 2,
+) -> List[Any]:
+    """把跨中心全跨 X 撑重写为层位 K 撑（人字撑）。
+
+    背景（diag_x2k 拓扑转换）：
+    部分塔身/腿部图纸（如 35A1-JC1 06 册 身部结构图）中，斜杆按制造件绘制为
+    贯穿全跨的通长 X 撑（如 L56x4 4193/4477 通长交叉对角线），但工程计算/GT
+    模型按结构受力建模为层位 K 撑（人字撑：中心节点 (0, z_high) 连到腿节点 (±hw, z_low)）。
+    由于 X 撑对角线几何与半跨 K 撑恒差 >500mm，常规端点吸附无法弥合拓扑差异，
+    导致离线评测 0 命中。
+
+    本通道识别跨越塔中心的 X 撑，将其重写为以层位×中心轴为顶点的 K 撑对：
+      1. 识别跨中心斜线：两端分居中心两侧（x1 * x2 < 0，且两端离中心 >= 200mm，
+         横向跨度 >= min_span_x，垂直跨度 >= min_span_z）；
+      2. 判定层位：
+         - 节间层位跨度：两端 z 分别吸附到相邻层位 z_high 与 z_low（偏差 <= snap_tol）；
+         - 或中心交点层位：与 x=0 中心轴交点 z 接近某层位（偏差 <= center_cross_tol）；
+      3. 交点离层位远不劈：两端及中心交点均无法对齐层位时原样保留；
+      4. 非 X 撑不动：半宽线或单侧斜杆原样透传；
+      5. 腿位拟合：腿位由图纸 vert 长线拟合（x = al*z + bl, ar*z + br），
+         严禁注入 GT 坐标；
+      6. 重写输出：(0, z_high) -> (x_left, z_low) 与 (0, z_high) -> (x_right, z_low)。
+
+    纪律（硬约束）：
+      * 只用图纸证据（画线几何/方向）+ z-only 设计层位常数 + 图纸腿线拟合；
+      * 绝不注入 GT 坐标；
+      * 新通道命名 diag_x2k，geometry_class='recognized'，source_extractor='centerline_extract'。
+    """
+    if not segments or not levels:
+        return list(segments)
+
+    (al, bl), (ar, br) = _extract_leg_profiles(leg_lines)
+
+    fine_set = set(float(v) for v in fine_levels) if fine_levels else set()
+    active_levels = sorted(float(v) for v in levels if float(v) not in fine_set)
+    if not active_levels:
+        active_levels = sorted(float(v) for v in levels)
+
+    out: List[Any] = []
+    panel_counts: Dict[Tuple[int, int], int] = {}
+
+    for seg in segments:
+        if isinstance(seg, dict):
+            x1, z1 = float(seg["start"][0]), float(seg["start"][1])
+            x2, z2 = float(seg["end"][0]), float(seg["end"][1])
+        else:
+            x1, z1, x2, z2 = (float(v) for v in seg[:4])
+
+        dx = x2 - x1
+        dz = z2 - z1
+        seg_l = math.hypot(dx, dz)
+        if seg_l < 500.0 or abs(dx) < 1e-3 or abs(dz) < 1e-3:
+            out.append(seg)
+            continue
+
+        if seg_class((x1, z1, x2, z2)) != "diag":
+            out.append(seg)
+            continue
+
+        xmin, xmax = min(x1, x2), max(x1, x2)
+        span_x = xmax - xmin
+        # 必须跨越中心轴且两端深入两侧（非半宽线）
+        if not (xmin < -200.0 and xmax > 200.0 and span_x >= min_span_x):
+            out.append(seg)
+            continue
+
+        z_top, z_bot = max(z1, z2), min(z1, z2)
+        span_z = z_top - z_bot
+        if span_z < min_span_z:
+            out.append(seg)
+            continue
+
+        # 中心交点 z
+        t_cross = -x1 / dx
+        z_cross = z1 + t_cross * dz
+
+        # 层位吸附匹配
+        z_high = min(active_levels, key=lambda lv: abs(lv - z_top))
+        z_low = min(active_levels, key=lambda lv: abs(lv - z_bot))
+        z_cross_near = min(active_levels, key=lambda lv: abs(lv - z_cross))
+
+        err_top = abs(z_top - z_high)
+        err_bot = abs(z_bot - z_low)
+        err_cross = abs(z_cross - z_cross_near)
+
+        matched = False
+        apex_z, base_z = 0.0, 0.0
+
+        if err_top <= snap_tol and err_bot <= snap_tol and z_high > z_low:
+            apex_z = z_high
+            base_z = z_low
+            matched = True
+        elif err_cross <= center_cross_tol:
+            apex_z = z_cross_near
+            lower_cands = [lv for lv in active_levels if lv < apex_z]
+            if lower_cands:
+                base_z = max(lower_cands, key=lambda lv: -abs(lv - z_bot))
+                matched = True
+
+        if not matched:
+            # 交点离层位远不劈，保留原线
+            out.append(seg)
+            continue
+
+        panel_key = (round(apex_z), round(base_z))
+        c = panel_counts.get(panel_key, 0)
+        if c >= max_copies_per_panel:
+            continue
+        panel_counts[panel_key] = c + 1
+
+        xl = al * base_z + bl
+        xr = ar * base_z + br
+        k_left = (0.0, apex_z, xl, base_z)
+        k_right = (0.0, apex_z, xr, base_z)
+
+        for kp in (k_left, k_right):
+            if isinstance(seg, dict):
+                child = dict(seg)
+                child["start"] = (float(kp[0]), float(kp[1]))
+                child["end"] = (float(kp[2]), float(kp[3]))
+                child["geometry_origin"] = geometry_origin
+                child["geometry_class"] = "recognized"
+                child["evidence_status"] = "recognized"
+                child["source_extractor"] = "centerline_extract"
+                child["layer"] = "diag_synth"
+                child["reanchored"] = True
+                child["diag_x2k"] = True
+                out.append(child)
+            else:
+                out.append((float(kp[0]), float(kp[1]), float(kp[2]), float(kp[3])))
+
+    return out
+
+
+# ----------------------------------------------------------------------------
 # 5) 生产标定（无 GT）：z 锚点 = 斜杆端点簇跨度 → overlay 声明段
 # ----------------------------------------------------------------------------
 
@@ -1276,6 +1425,7 @@ def extract_centerline_drawing_segments(
     # 产生重复杆。
     n_reanchor_out = 0
     n_subdivide_out = 0
+    n_x2k_out = 0
     try:
         _re_cfg = cfg or {}
         # y→z 映射必须有 beat/region_span 锚链（本函数不构建分位数标定）。
@@ -1367,13 +1517,28 @@ def extract_centerline_drawing_segments(
                     if _sub and len(_sub) != len(_diag_mm):
                         _work = _sub
                         _subdivided = True
+                _x2k_applied = False
+                if bool(_re_cfg.get("diag_x2k")):
+                    _x2k = x_to_k_braces(
+                        _work, _leg_mm, _levels_src,
+                        fine_levels=_fine,
+                        snap_tol=float(_re_cfg.get("diag_x2k_snap_tol_mm", 650.0)),
+                        min_span_x=float(_re_cfg.get("diag_x2k_min_span_x_mm", 1200.0)),
+                        min_span_z=float(_re_cfg.get("diag_x2k_min_span_z_mm", 800.0)),
+                        center_cross_tol=float(_re_cfg.get("diag_x2k_center_cross_tol_mm", 300.0)),
+                        max_copies_per_panel=int(_re_cfg.get("diag_x2k_max_copies_per_panel", 2)),
+                    )
+                    if _x2k and _x2k != _work:
+                        n_x2k_out = len(_x2k)
+                        _work = _x2k
+                        _x2k_applied = True
                 _reanchored = reanchor_diag_endpoints(
                     _work, _leg_mm, _levels_src,
                     fine_levels=_fine,
                     reanchor_tol=float(_re_cfg.get("diag_reanchor_tol_mm", 750.0)),
                     min_seg_len=float(_re_cfg.get("diag_reanchor_min_seg_mm", 500.0)),
                 )
-                if not _subdivided:
+                if not (_subdivided or _x2k_applied):
                     # 逐条对位回写：重锚输出与输入等长同序（未命中者原样透传）
                     for _k, _seg in enumerate(_reanchored):
                         if _k >= len(_diag_idx):
@@ -1575,6 +1740,7 @@ def extract_centerline_drawing_segments(
         "n_marker_synth_out": n_synth_out,
         "n_diag_reanchor_out": n_reanchor_out,
         "n_diag_subdivide_out": n_subdivide_out,
+        "n_diag_x2k_out": n_x2k_out,
         "n_diag_complete_out": n_diag_complete_out,
         "n_output_segments": len(segs_out),
         "leg_x_u": leg_x,
