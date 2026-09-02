@@ -1333,7 +1333,8 @@
      17000
     ]
    ],
-   "diag_reanchor": true
+   "diag_reanchor": true,
+   "diag_x2k": true
   },
   "35A1-JC1-07": {
    "enabled": true,

@@ -1580,7 +1580,8 @@ def extract_centerline_drawing_segments(
                             "_stem": stem,
                         })
                         n_reanchor_out += 1
-                    n_subdivide_out = len(_reanchored)
+                    if _subdivided:
+                        n_subdivide_out = len(_reanchored)
     except Exception:
         pass
 

@@ -163,11 +163,11 @@
      "z"
     ],
     "scale_x": 16.7,
-    "scale_y": 16.7,
+    "scale_y": 17.2,
     "z_flip": false,
     "z_axis_up": true,
     "z_offset": 32100.0,
-    "z_span_mm": 7098.0
+    "z_span_mm": 7300.0
    }
   ],
   "35A2-ZC1-09": [

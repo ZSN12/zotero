@@ -436,7 +436,7 @@ def _merge_double_line_segments(raw_segments: List[Dict], cfg: Optional[dict]) -
             continue
         # P1.2：marker_synth / leg_synth 合成杆是单线终态（非双线对），
         # 跳过双线配对——同层重叠段曾在此被误配对吞掉 95/195 段且属性丢失。
-        if str(a.get("layer") or "") in ("marker_synth", "leg_synth"):
+        if str(a.get("layer") or "") in ("marker_synth", "leg_synth", "diag_synth"):
             merged.append(a)
             continue
         la = _dist(a["start"], a["end"])
@@ -450,7 +450,7 @@ def _merge_double_line_segments(raw_segments: List[Dict], cfg: Optional[dict]) -
                 continue
             b = segs[j]
             # P1.2：synth 段不做任何双线配对（单线终态）
-            if str(b.get("layer") or "") in ("marker_synth", "leg_synth"):
+            if str(b.get("layer") or "") in ("marker_synth", "leg_synth", "diag_synth"):
                 continue
             lb = _dist(b["start"], b["end"])
             if lb < min_len:
@@ -564,7 +564,7 @@ def _merge_collinear_fragments(
     # 杆端点对不上分段 GT。预标记 used 使 synth 段既不做链种子、也不
     # 被后续链吸收（链内吸收会丢分段属性并改变端点）。
     _synth_is = [k for k, s in enumerate(segs)
-                 if str(s.get("layer") or "") in ("marker_synth", "leg_synth")]
+                 if str(s.get("layer") or "") in ("marker_synth", "leg_synth", "diag_synth")]
     for k in _synth_is:
         used[k] = True
     merged.extend(segs[k] for k in _synth_is)
@@ -851,9 +851,9 @@ def _stitch_collinear_with_geometry(
     # P1.2：marker_synth 合成横杆不参与缝合（同 _merge_collinear_fragments
     # 的豁免——相邻分段终态，缝合会熔成通长杆、端点对不上分段 GT）。
     _synth = [s for s in segments
-              if str(s.get("layer") or "") in ("marker_synth", "leg_synth")]
+              if str(s.get("layer") or "") in ("marker_synth", "leg_synth", "diag_synth")]
     _normal = [s for s in segments
-               if str(s.get("layer") or "") not in ("marker_synth", "leg_synth")]
+               if str(s.get("layer") or "") not in ("marker_synth", "leg_synth", "diag_synth")]
     if not _normal:
         return list(segments)
     nodes: Dict[str, Tuple[float, float, float]] = {}
