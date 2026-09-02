@@ -1332,7 +1332,8 @@
      14500,
      17000
     ]
-   ]
+   ],
+   "diag_reanchor": true
   },
   "35A1-JC1-07": {
    "enabled": true,
@@ -1368,7 +1369,8 @@
      9000,
      11500
     ]
-   ]
+   ],
+   "diag_reanchor": true
   },
   "35A1-JC1-05": {
    "enabled": true,
@@ -1440,7 +1442,8 @@
      24000
     ]
    ],
-   "_comment_leg_synth": "P2.2 扩展到 05 册（2026-09-04）：腿杆层位重参数化，跨型端点 z-only 设计常数，x 全部来自图纸腿链插值（taper_legs 5 条覆盖 y -9917.5..-9540.7）。起点 <18000 的跨型超出腿链覆盖（≤15u 外推限）自动跳过，仅作文档。"
+   "_comment_leg_synth": "P2.2 扩展到 05 册（2026-09-04）：腿杆层位重参数化，跨型端点 z-only 设计常数，x 全部来自图纸腿链插值（taper_legs 5 条覆盖 y -9917.5..-9540.7）。起点 <18000 的跨型超出腿链覆盖（≤15u 外推限）自动跳过，仅作文档。",
+   "diag_reanchor": true
   },
   "35A1-JC1-04": {
    "enabled": true,
@@ -1478,7 +1481,8 @@
      24000,
      30000
     ]
-   ]
+   ],
+   "diag_reanchor": true
   },
   "35A1-JC1-02": {
    "enabled": true,
@@ -1543,7 +1547,8 @@
      30000,
      36600
     ]
-   ]
+   ],
+   "diag_reanchor": true
   }
  },
  "kfan_completion": true,

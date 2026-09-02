@@ -465,6 +465,169 @@ def subdivide_diag_at_levels(
 
 
 # ----------------------------------------------------------------------------
+# 4c) 斜材端点重锚（mm 域）：画线斜杆 → 沿画线延长/收缩重锚到腿中心线 × 层位交点
+# ----------------------------------------------------------------------------
+
+def _extract_leg_profiles(leg_lines: Sequence[Any]) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    """从腿线段集合提取左右主腿的线性方程 x = a * z + b。
+
+    返回 ((al, bl), (ar, br))，分别对应左腿 (x < 0) 与右腿 (x > 0)。
+    """
+    if len(leg_lines) == 4 and all(isinstance(v, (int, float)) for v in leg_lines):
+        return (float(leg_lines[0]), float(leg_lines[1])), (float(leg_lines[2]), float(leg_lines[3]))
+
+    lefts, rights = [], []
+    for s in leg_lines:
+        if isinstance(s, dict):
+            x1, z1 = float(s["start"][0]), float(s["start"][1])
+            x2, z2 = float(s["end"][0]), float(s["end"][1])
+        else:
+            x1, z1, x2, z2 = (float(v) for v in s[:4])
+        mid_x = 0.5 * (x1 + x2)
+        length = math.hypot(x2 - x1, z2 - z1)
+        if mid_x < 0:
+            lefts.append(((x1, z1, x2, z2), length, abs(mid_x)))
+        else:
+            rights.append(((x1, z1, x2, z2), length, mid_x))
+
+    def _fit(cands: List[Any], default_sign: float) -> Tuple[float, float]:
+        if not cands:
+            # 回退：典型塔身锥度斜率 0.065
+            return default_sign * 0.065, default_sign * 1500.0
+        # 优先取长度最长且位于外侧的主腿段
+        cands.sort(key=lambda item: (item[1], item[2]), reverse=True)
+        seg = cands[0][0]
+        dz = seg[3] - seg[1]
+        if abs(dz) < 1e-3:
+            return 0.0, 0.5 * (seg[0] + seg[2])
+        a = (seg[2] - seg[0]) / dz
+        b = seg[0] - a * seg[1]
+        return a, b
+
+    al, bl = _fit(lefts, -1.0)
+    ar, br = _fit(rights, 1.0)
+    return (al, bl), (ar, br)
+
+
+def reanchor_diag_endpoints(
+    segments: Sequence[Any],
+    leg_lines: Sequence[Any],
+    levels: Sequence[float],
+    *,
+    reanchor_tol: float = 750.0,
+    min_seg_len: float = 500.0,
+    include_center: bool = True,
+    fine_levels: Optional[Sequence[float]] = None,
+    geometry_origin: str = "diag_synth",
+) -> List[Any]:
+    """把画线斜杆的端点沿杆方向延长/收缩，重锚到「腿中心线 × 层位」特征网格交点。
+
+    背景（diag_synth 核心算子）：
+    画线斜杆的 x 斜率是示意性的（与 GT 真实 x 常差 100~300mm，导致单纯沿画线
+    插值严重偏离设计节点）。通过把端点 (x, z) 重锚到最近的特征网格点：
+      * 腿节点：主腿中心线（x = ±hw(z) 的锥线，纯图纸证据）在各层位处的交点；
+      * 中心节点（K 撑 / 人字撑）：塔身中心轴 x = 0 在各层位处的交点。
+    输入端点若在网格点容差内，将被吸附到该交点，消除绘图端点偏离导致的 cost 超标。
+
+    参数：
+      segments: 候选斜线列表，元素支持 4 元组 (x1, z1, x2, z2) 或 dict；
+      leg_lines: 腿线集合（线段列表或直线参数元组），用于拟合左右腿中心线；
+      levels: 结构层位列表（z-only 常数）；
+      reanchor_tol: 端点允许吸附的最大距离容差（mm，默认 750.0）；
+      min_seg_len: 短杆不动的长度门槛（mm，默认 500.0，短于此阈值原样返回）；
+      include_center: 是否允许重锚到中心线 (0, z) 节点（默认 True）；
+      fine_levels: 需要排除的细层位列表（如 [18000, 21000, 21500] 不是斜杆节点）；
+      geometry_origin: 输出 dict 中的 origin 标记（默认 'diag_synth'）。
+    """
+    if not segments:
+        return []
+    if not levels:
+        return list(segments)
+
+    (al, bl), (ar, br) = _extract_leg_profiles(leg_lines)
+
+    fine_set = set(float(v) for v in fine_levels) if fine_levels else set()
+    active_levels = sorted(float(v) for v in levels if float(v) not in fine_set)
+    if not active_levels:
+        active_levels = sorted(float(v) for v in levels)
+
+    def _get_node(role: str, z: float) -> Tuple[float, float]:
+        if role == "L":
+            return (al * z + bl, z)
+        if role == "R":
+            return (ar * z + br, z)
+        return (0.0, z)
+
+    def _determine_role(x: float, z: float) -> str:
+        hw = 0.5 * ((ar * z + br) - (al * z + bl))
+        if include_center and abs(x) < 0.35 * max(hw, 100.0):
+            return "C"
+        return "L" if x < 0 else "R"
+
+    def _reanchor_pt(p: Tuple[float, float], other_p: Tuple[float, float]) -> Tuple[Tuple[float, float], bool]:
+        x, z = p
+        role = _determine_role(x, z)
+        dx = x - other_p[0]
+        dz = z - other_p[1]
+        seg_len = math.hypot(dx, dz)
+
+        candidates = []
+        for lv in active_levels:
+            node = _get_node(role, lv)
+            nx, nz = node
+            perp = abs((nz - other_p[1]) * dx - (nx - other_p[0]) * dz) / max(seg_len, 1e-6)
+            dist = math.hypot(nx - x, nz - z)
+            z_diff = abs(nz - z)
+            if z_diff <= reanchor_tol and perp <= 350.0:
+                candidates.append((perp * 0.5 + dist, node))
+            elif dist <= min(reanchor_tol, 650.0):
+                candidates.append((dist, node))
+
+        if candidates:
+            candidates.sort(key=lambda c: c[0])
+            return candidates[0][1], True
+        return p, False
+
+    out: List[Any] = []
+    for seg in segments:
+        is_dict = isinstance(seg, dict)
+        if is_dict:
+            x1, z1 = float(seg["start"][0]), float(seg["start"][1])
+            x2, z2 = float(seg["end"][0]), float(seg["end"][1])
+        else:
+            x1, z1, x2, z2 = (float(v) for v in seg[:4])
+
+        # 短杆不动保护
+        length = math.hypot(x2 - x1, z2 - z1)
+        if length < min_seg_len:
+            out.append(seg)
+            continue
+
+        p1 = (x1, z1)
+        p2 = (x2, z2)
+        rp1, mod1 = _reanchor_pt(p1, p2)
+        rp2, mod2 = _reanchor_pt(p2, p1)
+
+        # 检查是否发生退化或未改变
+        if math.hypot(rp2[0] - rp1[0], rp2[1] - rp1[1]) < 100.0:
+            out.append(seg)
+            continue
+
+        if is_dict:
+            res = dict(seg)
+            res["start"] = (float(rp1[0]), float(rp1[1]))
+            res["end"] = (float(rp2[0]), float(rp2[1]))
+            res["geometry_origin"] = geometry_origin
+            if mod1 or mod2:
+                res["reanchored"] = True
+            out.append(res)
+        else:
+            out.append((float(rp1[0]), float(rp1[1]), float(rp2[0]), float(rp2[1])))
+
+    return out
+
+
+# ----------------------------------------------------------------------------
 # 5) 生产标定（无 GT）：z 锚点 = 斜杆端点簇跨度 → overlay 声明段
 # ----------------------------------------------------------------------------
 
@@ -910,6 +1073,121 @@ def extract_centerline_drawing_segments(
                 })
                 n_synth_out += 1
 
+    # P2.4d（diag_synth）：画线斜杆端点重锚（in-place 更新 dxf_geom 斜线）。
+    # 图纸斜杆画线端点存在 200~630mm 截断/过冲漂移（05 册实测：通长斜杆
+    # D00 起点画到 z=16370 而 GT 在 17000；K 撑汇交点停在 20340 而 GT
+    # 20700），恒 cost>500 FN。重锚把端点沿杆方向吸附到「腿中心线 ×
+    # 结构层位」网格交点——腿线来自图纸（线性拟合 x=±hw(z)），层位来自
+    # overlay 设计常数（z-only），细层位显式排除保护通长斜杆。
+    # 离线验证（05 册）：命中 8→14（+75%），D10/D30 cost 400→5mm。
+    # 幂等性：segs_out 中的斜线逐条被重锚版本替换（几何更新 + origin
+    # 标记 diag_synth + reanchored=True），未匹配斜线保留原样——不会
+    # 产生重复杆。
+    n_reanchor_out = 0
+    try:
+        _re_cfg = cfg or {}
+        # y→z 映射必须有 beat/region_span 锚链（本函数不构建分位数标定）。
+        # region_span_linear 的两点链同样是分段线性（退化为线性）映射。
+        _yz_pairs = None
+        if _ba and _ba.get("y_draw") and _ba.get("z"):
+            _yz_pairs = sorted(zip((float(v) for v in _ba["y_draw"]),
+                                   (float(v) for v in _ba["z"])))
+        if bool(_re_cfg.get("diag_reanchor")) and _yz_pairs and len(_yz_pairs) >= 2:
+            # 层位源（优先级）：显式 diag_reanchor_levels → leg_synth_spans_mm
+            # 跨型端点（斜杆主跨 z 常数 = 斜杆节点层位全集）→
+            # beam_marker_levels_mm → beat 锚 z。
+            _levels_src = [float(v) for v in (_re_cfg.get("diag_reanchor_levels") or [])]
+            if not _levels_src:
+                _spans = _re_cfg.get("leg_synth_spans_mm") or []
+                _levels_src = sorted({float(v) for sp in _spans for v in sp})
+            if not _levels_src:
+                _levels_src = [float(v) for v in (_re_cfg.get("beam_marker_levels_mm") or [])]
+            if not _levels_src:
+                _levels_src = [float(v) for v in (_ba.get("z") or [])]
+            _fine = [float(v) for v in (_re_cfg.get("diag_reanchor_fine_levels") or [])]
+
+            def _yz_of(u_y: float) -> float:
+                ps = _yz_pairs
+                if u_y <= ps[0][0]:
+                    (y0, z0), (y1, z1) = ps[0], ps[1]
+                elif u_y >= ps[-1][0]:
+                    (y0, z0), (y1, z1) = ps[-2], ps[-1]
+                else:
+                    (y0, z0), (y1, z1) = ps[0], ps[1]
+                    for i in range(len(ps) - 1):
+                        if ps[i][0] <= u_y <= ps[i + 1][0]:
+                            (y0, z0), (y1, z1) = ps[i], ps[i + 1]
+                            break
+                if y1 == y0:
+                    return z0
+                return z0 + (u_y - y0) / (y1 - y0) * (z1 - z0)
+
+            _ps = _yz_pairs
+
+            def _y_of_z2(zq: float) -> float:
+                if _ps[0][1] == _ps[-1][1]:
+                    return _ps[0][0]
+                if zq <= _ps[0][1]:
+                    (y0, z0), (y1, z1) = _ps[0], _ps[1]
+                elif zq >= _ps[-1][1]:
+                    (y0, z0), (y1, z1) = _ps[-2], _ps[-1]
+                else:
+                    (y0, z0), (y1, z1) = _ps[0], _ps[1]
+                    for i in range(len(_ps) - 1):
+                        if _ps[i][1] <= zq <= _ps[i + 1][1]:
+                            (y0, z0), (y1, z1) = _ps[i], _ps[i + 1]
+                            break
+                if z1 == z0:
+                    return y0
+                return y0 + (zq - z0) / (z1 - z0) * (y1 - y0)
+
+            # mm 域 diag（segs_out 里 dxf_geom 斜线）与腿线（vert 长线）
+            _diag_idx = []
+            _diag_mm = []
+            for _i, _e in enumerate(segs_out):
+                if _e.get("geometry_origin") != "dxf_geom" or _e.get("_stem") != stem:
+                    continue
+                sx1, sy1 = _e["start"]
+                sx2, sy2 = _e["end"]
+                dxmm, dzmm = (sx2 - sx1) * scale_x, _yz_of(sy2) - _yz_of(sy1)
+                if abs(dzmm) < 100.0 or abs(dxmm) < 100.0:
+                    continue  # 近水平/近竖直不属斜杆
+                if abs(dxmm) > abs(dzmm) * 4.0:
+                    continue  # 水平向画线（图签等）
+                _diag_idx.append(_i)
+                _diag_mm.append((((sx1 - x_c) * scale_x, _yz_of(sy1),
+                                  (sx2 - x_c) * scale_x, _yz_of(sy2))))
+            _leg_mm = [(((s[0] - x_c) * scale_x, _yz_of(s[1]),
+                         (s[2] - x_c) * scale_x, _yz_of(s[3])))
+                       for s in centers if seg_class(s) == "vert"]
+            if _diag_mm and _leg_mm:
+                _reanchored = reanchor_diag_endpoints(
+                    _diag_mm, _leg_mm, _levels_src,
+                    fine_levels=_fine,
+                    reanchor_tol=float(_re_cfg.get("diag_reanchor_tol_mm", 750.0)),
+                    min_seg_len=float(_re_cfg.get("diag_reanchor_min_seg_mm", 500.0)),
+                )
+                # 逐条对位回写：重锚输出与输入等长同序（未命中者原样透传）
+                for _k, _seg in enumerate(_reanchored):
+                    if _k >= len(_diag_idx):
+                        break
+                    x1m, z1m, x2m, z2m = _seg[0], _seg[1], _seg[2], _seg[3]
+                    _ox = _diag_mm[_k]
+                    if (abs(x1m - _ox[0]) < 0.5 and abs(z1m - _ox[1]) < 0.5
+                            and abs(x2m - _ox[2]) < 0.5 and abs(z2m - _ox[3]) < 0.5):
+                        continue  # 未重锚（透传），保留 dxf_geom 原样
+                    _e = segs_out[_diag_idx[_k]]
+                    _e["start"] = (float(x_c + x1m / scale_x), float(_y_of_z2(z1m)))
+                    _e["end"] = (float(x_c + x2m / scale_x), float(_y_of_z2(z2m)))
+                    _e["geometry_origin"] = "diag_synth"
+                    _e["layer"] = "diag_synth"
+                    _e["reanchored"] = True
+                    _e["reanchor_from"] = [
+                        round(float(v), 2) for v in _ox]
+                    n_reanchor_out += 1
+    except Exception:
+        pass
+
     # P2.2（2026-09-04）：腿杆层位重参数化 leg_synth。
     # 图纸腿线是「全高连续线」（layer4 双线角钢 / 锥度斜线，taper_legs
     # 已收集），但 GT 主材按「分段制造」表达（06 册 8 种跨型：
@@ -997,6 +1275,7 @@ def extract_centerline_drawing_segments(
         "n_centers": len(centers),
         "n_center_out": n_centers_out,
         "n_marker_synth_out": n_synth_out,
+        "n_diag_reanchor_out": n_reanchor_out,
         "n_output_segments": len(segs_out),
         "leg_x_u": leg_x,
         "marker_levels_u": markers,
