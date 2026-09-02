@@ -1559,9 +1559,12 @@
  "dimension_beat_anchor": {
   "35A1-JC1-02": {
    "z_base_mm": 30000.0,
-   "beat_min_mm": 450.0,
-   "beat_max_mm": 1100.0,
-   "enabled": true
+   "enabled": true,
+   "mode": "region_span_linear",
+   "z_span_mm": [
+    30000,
+    36600
+   ]
   },
   "35A1-JC1-04": {
    "z_base_mm": 24000.0,
