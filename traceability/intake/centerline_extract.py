@@ -627,6 +627,197 @@ def reanchor_diag_endpoints(
     return out
 
 
+def complete_truncated_diags(
+    segments: Sequence[Any],
+    leg_lines: Sequence[Any],
+    levels: Sequence[float],
+    *,
+    good_tol: float = 350.0,
+    bad_min_dist: float = 400.0,
+    max_snap_err: float = 650.0,
+    min_panel_h: float = 500.0,
+    pair_x: bool = True,
+    fine_levels: Optional[Sequence[float]] = None,
+    geometry_origin: str = "diag_complete",
+) -> List[Any]:
+    """把画线中单侧截断的斜杆沿杆方向延长，补全为贯穿「腿×层位」网格的完整对角线。
+
+    背景（diag_complete 核心算子）：
+    部分塔身画线（如 05 册 front 面）斜杆存在系统性截断：完整 X 撑的一端画在
+    「腿×层位」网格节点（偏差 <= good_tol），另一端悬空在面板内部（离任何网格节点 >= bad_min_dist）。
+    本算子：
+      1. 识别截断斜杆：端点一好一坏（好端在腿节点容差内，坏端未达对面腿）；
+      2. 沿画线方向作射线，与对面主腿中心线相交；
+      3. 将交点 z 吸附到最近的设计层位（偏差 <= max_snap_err）；
+      4. 若 pair_x=True 且面板内存在反向画线证据（或反向截断线），成对补全完整 X 撑；
+      5. 几何去重后输出 mm 域完整对角斜杆。
+
+    纪律（硬约束）：
+      * 只用图纸证据（画线方向、腿线拟合）+ z-only 设计层位常数；
+      * 绝不注入 GT 坐标；
+      * 新通道命名 diag_complete，geometry_class='recognized'，source_extractor='centerline_extract'。
+    """
+    if not segments or not levels or not leg_lines:
+        return []
+
+    (al, bl), (ar, br) = _extract_leg_profiles(leg_lines)
+    fine_set = set(float(v) for v in fine_levels) if fine_levels else set()
+    active_levels = sorted(float(v) for v in levels if float(v) not in fine_set)
+    if not active_levels:
+        active_levels = sorted(float(v) for v in levels)
+
+    def _leg_x(side: str, z: float) -> float:
+        return (al * z + bl) if side == "L" else (ar * z + br)
+
+    parsed_segs: List[Tuple[Tuple[float, float, float, float], Any]] = []
+    is_dict = isinstance(segments[0], dict) if segments else False
+    for s in segments:
+        if isinstance(s, dict):
+            x1, z1 = float(s["start"][0]), float(s["start"][1])
+            x2, z2 = float(s["end"][0]), float(s["end"][1])
+            parsed_segs.append(((x1, z1, x2, z2), s))
+        else:
+            x1, z1, x2, z2 = (float(v) for v in s[:4])
+            parsed_segs.append(((x1, z1, x2, z2), s))
+
+    single_completed: List[Tuple[float, float, float, float]] = []
+    panel_dirs: Dict[Tuple[float, float], Set[str]] = {}
+
+    def _pt_leg_dist(x: float, z: float, side: str) -> Tuple[float, float]:
+        best_d = 999999.0
+        best_lv = active_levels[0]
+        for lv in active_levels:
+            lx = _leg_x(side, lv)
+            d = math.hypot(lx - x, lv - z)
+            if d < best_d:
+                best_d = d
+                best_lv = lv
+        return best_d, best_lv
+
+    for (x1, z1, x2, z2), orig_item in parsed_segs:
+        d1_l, lv1_l = _pt_leg_dist(x1, z1, "L")
+        d1_r, lv1_r = _pt_leg_dist(x1, z1, "R")
+        d2_l, lv2_l = _pt_leg_dist(x2, z2, "L")
+        d2_r, lv2_r = _pt_leg_dist(x2, z2, "R")
+
+        p1_good_side = "L" if d1_l <= good_tol else ("R" if d1_r <= good_tol else None)
+        p1_good_lv = lv1_l if p1_good_side == "L" else (lv1_r if p1_good_side == "R" else None)
+
+        p2_good_side = "L" if d2_l <= good_tol else ("R" if d2_r <= good_tol else None)
+        p2_good_lv = lv2_l if p2_good_side == "L" else (lv2_r if p2_good_side == "R" else None)
+
+        if p1_good_side is not None and p2_good_side is None:
+            good_side, good_lv = p1_good_side, p1_good_lv
+            good_pt = (_leg_x(good_side, good_lv), good_lv)
+            bad_pt = (x2, z2)
+            orig_good = (x1, z1)
+            opp_side = "R" if good_side == "L" else "L"
+            opp_d, _ = _pt_leg_dist(x2, z2, opp_side)
+            if opp_d < bad_min_dist:
+                continue
+        elif p2_good_side is not None and p1_good_side is None:
+            good_side, good_lv = p2_good_side, p2_good_lv
+            good_pt = (_leg_x(good_side, good_lv), good_lv)
+            bad_pt = (x1, z1)
+            orig_good = (x2, z2)
+            opp_side = "R" if good_side == "L" else "L"
+            opp_d, _ = _pt_leg_dist(x1, z1, opp_side)
+            if opp_d < bad_min_dist:
+                continue
+        else:
+            continue
+
+        dx = bad_pt[0] - orig_good[0]
+        dz = bad_pt[1] - orig_good[1]
+        if abs(dz) < 1e-3:
+            continue
+
+        if good_side == "L" and dx <= 0:
+            continue
+        if good_side == "R" and dx >= 0:
+            continue
+
+        opp_a, opp_b = (ar, br) if opp_side == "R" else (al, bl)
+        slope = dx / dz
+        if abs(slope - opp_a) < 1e-6:
+            continue
+
+        z_int = (opp_b - orig_good[0] + slope * orig_good[1]) / (slope - opp_a)
+        if (z_int - orig_good[1]) * dz <= 0:
+            continue
+
+        best_opp_lv = min(active_levels, key=lambda lv: abs(lv - z_int))
+        if abs(best_opp_lv - z_int) > max_snap_err:
+            continue
+        if abs(best_opp_lv - good_lv) < min_panel_h:
+            continue
+
+        opp_pt = (_leg_x(opp_side, best_opp_lv), best_opp_lv)
+
+        pa, pb = good_pt, opp_pt
+        if pa[1] > pb[1] or (pa[1] == pb[1] and pa[0] > pb[0]):
+            pa, pb = pb, pa
+
+        dir_type = "pos" if (pb[0] - pa[0]) > 0 else "neg"
+        z_lo, z_hi = min(pa[1], pb[1]), max(pa[1], pb[1])
+        panel_key = (z_lo, z_hi)
+        if panel_key not in panel_dirs:
+            panel_dirs[panel_key] = set()
+        panel_dirs[panel_key].add(dir_type)
+
+        single_completed.append((pa[0], pa[1], pb[0], pb[1]))
+
+    out_segs = list(single_completed)
+    if pair_x:
+        for (z_lo, z_hi), dirs in panel_dirs.items():
+            has_opposite = False
+            if len(dirs) >= 2:
+                has_opposite = True
+            else:
+                needed_dir = "neg" if "pos" in dirs else "pos"
+                for (x1, z1, x2, z2), _ in parsed_segs:
+                    mid_z = (z1 + z2) / 2
+                    if z_lo - 200.0 <= mid_z <= z_hi + 200.0:
+                        dz = z2 - z1
+                        if abs(dz) > 50.0:
+                            s_dir = "pos" if ((x2 - x1) / dz > 0) else "neg"
+                            if s_dir == needed_dir:
+                                has_opposite = True
+                                break
+            if has_opposite:
+                xl_lo, xr_lo = _leg_x("L", z_lo), _leg_x("R", z_lo)
+                xl_hi, xr_hi = _leg_x("L", z_hi), _leg_x("R", z_hi)
+                out_segs.append((xl_lo, z_lo, xr_hi, z_hi))
+                out_segs.append((xr_lo, z_lo, xl_hi, z_hi))
+
+    final_segs: List[Tuple[float, float, float, float]] = []
+    for s in out_segs:
+        x1, z1, x2, z2 = s
+        if z1 > z2 or (z1 == z2 and x1 > x2):
+            x1, z1, x2, z2 = x2, z2, x1, z1
+        is_dup = False
+        for u in final_segs:
+            if math.hypot(u[0] - x1, u[1] - z1) < 50.0 and math.hypot(u[2] - x2, u[3] - z2) < 50.0:
+                is_dup = True
+                break
+        if not is_dup:
+            final_segs.append((x1, z1, x2, z2))
+
+    if is_dict:
+        res = []
+        for x1, z1, x2, z2 in final_segs:
+            res.append({
+                "start": (x1, z1),
+                "end": (x2, z2),
+                "geometry_origin": geometry_origin,
+                "geometry_class": "recognized",
+                "evidence_status": "reconstructed",
+                "source_extractor": "centerline_extract",
+            })
+        return res
+    return final_segs
+
+
 # ----------------------------------------------------------------------------
 # 5) 生产标定（无 GT）：z 锚点 = 斜杆端点簇跨度 → overlay 声明段
 # ----------------------------------------------------------------------------
@@ -1084,6 +1275,7 @@ def extract_centerline_drawing_segments(
     # 标记 diag_synth + reanchored=True），未匹配斜线保留原样——不会
     # 产生重复杆。
     n_reanchor_out = 0
+    n_subdivide_out = 0
     try:
         _re_cfg = cfg or {}
         # y→z 映射必须有 beat/region_span 锚链（本函数不构建分位数标定）。
@@ -1161,30 +1353,136 @@ def extract_centerline_drawing_segments(
                          (s[2] - x_c) * scale_x, _yz_of(s[3])))
                        for s in centers if seg_class(s) == "vert"]
             if _diag_mm and _leg_mm:
+                # P2.4f（subdivide→reanchor 组合）：05 册离线实测——
+                # 只重锚 16 命中 vs 打断+重锚 19（GT 斜杆大量跨层连续
+                # [18000,21000]/[21000,24000]，但画线通长 LINE 跨多节间
+                # 时，单段重锚只能锚两端；先按层位打断、逐段重锚到
+                # 「腿×层位」网格，碎片端点各自吸附，覆盖节间分段 GT）。
+                # 打断开关：overlay diag_subdivide（默认关，层位表来源
+                # 同 reanchor）。
+                _work = _diag_mm
+                _subdivided = False
+                if bool(_re_cfg.get("diag_subdivide")):
+                    _sub = subdivide_diag_at_levels(_diag_mm, _levels_src)
+                    if _sub and len(_sub) != len(_diag_mm):
+                        _work = _sub
+                        _subdivided = True
                 _reanchored = reanchor_diag_endpoints(
-                    _diag_mm, _leg_mm, _levels_src,
+                    _work, _leg_mm, _levels_src,
                     fine_levels=_fine,
                     reanchor_tol=float(_re_cfg.get("diag_reanchor_tol_mm", 750.0)),
                     min_seg_len=float(_re_cfg.get("diag_reanchor_min_seg_mm", 500.0)),
                 )
-                # 逐条对位回写：重锚输出与输入等长同序（未命中者原样透传）
-                for _k, _seg in enumerate(_reanchored):
-                    if _k >= len(_diag_idx):
-                        break
-                    x1m, z1m, x2m, z2m = _seg[0], _seg[1], _seg[2], _seg[3]
-                    _ox = _diag_mm[_k]
-                    if (abs(x1m - _ox[0]) < 0.5 and abs(z1m - _ox[1]) < 0.5
-                            and abs(x2m - _ox[2]) < 0.5 and abs(z2m - _ox[3]) < 0.5):
-                        continue  # 未重锚（透传），保留 dxf_geom 原样
-                    _e = segs_out[_diag_idx[_k]]
-                    _e["start"] = (float(x_c + x1m / scale_x), float(_y_of_z2(z1m)))
-                    _e["end"] = (float(x_c + x2m / scale_x), float(_y_of_z2(z2m)))
-                    _e["geometry_origin"] = "diag_synth"
-                    _e["layer"] = "diag_synth"
-                    _e["reanchored"] = True
-                    _e["reanchor_from"] = [
-                        round(float(v), 2) for v in _ox]
-                    n_reanchor_out += 1
+                if not _subdivided:
+                    # 逐条对位回写：重锚输出与输入等长同序（未命中者原样透传）
+                    for _k, _seg in enumerate(_reanchored):
+                        if _k >= len(_diag_idx):
+                            break
+                        x1m, z1m, x2m, z2m = _seg[0], _seg[1], _seg[2], _seg[3]
+                        _ox = _diag_mm[_k]
+                        if (abs(x1m - _ox[0]) < 0.5 and abs(z1m - _ox[1]) < 0.5
+                                and abs(x2m - _ox[2]) < 0.5 and abs(z2m - _ox[3]) < 0.5):
+                            continue  # 未重锚（透传），保留 dxf_geom 原样
+                        _e = segs_out[_diag_idx[_k]]
+                        _e["start"] = (float(x_c + x1m / scale_x), float(_y_of_z2(z1m)))
+                        _e["end"] = (float(x_c + x2m / scale_x), float(_y_of_z2(z2m)))
+                        _e["geometry_origin"] = "diag_synth"
+                        _e["layer"] = "diag_synth"
+                        _e["reanchored"] = True
+                        _e["reanchor_from"] = [
+                            round(float(v), 2) for v in _ox]
+                        n_reanchor_out += 1
+                else:
+                    # 打断模式：原 dxf_geom 斜线整条移除，替换为打断+
+                    # 重锚后的分段（diag_synth），保持图纸域坐标。
+                    for _i in reversed(_diag_idx):
+                        segs_out.pop(_i)
+                    for _seg in _reanchored:
+                        x1m, z1m, x2m, z2m = _seg[0], _seg[1], _seg[2], _seg[3]
+                        segs_out.append({
+                            "start": (float(x_c + x1m / scale_x),
+                                      float(_y_of_z2(z1m))),
+                            "end": (float(x_c + x2m / scale_x),
+                                    float(_y_of_z2(z2m))),
+                            "view_type": "front",
+                            "scale_ratio": scale_x,
+                            "layer": "diag_synth",
+                            "geometry_origin": "diag_synth",
+                            "geometry_class": "recognized",
+                            "evidence_status": "recognized",
+                            "source_extractor": "centerline_extract",
+                            "reanchored": True,
+                            "_stem": stem,
+                        })
+                        n_reanchor_out += 1
+                    n_subdivide_out = len(_reanchored)
+    except Exception:
+        pass
+
+    # P2.4g：截断斜杆补全 diag_complete。
+    # 图纸上部分 X 撑画线存在系统性截断（一端在腿×层位网格附近，另一端悬空在面板内部）。
+    # 本通道将截断斜杆沿画线方向延长，与对面主腿中心线相交并吸附到最近层位，
+    # 补全完整的对角线（并在面板内成对补全 X 撑）。
+    # 纯图纸证据 + z-only 设计层位，保持 pure 口径合规。
+    n_diag_complete_out = 0
+    try:
+        if bool(_re_cfg.get("diag_complete")) and _yz_pairs and len(_yz_pairs) >= 2:
+            _c_levels_src = [float(v) for v in (_re_cfg.get("diag_complete_levels") or _re_cfg.get("diag_reanchor_levels") or [])]
+            if not _c_levels_src:
+                _spans = _re_cfg.get("leg_synth_spans_mm") or []
+                _c_levels_src = sorted({float(v) for sp in _spans for v in sp})
+            if not _c_levels_src:
+                _c_levels_src = [float(v) for v in (_re_cfg.get("beam_marker_levels_mm") or [])]
+            if not _c_levels_src:
+                _c_levels_src = [float(v) for v in (_ba.get("z") or [])]
+            _c_fine = [float(v) for v in (_re_cfg.get("diag_complete_fine_levels") or _re_cfg.get("diag_reanchor_fine_levels") or [])]
+
+            if not ('_diag_mm' in locals() and _diag_mm):
+                _diag_mm = []
+                for _e in segs_out:
+                    if _e.get("_stem") != stem:
+                        continue
+                    sx1, sy1 = _e["start"]
+                    sx2, sy2 = _e["end"]
+                    dxmm, dzmm = (sx2 - sx1) * scale_x, _yz_of(sy2) - _yz_of(sy1)
+                    if abs(dzmm) < 100.0 or abs(dxmm) < 100.0:
+                        continue
+                    if abs(dxmm) > abs(dzmm) * 4.0:
+                        continue
+                    _diag_mm.append((((sx1 - x_c) * scale_x, _yz_of(sy1),
+                                      (sx2 - x_c) * scale_x, _yz_of(sy2))))
+            if not ('_leg_mm' in locals() and _leg_mm):
+                _leg_mm = [(((s[0] - x_c) * scale_x, _yz_of(s[1]),
+                             (s[2] - x_c) * scale_x, _yz_of(s[3])))
+                           for s in centers if seg_class(s) == "vert"]
+
+            _input_diags = _reanchored if ('_reanchored' in locals() and _reanchored) else _diag_mm
+            if _input_diags and _leg_mm and _c_levels_src:
+                _completed = complete_truncated_diags(
+                    _input_diags, _leg_mm, _c_levels_src,
+                    good_tol=float(_re_cfg.get("diag_complete_good_tol_mm", 350.0)),
+                    bad_min_dist=float(_re_cfg.get("diag_complete_bad_min_dist_mm", 400.0)),
+                    max_snap_err=float(_re_cfg.get("diag_complete_max_snap_err_mm", 650.0)),
+                    min_panel_h=float(_re_cfg.get("diag_complete_min_panel_h_mm", 500.0)),
+                    pair_x=bool(_re_cfg.get("diag_complete_pair_x", True)),
+                    fine_levels=_c_fine,
+                    geometry_origin="diag_complete",
+                )
+                for _c_seg in _completed:
+                    x1m, z1m, x2m, z2m = _c_seg[0], _c_seg[1], _c_seg[2], _c_seg[3]
+                    segs_out.append({
+                        "start": (float(x_c + x1m / scale_x), float(_y_of_z2(z1m))),
+                        "end": (float(x_c + x2m / scale_x), float(_y_of_z2(z2m))),
+                        "view_type": "front",
+                        "scale_ratio": scale_x,
+                        "layer": "diag_complete",
+                        "geometry_origin": "diag_complete",
+                        "geometry_class": "recognized",
+                        "evidence_status": "reconstructed",
+                        "source_extractor": "centerline_extract",
+                        "_stem": stem,
+                    })
+                    n_diag_complete_out += 1
     except Exception:
         pass
 
@@ -1276,6 +1574,8 @@ def extract_centerline_drawing_segments(
         "n_center_out": n_centers_out,
         "n_marker_synth_out": n_synth_out,
         "n_diag_reanchor_out": n_reanchor_out,
+        "n_diag_subdivide_out": n_subdivide_out,
+        "n_diag_complete_out": n_diag_complete_out,
         "n_output_segments": len(segs_out),
         "leg_x_u": leg_x,
         "marker_levels_u": markers,
