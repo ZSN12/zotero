@@ -2107,88 +2107,72 @@ def complete_crossarm_truss(
             clusters.append([(z, r)])
         else:
             clusters[-1].append((z, r))
-    # 主层 = 节点数最多的簇（横担下弦层证据最密）
+    # S10-M（2026-09-04）：多横担层遍历。原实现只取节点最密的单一主层
+    # （JC1 单横担塔成立）；ZC1 等多横担塔每层下弦都有宽节点簇，须逐层
+    # 生成。层序按节点密度降序（主层优先，行为与单层版兼容）。
     clusters.sort(key=lambda c: -len(c))
-    main = clusters[0]
-    z_lo = sum(z for z, _ in main) / len(main)
-    # 中层：紧邻主层上方（z>z_lo+300）的宽节点簇或主层内最高节点
-    z_hi_candidates = [z for z, _ in main if z > z_lo + 300.0]
-    if z_hi_candidates:
-        z_mid = sum(z_hi_candidates) / len(z_hi_candidates)
-    else:
-        # 邻簇：找 z > z_lo+300 且 < z_lo+900 的簇
-        z_mid = None
-        for c in clusters[1:]:
-            cm = sum(z for z, _ in c) / len(c)
-            if z_lo + 300.0 < cm < z_lo + 900.0:
-                z_mid = cm
-                break
-        if z_mid is None:
-            return nodes, bars, {"generated": 0, "layers": [], "reason": "no_mid_layer_evidence"}
-    z_hi = 2.0 * z_mid - z_lo
-    z_span = z_hi - z_lo
-    if not (500.0 <= z_span <= 1500.0):
-        return nodes, bars, {"generated": 0, "layers": [], "reason": f"bad_layer_span_{z_span:.0f}"}
+    _layer_candidates: List[Tuple[float, Optional[float]]] = []
+    for main in clusters:
+        z_lo_c = sum(z for z, _ in main) / len(main)
+        z_hi_candidates = [z for z, _ in main if z > z_lo_c + 300.0]
+        if z_hi_candidates:
+            z_mid_c: Optional[float] = sum(z_hi_candidates) / len(z_hi_candidates)
+        else:
+            z_mid_c = None
+            for c in clusters:
+                cm = sum(z for z, _ in c) / len(c)
+                if z_lo_c + 300.0 < cm < z_lo_c + 900.0:
+                    z_mid_c = cm
+                    break
+        _layer_candidates.append((z_lo_c, z_mid_c))
 
-    # ---- 2) 悬臂弦杆 x 端点证据 ----
+    # ---- 2) 悬臂弦杆 x 端点证据（逐层就近搜索）----
     # 已提取的悬臂长杆：外端远超塔面（≥1500mm 外伸），内端近根部
     # （塔面附近），x 同号同侧，z 跨 > 300（弦有竖向起伏）。
     # z 方向可能有册间漂移，但 x 端点无漂移（x 是图面横向直接读数）。
-    x_root = x_tip = None
-    best_len = 0.0
-    for b in bars:
-        fn, tn = b.get("from"), b.get("to")
-        pf, pt = nodes.get(fn) if fn else None, nodes.get(tn) if tn else None
-        if pf is None or pt is None:
-            continue
-        x1, x2 = float(pf[0]), float(pt[0])
-        z1, z2 = float(pf[2]), float(pt[2])
-        if abs(z1 - z2) < 300.0:
-            continue
-        # 同侧（x 同号）且内端→外端
-        if x1 * x2 <= 0:
-            continue
-        xin, xout = (x1, x2) if abs(x1) < abs(x2) else (x2, x1)
-        if abs(xout) < 1500.0 or abs(xout - xin) < 900.0:
-            continue
-        # 外端必须远超塔面；内端在根部（塔面附近，容 1.9 倍——锥线
-        # 拟合误差与根节点本身偏出体面都允许）
-        _in_is_p1 = abs(x1) < abs(x2)
-        p_in, p_out = (pf, pt) if _in_is_p1 else (pt, pf)
-        r_in = max(abs(float(p_in[0])), abs(float(p_in[1])))
-        r_out = max(abs(float(p_out[0])), abs(float(p_out[1])))
-        hw_in = _hw(float(p_in[2]))
-        hw_out = _hw(float(p_out[2]))
-        if hw_in <= 50 or hw_out <= 50:
-            continue
-        if r_out < hw_out * 1.5 or r_in > hw_in * 1.9:
-            continue
-        L = math.hypot(xout - xin, float(pt[1]) - float(pf[1]))
-        if L > best_len:
-            best_len = L
-            x_root, x_tip = abs(xin), abs(xout)
-    if x_root is None or x_tip is None or x_tip <= x_root + 400.0:
-        return nodes, bars, {"generated": 0, "layers": [], "reason": "no_chord_x_evidence"}
+    def _find_chord(z_center: Optional[float]):
+        x_root_l, x_tip_l = None, None
+        best_len = 0.0
+        for b in bars:
+            fn, tn = b.get("from"), b.get("to")
+            pf, pt = nodes.get(fn) if fn else None, nodes.get(tn) if tn else None
+            if pf is None or pt is None:
+                continue
+            x1, x2 = float(pf[0]), float(pt[0])
+            z1, z2 = float(pf[2]), float(pt[2])
+            if abs(z1 - z2) < 300.0:
+                continue
+            # 同侧（x 同号）且内端→外端
+            if x1 * x2 <= 0:
+                continue
+            xin, xout = (x1, x2) if abs(x1) < abs(x2) else (x2, x1)
+            if abs(xout) < 1500.0 or abs(xout - xin) < 900.0:
+                continue
+            # 外端必须远超塔面；内端在根部（塔面附近，容 1.9 倍——锥线
+            # 拟合误差与根节点本身偏出体面都允许）
+            _in_is_p1 = abs(x1) < abs(x2)
+            p_in, p_out = (pf, pt) if _in_is_p1 else (pt, pf)
+            r_in = max(abs(float(p_in[0])), abs(float(p_in[1])))
+            r_out = max(abs(float(p_out[0])), abs(float(p_out[1])))
+            hw_in = _hw(float(p_in[2]))
+            hw_out = _hw(float(p_out[2]))
+            if hw_in <= 50 or hw_out <= 50:
+                continue
+            if r_out < hw_out * 1.5 or r_in > hw_in * 1.9:
+                continue
+            L = math.hypot(xout - xin, float(pt[1]) - float(pf[1]))
+            # 多层模式：弦杆须落在该层 z 邻域（±1800mm——层簇与弦杆
+            # z 漂移实测 ~800mm 内，跨册漂移可到 1.5k）
+            if z_center is not None:
+                z_chord = (z1 + z2) / 2.0
+                if abs(z_chord - z_center) > 1800.0:
+                    continue
+            if L > best_len:
+                best_len = L
+                x_root_l, x_tip_l = abs(xin), abs(xout)
+        return x_root_l, x_tip_l
 
-    # ---- 3) 站位几何 ----
-    w_hi = _hw(z_hi)           # 根部上弦角点（A）
-    w_lo = _hw(z_lo)           # 根部下弦角点（D）
-    if w_hi <= 50 or w_lo <= 50:
-        return nodes, bars, {"generated": 0, "layers": [], "reason": "bad_half_width"}
-    y_tip = tip_width_mm / 2.0
-    # x_m：上弦 A(x_root)→C(x_tip) 直线在 z_mid 的插值
-    x_mid = x_root + (x_tip - x_root) * (z_hi - z_mid) / (z_hi - z_lo)
-    # y（宽度）：上弦根 y=w_hi → 尖 y_tip（x 线性）；下弦根 y=w_lo → 尖
-    y_m = w_hi + (y_tip - w_hi) * (x_mid - x_root) / (x_tip - x_root)
-    y_mb = w_lo + (y_tip - w_lo) * (x_mid - w_lo) / (x_tip - w_lo)
-    # 下弦 D/E/C 都在 z_lo；D x 取 w_lo（塔面），E x 取 x_mid
-    x_rb = w_lo
-
-    stations = {"A": (x_root, w_hi, z_hi), "B": (x_mid, y_m, z_mid),
-                "C": (x_tip, y_tip, z_lo), "D": (x_rb, w_lo, z_lo),
-                "E": (x_mid, y_mb, z_lo)}
-
-    # ---- 4) 生成节点与杆件 ----
+    # ---- 3)+4) 逐层生成（S10-M 多横担扩展）----
     new_nodes: NodeMap = dict(nodes)
     new_bars: List[dict] = list(bars)
     counter = {"n": 7600000}
@@ -2215,20 +2199,7 @@ def complete_crossarm_truss(
         _zbucket.setdefault(int(z // 100), []).append((nid, new_nodes[nid]))
         return nid
 
-    # 站位节点字典：每 (站位, sx, sy) 建一次，复用——避免同坐标重复建点。
-    station_cache: Dict[Tuple[str, float, float], str] = {}
-
-    def _mk_station(st: str, sx: float, sy: float) -> str:
-        key = (st, sx, sy)
-        nid = station_cache.get(key)
-        if nid is not None:
-            return nid
-        x, y, z = stations[st]
-        nid = _mk(sx * x, sy * y, z)
-        station_cache[key] = nid
-        return nid
-
-    # 既有杆件端点集合（dedup：同 x 侧已存在近似杆则跳过）
+    # 既有杆件端点集合（dedup：同 x 侧已存在近似杆则跳过）——逐层累积
     existing: List[Tuple[Vec3, Vec3]] = []
     for b in bars:
         fn, tn = b.get("from"), b.get("to")
@@ -2248,61 +2219,110 @@ def complete_crossarm_truss(
         return False
 
     generated = 0
-    for sx in (1.0, -1.0):
-        # 同 x 侧两 y 站位，交叉与端封只在该侧生成一次（y 对互补避免重复）。
-        # 上弦内/外段、下弦内/外段、竖杆、斜杆 → 每 y 站各一根（非对称对）。
-        # 交叉对角 → 同 x 侧两个 y 翻转节点互换，天然唯一。
-        # B/C 端封横杆 → 每 x 侧一根（横跨两 y）。
-        A_p, B_p, C_p, D_p, E_p = (_mk_station(s, sx, +1) for s in "ABCDE")
-        A_m, B_m, C_m, D_m, E_m = (_mk_station(s, sx, -1) for s in "ABCDE")
-        members = [
-            # 上弦（两 y 站）
-            (A_p, B_p, "LEG"), (B_p, C_p, "LEG"),
-            (A_m, B_m, "LEG"), (B_m, C_m, "LEG"),
-            # 下弦（两 y 站）
-            (D_p, E_p, "LEG"), (E_p, C_p, "LEG"),
-            (D_m, E_m, "LEG"), (E_m, C_m, "LEG"),
-            # 竖杆 B→E（两 y 站）
-            (B_p, E_p, "DIAG"), (B_m, E_m, "DIAG"),
-            # 斜杆 B→D（两 y 站）
-            (B_p, D_p, "DIAG"), (B_m, D_m, "DIAG"),
-            # A 层交叉对角
-            (A_p, B_m, "DIAG"), (A_m, B_p, "DIAG"),
-            # E 层交叉对角（D 端封侧交叉）
-            (E_p, D_m, "DIAG"), (E_m, D_p, "DIAG"),
-            # C 层交叉对角（尖端 X）
-            (C_p, E_m, "DIAG"), (C_m, E_p, "DIAG"),
-            # B/C 端封横杆（每 x 侧一根）
-            (B_p, B_m, "HORIZONTAL"),
-            (C_p, C_m, "HORIZONTAL"),
-        ]
-        for f, t, role in members:
-            p1, p2 = new_nodes[f], new_nodes[t]
-            if _exists(p1, p2):
-                continue
-            counter["n"] += 1
-            new_bars.append({
-                "id": f"{id_prefix}_bar_{counter['n']}",
-                "from": f,
-                "to": t,
-                "role": role,
-                "diagonal_topology": False,
-                "crossarm_truss_completion": True,
-                "geometry_origin": "crossarm_truss_completion",
-                "geometry_class": "derived_parametric",
-                "level_source": level_source_label,
-            })
-            existing.append((p1, p2))
-            generated += 1
+    layers_report: List[dict] = []
+    for z_lo, z_mid in _layer_candidates:
+        if z_mid is None:
+            continue
+        z_hi = 2.0 * z_mid - z_lo
+        z_span = z_hi - z_lo
+        if not (500.0 <= z_span <= 1500.0):
+            continue
+        # 弦杆证据须落在该层 z 邻域（±1200mm）
+        x_root, x_tip = _find_chord((z_lo + z_hi) / 2.0)
+        if x_root is None or x_tip is None or x_tip <= x_root + 400.0:
+            continue
+        # ---- 3) 站位几何 ----
+        w_hi = _hw(z_hi)           # 根部上弦角点（A）
+        w_lo = _hw(z_lo)           # 根部下弦角点（D）
+        if w_hi <= 50 or w_lo <= 50:
+            continue
+        y_tip = tip_width_mm / 2.0
+        # x_m：上弦 A(x_root)→C(x_tip) 直线在 z_mid 的插值
+        x_mid = x_root + (x_tip - x_root) * (z_hi - z_mid) / (z_hi - z_lo)
+        # y（宽度）：上弦根 y=w_hi → 尖 y_tip（x 线性）；下弦根 y=w_lo → 尖
+        y_m = w_hi + (y_tip - w_hi) * (x_mid - x_root) / (x_tip - x_root)
+        y_mb = w_lo + (y_tip - w_lo) * (x_mid - x_root) / (x_tip - x_root)
+        # 下弦 D/E/C 都在 z_lo；D x 取 w_lo（塔面），E x 取 x_mid
+        x_rb = w_lo
 
-    return new_nodes, new_bars, {
-        "generated": generated,
-        "layers": {
+        stations = {"A": (x_root, w_hi, z_hi), "B": (x_mid, y_m, z_mid),
+                    "C": (x_tip, y_tip, z_lo), "D": (x_rb, w_lo, z_lo),
+                    "E": (x_mid, y_mb, z_lo)}
+
+        # 站位节点字典：每 (站位, sx, sy) 建一次，复用——避免同坐标重复建点。
+        station_cache: Dict[Tuple[str, float, float], str] = {}
+
+        def _mk_station(st: str, sx: float, sy: float) -> str:
+            key = (st, sx, sy)
+            nid = station_cache.get(key)
+            if nid is not None:
+                return nid
+            x, y, z = stations[st]
+            nid = _mk(sx * x, sy * y, z)
+            station_cache[key] = nid
+            return nid
+
+        for sx in (1.0, -1.0):
+            # 同 x 侧两 y 站位，交叉与端封只在该侧生成一次（y 对互补避免重复）。
+            # 上弦内/外段、下弦内/外段、竖杆、斜杆 → 每 y 站各一根（非对称对）。
+            # 交叉对角 → 同 x 侧两个 y 翻转节点互换，天然唯一。
+            # B/C 端封横杆 → 每 x 侧一根（横跨两 y）。
+            A_p, B_p, C_p, D_p, E_p = (_mk_station(s, sx, +1) for s in "ABCDE")
+            A_m, B_m, C_m, D_m, E_m = (_mk_station(s, sx, -1) for s in "ABCDE")
+            members = [
+                # 上弦（两 y 站）
+                (A_p, B_p, "LEG"), (B_p, C_p, "LEG"),
+                (A_m, B_m, "LEG"), (B_m, C_m, "LEG"),
+                # 下弦（两 y 站）
+                (D_p, E_p, "LEG"), (E_p, C_p, "LEG"),
+                (D_m, E_m, "LEG"), (E_m, C_m, "LEG"),
+                # 竖杆 B→E（两 y 站）
+                (B_p, E_p, "DIAG"), (B_m, E_m, "DIAG"),
+                # 斜杆 B→D（两 y 站）
+                (B_p, D_p, "DIAG"), (B_m, D_m, "DIAG"),
+                # A 层交叉对角
+                (A_p, B_m, "DIAG"), (A_m, B_p, "DIAG"),
+                # E 层交叉对角（D 端封侧交叉）
+                (E_p, D_m, "DIAG"), (E_m, D_p, "DIAG"),
+                # C 层交叉对角（尖端 X）
+                (C_p, E_m, "DIAG"), (C_m, E_p, "DIAG"),
+                # B/C 端封横杆（每 x 侧一根）
+                (B_p, B_m, "HORIZONTAL"),
+                (C_p, C_m, "HORIZONTAL"),
+            ]
+            for f, t, role in members:
+                p1, p2 = new_nodes[f], new_nodes[t]
+                if _exists(p1, p2):
+                    continue
+                counter["n"] += 1
+                new_bars.append({
+                    "id": f"{id_prefix}_bar_{counter['n']}",
+                    "from": f,
+                    "to": t,
+                    "role": role,
+                    "diagonal_topology": False,
+                    "crossarm_truss_completion": True,
+                    "geometry_origin": "crossarm_truss_completion",
+                    "geometry_class": "derived_parametric",
+                    "level_source": level_source_label,
+                })
+                existing.append((p1, p2))
+                generated += 1
+        layers_report.append({
             "z_lo": round(z_lo, 1), "z_mid": round(z_mid, 1), "z_hi": round(z_hi, 1),
             "x_root": round(x_root, 1), "x_mid": round(x_mid, 1), "x_tip": round(x_tip, 1),
             "y_root_hi": round(w_hi, 1), "y_root_lo": round(w_lo, 1), "y_tip": round(y_tip, 1),
             "tip_width_mm": tip_width_mm,
-        },
+        })
+
+    if not layers_report:
+        return nodes, bars, {"generated": 0, "layers": [],
+                             "reason": "no_layer_with_chord_evidence",
+                             "n_wide_nodes": len(wide)}
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "layers": layers_report[0] if len(layers_report) == 1 else layers_report,
+        "n_layers": len(layers_report),
         "n_wide_nodes": len(wide),
     }
 

@@ -644,5 +644,9 @@
   }
  },
  "marker_synth_head_z_min_mm": 39500.0,
- "side_read_promotion": false
+ "side_read_promotion": false,
+ "dedup_identical_bars": true,
+ "dedup_identical_tol_mm": 60.0,
+ "crossarm_truss_zone_z_min_mm": 26000.0,
+ "crossarm_truss_zone_z_max_mm": 38000.0
 }

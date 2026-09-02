@@ -1335,7 +1335,7 @@
    ],
    "diag_reanchor": true,
    "diag_x2k": true,
-   "side_horiz_synth": false,
+   "side_horiz_synth": true,
    "side_horiz_synth_region": {
     "region": [
      34800.0,
@@ -1347,8 +1347,23 @@
      34876.0,
      -10395.0
     ],
-    "scale_x": 20.0
-   }
+    "scale_x": 20.0,
+    "z_anchors": [
+     [
+      -10511.0,
+      11500.0
+     ],
+     [
+      -10395.0,
+      14000.0
+     ],
+     [
+      -10298.0,
+      16000.0
+     ]
+    ]
+   },
+   "side_diag_synth": true
   },
   "35A1-JC1-07": {
    "enabled": true,
