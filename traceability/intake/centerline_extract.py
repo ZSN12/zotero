@@ -368,6 +368,103 @@ def subdiv_t_x(
 
 
 # ----------------------------------------------------------------------------
+# 4b) 斜材层位打断（mm 域）：跨层通长斜线 → 按层位参数化分段
+# ----------------------------------------------------------------------------
+
+def subdivide_diag_at_levels(
+    segments: List[Any],
+    levels_z: Sequence[float],
+    *,
+    endpoint_level_tol: float = 200.0,
+    min_levels_crossed: int = 2,
+    edge_clearance: float = 30.0,
+    max_splits: int = 16,
+    require_diag: bool = True,
+) -> List[Any]:
+    """把「跨层通长斜线」在其穿过的层位 z 处沿杆参数 t 打断。
+
+    背景（diag_synth 第一半）：国网立面图把多节间斜杆画成一根通长 LINE
+    （如 05 册 z 19786→22265 的 3555mm 线），而 GT 在每个层位都有节点、
+    按层位分段（每段一杆）。本函数只做 z 参数化打断——不做 T/X 投影，避免
+    在 X 交叉点制造假节点。
+
+    错切保护（关键）：如果一条斜线的**两个端点**都落在某层位
+    ±endpoint_level_tol 内，它本身就是「层位杆」或 GT 认可的跨层连续杆
+    （如 05 册 z 17000→19400 的 2400mm 通长斜材 PM_0668，端点恰在
+    17000/19400 层位）——不打断。只有端点不在层位上的通长线才在其穿过
+    的层位处打断。此外要求至少穿过 min_levels_crossed 个层位才打断
+    （只跨 1 层的线保持原样，避免过度碎化）。
+
+    输入坐标域必须一致：segments 为 mm 域 (x, z)，levels_z 为 mm 域层位
+    常数（z-only 设计常数，纪律允许）。segments 元素支持两种形态：
+      * dict：{"start": (x, z), "end": (x, z), "handle": ...}——子段继承
+        全部元数据，handle 追加 ``#d{j}`` 后缀、写 ``split_from`` 溯源、
+        ``split_levels_z`` 记录打断层位；
+      * 4 元组 (x1, z1, x2, z2)——输出保持 4 元组。
+    未被打断的段原样透传（类型不变）。
+
+    require_diag：只处理斜向段（seg_class == "diag"，即非近水平/近竖直），
+    竖直主材的层位打断属于 tower_dxf._subdivide_at_levels 的职责，这里不碰。
+    """
+    if not segments or not levels_z:
+        return list(segments)
+    levels = sorted(float(v) for v in levels_z)
+
+    def _near_level(z: float) -> bool:
+        return any(abs(z - lv) <= endpoint_level_tol for lv in levels)
+
+    out: List[Any] = []
+    for seg in segments:
+        is_dict = isinstance(seg, dict)
+        if is_dict:
+            x1, z1 = float(seg["start"][0]), float(seg["start"][1])
+            x2, z2 = float(seg["end"][0]), float(seg["end"][1])
+        else:
+            x1, z1, x2, z2 = (float(v) for v in seg[:4])
+        dz = z2 - z1
+        if abs(dz) < 1e-9:
+            out.append(seg)
+            continue
+        if require_diag and seg_class((x1, z1, x2, z2)) != "diag":
+            out.append(seg)
+            continue
+        # 错切保护：两端点都落在层位上 → 层位杆 / GT 认可的跨层连续杆
+        if _near_level(z1) and _near_level(z2):
+            out.append(seg)
+            continue
+        z_lo, z_hi = (z1, z2) if z1 < z2 else (z2, z1)
+        crossed = [lv for lv in levels
+                   if z_lo + edge_clearance < lv < z_hi - edge_clearance]
+        if len(crossed) < min_levels_crossed:
+            out.append(seg)
+            continue
+        crossed = crossed[:max_splits]
+        # 打断点必须按沿杆参数 t 排序：降 z 走向（dz<0）时层位降序，
+        # 否则子段回折重叠（z1>z2 的通长线曾产出 z 21097→20700→21000
+        # 的锯齿段）。
+        crossed.sort(key=lambda lv: (lv - z1) / dz)
+        dx = x2 - x1
+        # 打断点 z 精确取层位值（x 沿杆线性插值；不按 t 回算 z，避免舍入漂移）
+        pts = [(x1, z1)] + [
+            (x1 + (lv - z1) / dz * dx, float(lv)) for lv in crossed
+        ] + [(x2, z2)]
+        for j in range(len(pts) - 1):
+            if is_dict:
+                child = {k: v for k, v in seg.items()
+                         if k not in ("start", "end", "handle")}
+                child["start"] = pts[j]
+                child["end"] = pts[j + 1]
+                h = seg.get("handle")
+                child["handle"] = f"{h}#d{j}" if h else None
+                child["split_from"] = seg.get("handle")
+                child["split_levels_z"] = [round(lv, 1) for lv in crossed]
+                out.append(child)
+            else:
+                out.append((pts[j][0], pts[j][1], pts[j + 1][0], pts[j + 1][1]))
+    return out
+
+
+# ----------------------------------------------------------------------------
 # 5) 生产标定（无 GT）：z 锚点 = 斜杆端点簇跨度 → overlay 声明段
 # ----------------------------------------------------------------------------
 
@@ -462,6 +559,7 @@ def extract_calibrated_centerlines(
     bbox = tuple(float(v) for v in region["region"])
     origin_x = float(region["origin"][0])
     scale_x = float(region.get("scale_x") or 20.0)
+    scale_y = float(region.get("scale_y") or scale_x)  # audit 用；缺省 = scale_x
     cfg = _overlay_cfg(stem, overlay)
     gap_tol = float((cfg or {}).get("gap_tol") or (cfg or {}).get("stitch_gap_tol") or 6.0)
     col_tol = float((cfg or {}).get("col_tol") or (cfg or {}).get("stitch_col_tol") or 1.5)
