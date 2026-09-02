@@ -1103,6 +1103,13 @@ def _bar_caliber_class(p: Dict[str, Any]) -> str:
     """
     if is_derived_bar(p):
         return "derived"
+    # P2.3（2026-09-04）：生成侧标记的 pure 排除（证据佐证失败）——
+    # 当前唯一来源：头部区（z≥模块界面）无绘制水平线佐证的 marker_synth
+    # （tower_symmetry marker_synth_head_filter）。语义：标记符号在头部
+    # 图幅是斜材节点标记而非横梁证据，不算「图纸直读」；仍归
+    # reconstructed 层（full 口径不受影响）。
+    if p.get("pure_excluded"):
+        return "reconstructed"
     if str(p.get("geometry_class") or "") == "derived_parametric":
         return "parametric"
     # GT 标高辅助判定与 eval_a2_dual_caliber 的 assisted 归因一致（优先）

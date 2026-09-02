@@ -1038,6 +1038,54 @@ def expand_4_face_symmetry_model(
         if _df_ca is not None:
             _df_ca.properties["crossarm_fp_prune"] = _ca_prune
 
+    # P2.3（2026-09-04）：头部区 marker_synth 佐证过滤（pure 口径 FP 治理）。
+    # 实测（legsynth11）：z≥24700（05/40 模块界面以上）的 marker_synth 有
+    # 26 根，其中 22 根所在 z 层无任何 dxf_geom 绘制水平线佐证（GT 该区间
+    # 水平杆为 0）——头部图幅（02/04 册，z 窗 25036-30962 / 30000-34610）
+    # 的 marker 符号是斜材节点标记而非横梁标记，synth_beams 误当横梁合成。
+    # 这些杆是 pure 口径 FP（21/22 front 可见），full 口径同为 FP。
+    # 处理：打 pure_excluded 标记（_bar_caliber_class 据此前置判
+    # reconstructed → pure 除名；full 口径池不变，dual 红线零风险；
+    # origin/layer 不动，下游 marker_synth 豁免语义全部保持）。
+    # ±300mm 内有 dxf_geom 近水平杆的保留（如 z≈29983 平台层被 30266
+    # 绘制线佐证，当前贡献 3 TP）。
+    _ms_head_z_min = float(spec.get("marker_synth_head_z_min_mm", 24700.0))
+    _ms_corr_tol = float(spec.get("marker_synth_corroboration_tol_mm", 300.0))
+    _dxf_hz: List[float] = []
+    for _b in face_bars:
+        if str(_b.get("geometry_origin") or "") != "dxf_geom":
+            continue
+        _f, _t = face_nodes.get(_b.get("from")), face_nodes.get(_b.get("to"))
+        if _f is None or _t is None:
+            continue
+        _dz = abs(float(_t[2]) - float(_f[2]))
+        _dx = abs(float(_t[0]) - float(_f[0]))
+        _L = (_dz * _dz + _dx * _dx) ** 0.5
+        if _L > 1e-9 and _dz / _L < 0.3:
+            _dxf_hz.append((float(_f[2]) + float(_t[2])) / 2.0)
+    _n_ms_head = 0
+    for _b in face_bars:
+        if str(_b.get("geometry_origin") or "") != "marker_synth":
+            continue
+        _f, _t = face_nodes.get(_b.get("from")), face_nodes.get(_b.get("to"))
+        if _f is None or _t is None:
+            continue
+        _zm = (float(_f[2]) + float(_t[2])) / 2.0
+        if _zm < _ms_head_z_min:
+            continue
+        if any(abs(_zm - _dz) <= _ms_corr_tol for _dz in _dxf_hz):
+            continue
+        _b["pure_excluded"] = "marker_head_uncorroborated"
+        _n_ms_head += 1
+    if _n_ms_head:
+        _df_ms = model.components.get("drawing_file")
+        if _df_ms is not None:
+            _df_ms.properties["marker_synth_head_filter"] = {
+                "n_reclassified": _n_ms_head,
+                "head_z_min_mm": _ms_head_z_min,
+                "corroboration_tol_mm": _ms_corr_tol,
+            }
+
     # S4 贪心共线拼接（Phase 2）：把断裂碎片杆拼回整杆。
     # 关键教训（2026-08-31 实测，三轮复核）：
     #   1. 必须在 classify_members 之后挂——否则 face_bars 无 role，
@@ -1381,6 +1429,9 @@ def expand_4_face_symmetry_model(
             "source_file": source_file,
             "geometry_origin": geometry_origin,
             "geometry_class": geometry_class,
+            # P2.3（2026-09-04）：pure 排除标记透传（头部未佐证 marker_synth
+            # 等）——bar_props 是显式键白名单，不加会静默丢失。
+            "pure_excluded": b.get("pure_excluded"),
             # P1.1 零损耗透传：source_extractor（centerline_extract 主路径
             # 证据标记）随杆进入 3D 链——评测口径据此保 pure 语义（合并/
             # 合成杆不被降层），A1 审计可追溯提取器来源。
