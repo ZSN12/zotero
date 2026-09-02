@@ -1,344 +1,344 @@
 {
-  "$comment": "35A2-JC2 overlay：05 册双立面（front+side 全塔），bar 图层 1/4",
-  "bar_layers": [
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "7",
-    "8",
-    "DRAW",
-    "DRAW-XI"
-  ],
-  "node_layers": [
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "7",
-    "8"
-  ],
-  "dim_layers": [
-    "2",
-    "3",
-    "DIM"
-  ],
-  "text_layers": [
-    "0"
-  ],
-  "bar_id_patterns": [
-    "\\d{1,5}",
-    "[A-Za-z]{0,3}\\d{1,5}",
-    "\\d{1,5}-\\d{1,5}",
-    "M\\d{4}",
-    "[GSB]\\d{1,4}"
-  ],
-  "cross_file_views": {
-    "project": "35A2-JC2",
-    "sheets": {
-      "front": "35A2-JC2-05",
-      "side": "35A2-JC2-05"
-    },
-    "infer_side_on_stems": [],
-    "assembly_split_min_gap_ratio": 0.5,
-    "allow_z_peer_y_interpolate": false,
-    "synthetic_side_from_front": false,
-    "view_align": {
-      "35A2-JC2-05:front": {
-        "match_axis": "x",
-        "z_ref": 0.0,
-        "normalize_x": true
-      }
-    },
-    "merge_stems_extra": [
-      "35A2-JC2-06"
-    ]
+ "$comment": "35A2-JC2 overlay：05 册双立面（front+side 全塔），bar 图层 1/4",
+ "bar_layers": [
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "7",
+  "8",
+  "DRAW",
+  "DRAW-XI"
+ ],
+ "node_layers": [
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "7",
+  "8"
+ ],
+ "dim_layers": [
+  "2",
+  "3",
+  "DIM"
+ ],
+ "text_layers": [
+  "0"
+ ],
+ "bar_id_patterns": [
+  "\\d{1,5}",
+  "[A-Za-z]{0,3}\\d{1,5}",
+  "\\d{1,5}-\\d{1,5}",
+  "M\\d{4}",
+  "[GSB]\\d{1,4}"
+ ],
+ "cross_file_views": {
+  "project": "35A2-JC2",
+  "sheets": {
+   "front": "35A2-JC2-05",
+   "side": "35A2-JC2-05"
   },
-  "gusset_auto_anchor": true,
-  "master_bom": "guowang_merged_bom.csv",
-  "enable_module_assembly": true,
-  "module_definitions": "m1_m6",
-  "assembly_demo_z_split": 0.45,
-  "assembly_tol_mm": 5.0,
-  "assembly_interface_tol_mm": 500.0,
-  "enable_4_face_expansion": true,
-  "close_face_intersections": true,
-  "intersection_snap_tol_mm": 30.0,
-  "snap_tol_mm": 80.0,
-  "view_regions": {
-    "35A2-JC2-05": [
-      {
-        "kind": "front",
-        "title": "正立面(塔身段 z0-30000)",
-        "origin": [
-          30112.8,
-          -11923.0
-        ],
-        "region": [
-          30040.0,
-          30185.0,
-          -11940.0,
-          -11624.0
-        ],
-        "axes": [
-          "x",
-          "z"
-        ],
-        "scale_x": 47.58,
-        "scale_y": 100.29,
-        "z_flip": false,
-        "z_axis_up": true,
-        "z_offset": 0.0,
-        "z_span_mm": 30000.0
-      },
-      {
-        "kind": "side",
-        "title": "侧立面(塔身段)",
-        "origin": [
-          30316.5,
-          -11923.0
-        ],
-        "region": [
-          30245.0,
-          30390.0,
-          -11940.0,
-          -11624.0
-        ],
-        "axes": [
-          "x",
-          "z"
-        ],
-        "scale_x": 47.58,
-        "scale_y": 100.29,
-        "z_flip": false,
-        "z_axis_up": true,
-        "z_offset": 0.0,
-        "z_span_mm": 30000.0
-      },
-      {
-        "kind": "front",
-        "title": "正立面(塔头段 z30000-36630)",
-        "origin": [
-          30112.8,
-          -11624.0
-        ],
-        "region": [
-          30040.0,
-          30185.0,
-          -11624.0,
-          -11515.0
-        ],
-        "axes": [
-          "x",
-          "z"
-        ],
-        "scale_x": 47.58,
-        "scale_y": 100.29,
-        "z_flip": false,
-        "z_axis_up": true,
-        "z_offset": 30000.0,
-        "z_span_mm": 6630.0
-      },
-      {
-        "kind": "side",
-        "title": "侧立面(塔头段)",
-        "origin": [
-          30316.5,
-          -11624.0
-        ],
-        "region": [
-          30245.0,
-          30390.0,
-          -11624.0,
-          -11515.0
-        ],
-        "axes": [
-          "x",
-          "z"
-        ],
-        "scale_x": 47.58,
-        "scale_y": 100.29,
-        "z_flip": false,
-        "z_axis_up": true,
-        "z_offset": 30000.0,
-        "z_span_mm": 6630.0
-      }
+  "infer_side_on_stems": [],
+  "assembly_split_min_gap_ratio": 0.5,
+  "allow_z_peer_y_interpolate": false,
+  "synthetic_side_from_front": false,
+  "view_align": {
+   "35A2-JC2-05:front": {
+    "match_axis": "x",
+    "z_ref": 0.0,
+    "normalize_x": true
+   }
+  },
+  "merge_stems_extra": [
+   "35A2-JC2-06"
+  ]
+ },
+ "gusset_auto_anchor": true,
+ "master_bom": "guowang_merged_bom.csv",
+ "enable_module_assembly": true,
+ "module_definitions": "m1_m6",
+ "assembly_demo_z_split": 0.45,
+ "assembly_tol_mm": 5.0,
+ "assembly_interface_tol_mm": 500.0,
+ "enable_4_face_expansion": true,
+ "close_face_intersections": true,
+ "intersection_snap_tol_mm": 30.0,
+ "snap_tol_mm": 80.0,
+ "view_regions": {
+  "35A2-JC2-05": [
+   {
+    "kind": "front",
+    "title": "正立面(塔身段 z0-30000)",
+    "origin": [
+     30112.8,
+     -11923.0
     ],
-    "35A2-JC2-06": [
-      {
-        "kind": "front",
-        "title": "正立面(塔头段 z33600-37500)",
-        "origin": [
-          30372.0,
-          -12635.1
-        ],
-        "region": [
-          30280.0,
-          30420.0,
-          -12640.0,
-          -12360.0
-        ],
-        "axes": [
-          "x",
-          "z"
-        ],
-        "scale_x": 14.5,
-        "scale_y": 14.5,
-        "z_flip": false,
-        "z_axis_up": true,
-        "z_offset": 33625.0,
-        "z_span_mm": 3900.0
-      }
-    ]
-  },
-  "glb_gate_min_bbox_span_mm": 2800.0,
-  "glb_gate_require_front_and_side": true,
-  "glb_gate_min_4face_bars": 50,
-  "glb_gate_max_4face_bars": 6500,
-  "prune_to_largest_component": {
-    "enabled": false
-  },
-  "glb_gate_require_degree1_zero": false,
-  "snap_diagonals": false,
-  "glb_gate_max_degree1": 4,
-  "canonical_tower": {
-    "mod": "/Users/zsn/Downloads/输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)/GIM/35A2/35A2-JC2/35A2-JC2-GIM输出/MOD/35A2-JC2.mod",
-    "gt_json": "examples/gt/35A2-JC2_ground_truth.json"
-  },
-  "use_gt_half_width": false,
-  "min_diag_len_mm": 500.0,
-  "max_stub_len_mm": 400.0,
-  "use_gt_platform_levels": true,
-  "snap_dangling_endpoints": true,
-  "snap_dangling_max_gap_mm": 700.0,
-  "weld_dangling_to_segments": true,
-  "weld_dangling_max_gap_mm": 250.0,
-  "prune_residual_dangling": true,
-  "prune_residual_max_len_mm": 1800.0,
-  "half_width_taper": true,
-  "detect_crossarm_layers": true,
-  "collinear_stitch": true,
-  "collinear_stitch_gap_mm": 400.0,
-  "collinear_stitch_ang_deg": 10.0,
-  "collinear_stitch_min_len_mm": 600.0,
-  "collinear_stitch_max_len_mm": 4500.0,
-  "collinear_stitch_max_segments": 2,
-  "collinear_stitch_max_single_len_mm": 800.0,
-  "collinear_stitch_role_specific": true,
-  "collinear_stitch_platform_tol_mm": 80.0,
-  "collinear_stitch_horiz_z_tol_mm": 80.0,
-  "collinear_stitch_horiz_center_tol_mm": 300.0,
-  "repair_dangling": true,
-  "repair_stub_max_len_mm": 250.0,
-  "repair_weld_max_mm": 350.0,
-  "panel_cross_reconstruct": true,
-  "exact_overlap_dedup": {
-    "35A1-JC1-05": {
-      "tolerance_units": 0.6
-    }
-  },
-  "parametric_base_extrapolation": true,
-  "parametric_base_z_top": 6500.0,
-  "diagonal_topology_reconstruct": true,
-  "diagonal_topology_selection_mode": "p11",
-  "diagonal_topology_sheets": [
-    "35A1-JC1-05",
-    "35A1-JC1-06",
-    "35A1-JC1-07",
-    "35A1-JC1-04"
+    "region": [
+     30040.0,
+     30185.0,
+     -11940.0,
+     -11624.0
+    ],
+    "axes": [
+     "x",
+     "z"
+    ],
+    "scale_x": 47.58,
+    "scale_y": 100.29,
+    "z_flip": false,
+    "z_axis_up": true,
+    "z_offset": 0.0,
+    "z_span_mm": 30000.0
+   },
+   {
+    "kind": "side",
+    "title": "侧立面(塔身段)",
+    "origin": [
+     30316.5,
+     -11923.0
+    ],
+    "region": [
+     30245.0,
+     30390.0,
+     -11940.0,
+     -11624.0
+    ],
+    "axes": [
+     "x",
+     "z"
+    ],
+    "scale_x": 47.58,
+    "scale_y": 100.29,
+    "z_flip": false,
+    "z_axis_up": true,
+    "z_offset": 0.0,
+    "z_span_mm": 30000.0
+   },
+   {
+    "kind": "front",
+    "title": "正立面(塔头段 z30000-36630)",
+    "origin": [
+     30112.8,
+     -11624.0
+    ],
+    "region": [
+     30040.0,
+     30185.0,
+     -11624.0,
+     -11515.0
+    ],
+    "axes": [
+     "x",
+     "z"
+    ],
+    "scale_x": 47.58,
+    "scale_y": 100.29,
+    "z_flip": false,
+    "z_axis_up": true,
+    "z_offset": 30000.0,
+    "z_span_mm": 6630.0
+   },
+   {
+    "kind": "side",
+    "title": "侧立面(塔头段)",
+    "origin": [
+     30316.5,
+     -11624.0
+    ],
+    "region": [
+     30245.0,
+     30390.0,
+     -11624.0,
+     -11515.0
+    ],
+    "axes": [
+     "x",
+     "z"
+    ],
+    "scale_x": 47.58,
+    "scale_y": 100.29,
+    "z_flip": false,
+    "z_axis_up": true,
+    "z_offset": 30000.0,
+    "z_span_mm": 6630.0
+   }
   ],
-  "diagonal_topology_sheet_config": {
-    "35A1-JC1-06": {
-      "z_window": [
-        11000.0,
-        17500.0
-      ],
-      "auto_z_window": false
-    },
-    "35A1-JC1-05": {
-      "auto_z_window": true
-    },
-    "35A1-JC1-07": {
-      "auto_z_window": true,
-      "beat_tol_mm": 520.0
-    },
-    "35A1-JC1-04": {
-      "z_window": [
-        23800.0,
-        31600.0
-      ],
-      "twist_span_lo": 800.0,
-      "fan_enabled": false
-    }
-  },
-  "diagonal_topology_z_window": [
+  "35A2-JC2-06": [
+   {
+    "kind": "front",
+    "title": "正立面(塔头段 z33600-37500)",
+    "origin": [
+     30372.0,
+     -12635.1
+    ],
+    "region": [
+     30280.0,
+     30420.0,
+     -12640.0,
+     -12360.0
+    ],
+    "axes": [
+     "x",
+     "z"
+    ],
+    "scale_x": 14.5,
+    "scale_y": 14.5,
+    "z_flip": false,
+    "z_axis_up": true,
+    "z_offset": 33625.0,
+    "z_span_mm": 3900.0
+   }
+  ]
+ },
+ "glb_gate_min_bbox_span_mm": 2800.0,
+ "glb_gate_require_front_and_side": true,
+ "glb_gate_min_4face_bars": 50,
+ "glb_gate_max_4face_bars": 6500,
+ "prune_to_largest_component": {
+  "enabled": false
+ },
+ "glb_gate_require_degree1_zero": false,
+ "snap_diagonals": false,
+ "glb_gate_max_degree1": 4,
+ "canonical_tower": {
+  "mod": "/Users/zsn/Downloads/输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)/GIM/35A2/35A2-JC2/35A2-JC2-GIM输出/MOD/35A2-JC2.mod",
+  "gt_json": "examples/gt/35A2-JC2_ground_truth.json"
+ },
+ "use_gt_half_width": false,
+ "min_diag_len_mm": 500.0,
+ "max_stub_len_mm": 400.0,
+ "use_gt_platform_levels": true,
+ "snap_dangling_endpoints": true,
+ "snap_dangling_max_gap_mm": 700.0,
+ "weld_dangling_to_segments": true,
+ "weld_dangling_max_gap_mm": 250.0,
+ "prune_residual_dangling": true,
+ "prune_residual_max_len_mm": 1800.0,
+ "half_width_taper": true,
+ "detect_crossarm_layers": true,
+ "collinear_stitch": true,
+ "collinear_stitch_gap_mm": 400.0,
+ "collinear_stitch_ang_deg": 10.0,
+ "collinear_stitch_min_len_mm": 600.0,
+ "collinear_stitch_max_len_mm": 4500.0,
+ "collinear_stitch_max_segments": 2,
+ "collinear_stitch_max_single_len_mm": 800.0,
+ "collinear_stitch_role_specific": true,
+ "collinear_stitch_platform_tol_mm": 80.0,
+ "collinear_stitch_horiz_z_tol_mm": 80.0,
+ "collinear_stitch_horiz_center_tol_mm": 300.0,
+ "repair_dangling": true,
+ "repair_stub_max_len_mm": 250.0,
+ "repair_weld_max_mm": 350.0,
+ "panel_cross_reconstruct": true,
+ "exact_overlap_dedup": {
+  "35A1-JC1-05": {
+   "tolerance_units": 0.6
+  }
+ },
+ "parametric_base_extrapolation": true,
+ "parametric_base_z_top": 6500.0,
+ "diagonal_topology_reconstruct": true,
+ "diagonal_topology_selection_mode": "p11",
+ "diagonal_topology_sheets": [
+  "35A1-JC1-05",
+  "35A1-JC1-06",
+  "35A1-JC1-07",
+  "35A1-JC1-04"
+ ],
+ "diagonal_topology_sheet_config": {
+  "35A1-JC1-06": {
+   "z_window": [
     11000.0,
     17500.0
-  ],
-  "diagonal_topology_twist_faces": [
-    "f",
-    "l",
-    "r"
-  ],
-  "diaphragm_max_z_mm": 30000.0,
-  "diaphragm_crossarm_margin_mm": 200.0,
-  "crossarm_fp_prune": true,
-  "crossarm_zone_z_min_mm": 29000.0,
-  "crossarm_radial_ratio": 1.3,
-  "diaphragm_depth_filter": false,
-  "diaphragm_leg_attach_mm": 500.0,
-  "diaphragm_hw_tol_ratio": 0.35,
-  "centerline_geom_filter": false,
-  "centerline_geom_min_len_mm": 80.0,
-  "centerline_geom_dim_max_len_mm": 450.0,
-  "centerline_geom_dim_angle_tol_deg": 8.0,
-  "centerline_geom_filter_by_stem": {
-    "35A1-JC1-05": {
-      "min_len_mm": 100.0,
-      "dim_max_len_mm": 400.0
-    }
+   ],
+   "auto_z_window": false
   },
-  "multiview_hypothesis_sheets": [],
-  "mllm_confidence_gate_block_inject": false,
-  "centerline_extract": {
-    "_comment": "P1.1/P2 候选中心线提取（A2-pure 主路径）。z 锚点 = 斜杆端点簇跨度（腿范围内）→ z_anchor_[lo|hi]_mm 线性映射。锚点推导：图纸自身证据（面板尺寸链 + 邻段界面 + 接头几何）。06=[13000,17000]、07=[7000,12000]、05=[18000,24000]（GT 节点 18000..24000 + 06 册顶界 17000 接头）、04/02 用 view_region 原锚点（面板链自洽）。40 底段裙部纯斜线无竖腿，暂不启用（裙部由 derived_parametric_base 承担）。",
-    "35A1-JC1-06": {
-      "enabled": true,
-      "z_anchor_lo_mm": 12000.0,
-      "z_anchor_hi_mm": 17000.0
-    },
-    "35A1-JC1-07": {
-      "enabled": true,
-      "z_anchor_lo_mm": 7000.0,
-      "z_anchor_hi_mm": 12000.0
-    },
-    "35A1-JC1-05": {
-      "enabled": true,
-      "z_anchor_lo_mm": 18000.0,
-      "z_anchor_hi_mm": 24000.0
-    },
-    "35A1-JC1-04": {
-      "enabled": true
-    },
-    "35A1-JC1-02": {
-      "enabled": true
-    }
+  "35A1-JC1-05": {
+   "auto_z_window": true
   },
-  "kfan_completion": true,
-  "crossarm_truss_completion": true,
-  "leg_chain_stitch": true,
-  "leg_chain_stitch_gap_mm": 400.0,
-  "leg_chain_stitch_ang_deg": 6.0,
-  "dimension_beat_anchor": {
-    "35A2-JC2-05": {
-      "z_base_mm": 0.0,
-      "enabled": true
-    }
+  "35A1-JC1-07": {
+   "auto_z_window": true,
+   "beat_tol_mm": 520.0
   },
-  "panel_cross_skip_pairs": false,
-  "leg_chain_stitch_break_terminal": true,
-  "terminal_pair_structure": true,
-  "disable_scale_calibration": true
+  "35A1-JC1-04": {
+   "z_window": [
+    23800.0,
+    31600.0
+   ],
+   "twist_span_lo": 800.0,
+   "fan_enabled": false
+  }
+ },
+ "diagonal_topology_z_window": [
+  11000.0,
+  17500.0
+ ],
+ "diagonal_topology_twist_faces": [
+  "f",
+  "l",
+  "r"
+ ],
+ "diaphragm_max_z_mm": 30000.0,
+ "diaphragm_crossarm_margin_mm": 200.0,
+ "crossarm_fp_prune": true,
+ "crossarm_zone_z_min_mm": 29000.0,
+ "crossarm_radial_ratio": 1.3,
+ "diaphragm_depth_filter": false,
+ "diaphragm_leg_attach_mm": 500.0,
+ "diaphragm_hw_tol_ratio": 0.35,
+ "centerline_geom_filter": false,
+ "centerline_geom_min_len_mm": 80.0,
+ "centerline_geom_dim_max_len_mm": 450.0,
+ "centerline_geom_dim_angle_tol_deg": 8.0,
+ "centerline_geom_filter_by_stem": {
+  "35A1-JC1-05": {
+   "min_len_mm": 100.0,
+   "dim_max_len_mm": 400.0
+  }
+ },
+ "multiview_hypothesis_sheets": [],
+ "mllm_confidence_gate_block_inject": false,
+ "centerline_extract": {
+  "_comment": "P1.1/P2 候选中心线提取（A2-pure 主路径）。z 锚点 = 斜杆端点簇跨度（腿范围内）→ z_anchor_[lo|hi]_mm 线性映射。锚点推导：图纸自身证据（面板尺寸链 + 邻段界面 + 接头几何）。06=[13000,17000]、07=[7000,12000]、05=[18000,24000]（GT 节点 18000..24000 + 06 册顶界 17000 接头）、04/02 用 view_region 原锚点（面板链自洽）。40 底段裙部纯斜线无竖腿，暂不启用（裙部由 derived_parametric_base 承担）。",
+  "35A1-JC1-06": {
+   "enabled": true,
+   "z_anchor_lo_mm": 12000.0,
+   "z_anchor_hi_mm": 17000.0
+  },
+  "35A1-JC1-07": {
+   "enabled": true,
+   "z_anchor_lo_mm": 7000.0,
+   "z_anchor_hi_mm": 12000.0
+  },
+  "35A1-JC1-05": {
+   "enabled": true,
+   "z_anchor_lo_mm": 18000.0,
+   "z_anchor_hi_mm": 24000.0
+  },
+  "35A1-JC1-04": {
+   "enabled": true
+  },
+  "35A1-JC1-02": {
+   "enabled": true
+  }
+ },
+ "kfan_completion": true,
+ "crossarm_truss_completion": true,
+ "leg_chain_stitch": true,
+ "leg_chain_stitch_gap_mm": 400.0,
+ "leg_chain_stitch_ang_deg": 6.0,
+ "dimension_beat_anchor": {
+  "35A2-JC2-05": {
+   "z_base_mm": 0.0,
+   "enabled": true
+  }
+ },
+ "panel_cross_skip_pairs": false,
+ "leg_chain_stitch_break_terminal": true,
+ "terminal_pair_structure": true,
+ "disable_scale_calibration": true
 }
