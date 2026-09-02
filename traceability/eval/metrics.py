@@ -1128,6 +1128,12 @@ def _bar_caliber_class(p: Dict[str, Any]) -> str:
                 return "recognized"
     if origin == "collinear_stitch":
         return "reconstructed"
+    # P2.4b：side 视图直读杆提升——侧立面图直接绘制的面（face='l'，
+    # origin='side_direct'）是直读证据：y/z 来自 side 画线，x 来自锥体
+    # 面平面（与 leg_synth 的 x=腿线插值同证据等级）。镜像孪生
+    # （side_mirror）仍是重建层。
+    if origin == "side_direct" and is_recognized_bar(p):
+        return "recognized"
     face = p.get("face")
     if (is_recognized_bar(p) and origin in ("", "dxf_geom")
             and face in (None, "f")):

@@ -1303,6 +1303,95 @@ def merge_view_bars(
         if c.kind in _KEEP_KINDS:
             keep_components[cid] = c
 
+    # ---- P2.4b side 直读冻结（freeze-only，零共享态修改）----
+    # side 视图画线是 l/r 面 GT 杆的唯一直读证据（front 投影结构性退化为
+    # 竖线/点）。把「两端点 y/z 均已解算」的 side 杆几何冻结到
+    # drawing_file.side_reads，供管线末端（四面展开之后）以全新组件注入：
+    #   * x 已解算（front_side_z_pair 双向解）→ x 原值；
+    #   * x 未解算 → x = -hw(z)（直读面 l），镜像孪生 +hw（面 r）。
+    # 只冻结、不改动任何现有组件——避免污染四面展开的输入分布。
+    _side_reads: List[Dict[str, Any]] = []
+    _hw_freeze = None
+    try:
+        from ..solve.tower_geometry import fit_tower_half_width_from_face
+        _fr_nodes = {}
+        for _ncid, _nc in model.components.items():
+            if _nc.kind != "tower_node":
+                continue
+            _np = _nc.properties
+            if _np.get("view_type") != "front":
+                continue
+            if any(_np.get(_a) is None for _a in ("x", "y", "z")):
+                continue
+            _fr_nodes[_ncid] = (float(_np["x"]), float(_np["y"]), float(_np["z"]))
+        _fr_bars = [
+            {"from": _bc.properties.get("from_node"),
+             "to": _bc.properties.get("to_node")}
+            for _, _bc in _tower_bars(model)
+            if _bc.properties.get("view_type") == "front"
+        ]
+        if _fr_nodes and _fr_bars:
+            _hw_freeze = fit_tower_half_width_from_face(
+                _fr_nodes, _fr_bars, method="taper")
+    except Exception:
+        _hw_freeze = None
+    for _cid, _c in model.components.items():
+        if _c.kind != "tower_bar" or _c.properties.get("view_type") != "side":
+            continue
+        _fn, _tn = _c.properties.get("from_node"), _c.properties.get("to_node")
+        _nf = model.components.get(_fn) if _fn else None
+        _nt = model.components.get(_tn) if _tn else None
+        if _nf is None or _nt is None or _nf is _nt:
+            continue
+        _pf, _pt = _nf.properties, _nt.properties
+        # P2.4b-2：未配对 side 节点的视图域求解——_normalize_segment_view_y
+        # 已把 side 节点 view_y 原地改写为全局 Z（同 front 同域，节拍/锚
+        # 分段线性），view_x 即 y 深度轴（与 z_pair 的 yp 同一变量，expand=0
+        # 时 y'=yp）。据此 z=view_y、y=view_x 可独立解算，无需 front 配对。
+        for _pp in (_pf, _pt):
+            if _pp.get("z") is None and _pp.get("view_y") is not None:
+                _pp["z"] = round(float(_pp["view_y"]), 2)
+            if _pp.get("y") is None and _pp.get("view_x") is not None:
+                _pp["y"] = round(float(_pp["view_x"]), 2)
+        if any(_pf.get(_a) is None for _a in ("y", "z")) or \
+           any(_pt.get(_a) is None for _a in ("y", "z")):
+            continue
+        _z1, _z2 = float(_pf["z"]), float(_pt["z"])
+        _y1, _y2 = float(_pf["y"]), float(_pt["y"])
+        _x1, _x2 = _pf.get("x"), _pt.get("x")
+        _x_src = "z_pair"
+        if _x1 is None or _x2 is None:
+            if _hw_freeze is None:
+                continue
+            try:
+                _h1, _h2 = float(_hw_freeze(_z1)), float(_hw_freeze(_z2))
+            except Exception:
+                continue
+            if _h1 < 50 or _h2 < 50:
+                continue
+            _x1, _x2 = -_h1, -_h2
+            _x_src = "face_plane"
+        _side_reads.append({
+            "from": [round(float(_x1), 2), round(_y1, 2), round(_z1, 2)],
+            "to": [round(float(_x2), 2), round(_y2, 2), round(_z2, 2)],
+            "x_source": _x_src,
+            "bar_id": _c.properties.get("bar_id"),
+            "section": _c.properties.get("section"),
+            "source_file": _c.properties.get("source_file") or _c.properties.get("drawing_view"),
+            "handle": _c.properties.get("handle"),
+            "geometry_origin": _c.properties.get("geometry_origin"),
+            "geometry_class": _c.properties.get("geometry_class"),
+            "source_extractor": _c.properties.get("source_extractor"),
+            "confidence": (_c.source.confidence if _c.source else None) or 0.5,
+            "reference": (_c.source.reference if _c.source else None) or "",
+        })
+    if _side_reads:
+        _dfz = model.components.get("drawing_file")
+        if _dfz is not None:
+            _dfz.properties["side_reads"] = _side_reads
+            _dfz.properties["side_reads_n"] = len(_side_reads)
+            _dfz.properties["side_reads_hw_fit"] = _hw_freeze is not None
+
     # P2-6 跨视图身份：删除非主视图投影前，把它们的二维投影来源挂到主物理杆件。
     # 严禁静默丢弃 side/plan/detail 投影——每条投影必须要么挂到匹配的主杆件
     # （projection_refs），要么进入 unresolved_projection_refs 供人工复核。
@@ -1533,3 +1622,102 @@ def _stitch_multisheet_boundary_nodes(
 
 # P1 拆分：四向镜像展开已迁到 tower_symmetry，这里 re-import 保留旧名。
 from .tower_symmetry import expand_4_face_symmetry_model  # noqa: F401,E402
+
+
+# --------------------------------------------------------------------------- #
+# P2.4b side 直读注入（四面展开之后执行）
+# --------------------------------------------------------------------------- #
+
+def apply_side_reads(model: "EngineeringModel") -> int:
+    """把 merge_view_bars 冻结的 side_reads 注入为全新 3D 组件。
+
+    在 expand_4_face_symmetry_model 之后调用（管线末端、dedup 之前）：
+    每条 side_read 生成 face='l' 直读杆（geometry_origin='side_direct'，
+    x 为 z_pair 解算值或 -hw(z) 面平面）+ face='r' 镜像孪生
+    （side_mirror，reconstructed 层）。节点按坐标去重（容差 1mm），
+    全新 id 前缀 sidegen__，与既有组件零共享态。
+    """
+    df = model.components.get("drawing_file")
+    if df is None:
+        return 0
+    reads = df.properties.get("side_reads") or []
+    if not reads:
+        return 0
+    from ..model import Component
+
+    def _mknode_key(p):
+        return (round(float(p[0]), 1), round(float(p[1]), 1), round(float(p[2]), 1))
+
+    node_map: Dict[Tuple[float, float, float], str] = {}
+    made = 0
+    for i, r in enumerate(reads):
+        try:
+            p1, p2 = list(r["from"]), list(r["to"])
+            x1, y1, z1 = float(p1[0]), float(p1[1]), float(p1[2])
+            x2, y2, z2 = float(p2[0]), float(p2[1]), float(p2[2])
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        # 同一物理杆两个 3D 形态：l 面直读（x 原值/面平面）与 r 面镜像
+        for face, m, origin, cls in (
+            ("l", 1.0, "side_direct", "recognized"),
+            ("r", -1.0, "side_mirror", "reconstructed"),
+        ):
+            # 镜像：x 翻转（直读面 l 的 x 已含符号；镜像面 = x 取反）
+            qx1, qx2 = x1 * m if face == "r" else x1, x2 * m if face == "r" else x2
+            nids = []
+            for j, (qx, qy, qz) in enumerate(((qx1, y1, z1), (qx2, y2, z2))):
+                key = _mknode_key((qx, qy, qz))
+                nid = node_map.get(key)
+                if nid is None:
+                    nid = f"sidegen__n{len(node_map):05d}"
+                    node_map[key] = nid
+                    model.add_component(Component(
+                        id=nid, name=f"[sidegen] n{len(node_map)}",
+                        kind="tower_node",
+                        source=None,
+                        properties={
+                            "x": round(qx, 2), "y": round(qy, 2), "z": round(qz, 2),
+                            "node_id": nid,
+                            "view_type": "side",
+                            "face": face,
+                            "solve_status": "solved",
+                            "solve_method": "side_read_inject",
+                            "axis_origin": {"x": "side_read", "y": "side_view",
+                                            "z": "side_view"},
+                        },
+                        tags=["side_read"],
+                    ))
+                nids.append(nid)
+            if nids[0] == nids[1]:
+                continue
+            bid = r.get("bar_id")
+            if not bid or str(bid).startswith("UNLABELED"):
+                bid = f"UNLABELED_SIDE{i:04d}"
+            model.add_component(Component(
+                id=f"sidegen__b{i:04d}_{face}",
+                name=f"[sidegen] {face} bar {i}",
+                kind="tower_bar",
+                source=None,
+                properties={
+                    "bar_id": bid,
+                    "section": r.get("section"),
+                    "from_node": nids[0],
+                    "to_node": nids[1],
+                    "view_type": "side",
+                    "face": face,
+                    "geometry_origin": origin,
+                    "geometry_class": cls,
+                    "source_extractor": r.get("source_extractor") or "centerline_extract",
+                    "source_file": r.get("source_file"),
+                    "handle": r.get("handle"),
+                    "side_promoted": True,
+                    "x_source": r.get("x_source"),
+                    "confidence": r.get("confidence") or 0.5,
+                    "length_mm_3d": round(
+                        ((qx1 - qx2) ** 2 + (y1 - y2) ** 2 + (z1 - z2) ** 2) ** 0.5, 2),
+                },
+                tags=["side_read"],
+            ))
+            made += 1
+    df.properties["side_reads_applied"] = made
+    return made

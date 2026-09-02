@@ -548,6 +548,21 @@ def deliver_project(
     # 展开会重写 tower_node / tower_bar 组件；BOM / 节点板 / 图纸上下文保留。
     if merged_model is not None and ov.get("enable_4_face_expansion"):
         expand_4_face_symmetry_model(merged_model, layer_map_path)
+        # P2.4b（JC1）：side 直读杆注入——merge_view_bars 冻结的 side_reads
+        # （side 画线 y/z + 面平面 x）在此处以全新组件落地：face='l' 直读
+        # （side_direct→recognized）+ face='r' 镜像孪生（side_mirror→
+        # reconstructed）。overlay 显式关闭（side_read_promotion=false）才跳过。
+        if ov.get("side_read_promotion", True):
+            try:
+                from ..intake.tower_views import apply_side_reads
+                _n_side = apply_side_reads(merged_model)
+                _dfp = merged_model.components.get("drawing_file")
+                if _dfp is not None and _n_side:
+                    _dfp.properties.setdefault(
+                        "side_read_promotion_report", {"injected": _n_side})
+            except Exception:
+                # 注入失败不阻断交付；side_reads 冻结证据仍在 drawing_file
+                pass
         # P3.20（ZC1）：同几何杆去重。多册同段重复出图 + 四面镜像展开
         # 产生完全相同几何的多份拷贝，Hungarian 1:1 评测下互抢 FP
         # （ZC1 实测 58% 重复）。overlay 显式开启才执行（默认关闭，

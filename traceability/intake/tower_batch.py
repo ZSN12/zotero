@@ -379,6 +379,21 @@ def cross_file_batch(
         from .tower_symmetry import expand_4_face_symmetry_model
         expanded = expand_4_face_symmetry_model(merged, overlay=layer_map_path)
         merged = expanded if expanded is not None else merged
+        # P2.4b：side 直读杆注入（expand 之后、save 之前；与 delivery.py
+        # 同一开关 side_read_promotion，默认开）。
+        try:
+            from .tower_spec import load_tower_spec
+            _spec = load_tower_spec(layer_map_path) if layer_map_path else {}
+        except Exception:
+            _spec = {}
+        if _spec.get("side_read_promotion", True):
+            try:
+                from .tower_views import apply_side_reads
+                _n_side = apply_side_reads(merged)
+                if _n_side:
+                    merge_report["side_reads_injected"] = _n_side
+            except Exception:
+                pass
         model_path = (Path(out_dir) / "model.json").as_posix()
         save_model(merged, model_path)
         merge_report["view_mode"] = (
