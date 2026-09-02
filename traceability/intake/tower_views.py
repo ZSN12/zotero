@@ -1660,6 +1660,265 @@ from .tower_symmetry import expand_4_face_symmetry_model  # noqa: F401,E402
 # P2.4b side 直读注入（四面展开之后执行）
 # --------------------------------------------------------------------------- #
 
+def side_horiz_synth(
+    model: "EngineeringModel",
+    overlay: Optional[str | Path | dict],
+    dxf_path_by_stem: Dict[str, str],
+) -> int:
+    """P2.4j：侧立面横杆直读通道（y_member 捕获）。
+
+    体段侧立面（04/05/06/07 册）把横杆画成全跨/半跨水平线（实测 05 册
+    z=19000：全跨 2646mm 双线 + 半跨 1204mm×2 对），但通用管线节点聚类
+    把长线劈成 96~367mm 碎片（每一根交叉斜线端点都成节点），y_member GT
+    是全跨 [-hw,+hw] / 半跨 [±hw,0] 杆——碎片恒失配。
+
+    本通道绕过节点聚类，直接读侧立面 region 的水平线：
+      * 双线合并（平行对 ≤8u → 中心线）；
+      * 图纸 y → z 用 dimension_beat_anchor 锚链（与 side 节点归一化同链，
+        05 实测侧读 z 簇与层位对齐已验证该映射可用）；
+      * z 吸附 beam_marker_levels_mm（±300mm，同 P2.4b-3 纪律），吸附
+        失败的水平线丢弃（非层位处的线是标注/尺寸线）；
+      * y 深度吸附半宽锥：全跨线 → [-hw(z), +hw(z)]；半跨线（端点在
+        中心附近）→ [±hw(z), 0]。半宽锥由 front 腿节点拟合（taper，
+        fit_tower_half_width_from_face），图纸证据，零 GT 注入；
+      * 冻结为 side_reads 附加条目（x=-hw(z) face_plane 语义），由
+        apply_side_reads 注入为 side_direct 3D 组件（纯口径 recognized）。
+
+    开关：overlay 顶层 side_horiz_synth（默认关）。返回追加的读取数。
+    """
+    try:
+        import ezdxf
+        import json as _json
+        from .centerline_extract import collect_segments, seg_len, _overlay_cfg
+        from .tower_spec import view_regions as _view_regions
+    except Exception:
+        return 0
+    try:
+        from ..solve.tower_geometry import fit_tower_half_width_from_face
+    except Exception:
+        return 0
+    import math as _m
+
+    # 1) 开关
+    try:
+        spec = overlay if isinstance(overlay, dict) else (
+            _json.loads(Path(overlay).read_text(encoding="utf-8"))
+            if overlay and Path(overlay).exists() else {})
+    except Exception:
+        return 0
+    if not spec.get("side_horiz_synth"):
+        return 0
+
+    # 2) 半宽锥（front 节点拟合；与 merge_view_bars side_reads 同法）
+    _fr_nodes = {}
+    for _ncid, _nc in model.components.items():
+        if _nc.kind != "tower_node":
+            continue
+        _np = _nc.properties
+        if _np.get("view_type") != "front":
+            continue
+        if any(_np.get(_a) is None for _a in ("x", "y", "z")):
+            continue
+        _fr_nodes[_ncid] = (float(_np["x"]), float(_np["y"]), float(_np["z"]))
+    _fr_bars = [
+        {"from": _bc.properties.get("from_node"),
+         "to": _bc.properties.get("to_node")}
+        for _, _bc in _tower_bars(model)
+        if _bc.properties.get("view_type") == "front"
+    ]
+    if _fr_nodes and _fr_bars:
+        try:
+            hw_fit = fit_tower_half_width_from_face(_fr_nodes, _fr_bars, method="taper")
+        except Exception:
+            hw_fit = None
+    else:
+        hw_fit = None
+    if hw_fit is None:
+        return 0
+
+    df = model.components.get("drawing_file")
+    if df is None:
+        return 0
+    reads = df.properties.setdefault("side_reads", [])
+
+    added = 0
+    for stem, dxf_path in sorted(dxf_path_by_stem.items()):
+        # 该册必须显式开（体段册逐一启用，防 02 头部已直读区重复）
+        _ce = _overlay_cfg(stem, overlay) or {}
+        if not _ce.get("side_horiz_synth"):
+            continue
+        # region 来源：专用键 side_horiz_synth_region（bbox/origin/scale_x），
+        # 与 view_regions 解耦——常规提取不会再产生碎片 side_direct FP，
+        # 本通道自读 DXF。
+        _sr = _ce.get("side_horiz_synth_region") or {}
+        if not _sr.get("region"):
+            continue
+        side_region = {
+            "region": _sr["region"],
+            "origin": _sr.get("origin") or [(_sr["region"][0] + _sr["region"][1]) / 2.0,
+                                            _sr["region"][2]],
+            "scale_x": _sr.get("scale_x") or 20.0,
+        }
+        if not dxf_path or not Path(dxf_path).exists():
+            continue
+        bbox = tuple(float(v) for v in side_region["region"])
+        x_lo, x_hi, y_lo, y_hi = bbox
+        # 3) 水平线收集（≥40u=800mm，|dy|<1.2u）
+        try:
+            segs = [s for s in collect_segments(dxf_path, bbox)
+                    if seg_len(s) >= 3 and abs(s[3] - s[1]) < 1.2
+                    and abs(s[2] - s[0]) >= 40.0]
+        except Exception:
+            continue
+        if not segs:
+            continue
+        # 4) 双线合并：同 y（±4u）近平行对 → 中心
+        merged: List[Tuple[float, float, float]] = []  # (yc, x1, x2)
+        used = [False] * len(segs)
+        for i, si in enumerate(segs):
+            if used[i]:
+                continue
+            yc, a1, a2 = (si[1] + si[3]) / 2, min(si[0], si[2]), max(si[0], si[2])
+            for j in range(i + 1, len(segs)):
+                if used[j]:
+                    continue
+                sj = segs[j]
+                yj = (sj[1] + sj[3]) / 2
+                if abs(yj - yc) <= 4.0:
+                    b1, b2 = min(sj[0], sj[2]), max(sj[0], sj[2])
+                    ov = min(a2, b2) - max(a1, b1)
+                    if ov >= 0.8 * min(a2 - a1, b2 - b1):
+                        used[i] = used[j] = True
+                        yc = (yc + yj) / 2
+                        a1, a2 = min(a1, b1), max(a2, b2)
+                        break
+            merged.append((yc, a1, a2))
+        if not merged:
+            continue
+        # 5) y→z 映射：优先专用 z_anchors（内容锚定，体段侧立面实测
+        # region 边界含杂线、beat 链漂移 ±300mm）；缺省回落 beat 链。
+        _anchors = _sr.get("z_anchors") or []
+        if len(_anchors) >= 2:
+            pairs = sorted((float(a[0]), float(a[1])) for a in _anchors)
+        else:
+            try:
+                from .tower_dxf import dimension_beat_anchors as _dba
+                import ezdxf as _ez
+                _doc = _ez.readfile(dxf_path)
+                _bcfg = (spec.get("dimension_beat_anchor") or {}).get(stem) or {}
+                ba = _dba(
+                    _doc.modelspace(), side_region,
+                    float(_bcfg.get("z_base_mm", 0) or 0),
+                    beat_min_mm=float(_bcfg.get("beat_min_mm", 350) or 350),
+                    beat_max_mm=float(_bcfg.get("beat_max_mm", 800) or 800),
+                    mode=str(_bcfg.get("mode", "beats")),
+                    z_span_mm=tuple(_bcfg.get("z_span_mm") or ())
+                    if _bcfg.get("z_span_mm") else None,
+                )
+            except Exception:
+                ba = None
+            if not ba or not ba.get("y_draw") or len(ba.get("z") or []) < 2:
+                continue
+            pairs = sorted(zip((float(v) for v in ba["y_draw"]),
+                               (float(v) for v in ba["z"])))
+
+        def _z_of(u_y: float) -> Optional[float]:
+            if u_y <= pairs[0][0]:
+                (y0, z0), (y1, z1) = pairs[0], pairs[1]
+            elif u_y >= pairs[-1][0]:
+                (y0, z0), (y1, z1) = pairs[-2], pairs[-1]
+            else:
+                (y0, z0), (y1, z1) = pairs[0], pairs[1]
+                for i in range(len(pairs) - 1):
+                    if pairs[i][0] <= u_y <= pairs[i + 1][0]:
+                        (y0, z0), (y1, z1) = pairs[i], pairs[i + 1]
+                        break
+            if y1 == y0:
+                return z0
+            return z0 + (u_y - y0) / (y1 - y0) * (z1 - z0)
+
+        levels = [float(v) for v in (_ce.get("beam_marker_levels_mm") or [])]
+        # 6) 生成 y_member 读取
+        for yc, a1, a2 in merged:
+            z_raw = _z_of(yc)
+            if z_raw is None:
+                continue
+            if levels:
+                z_snap = min(levels, key=lambda v: abs(v - z_raw))
+                if abs(z_snap - z_raw) > 300.0:
+                    continue  # 非层位 → 标注线，弃
+            else:
+                z_snap = round(z_raw)
+            try:
+                hw = float(hw_fit(z_snap))
+            except Exception:
+                continue
+            if hw < 100 or hw > 5000:
+                continue
+            # 深度判定：图纸 x 轴（region 内）→ 深度 mm（相对 origin x）
+            ox = float(side_region["origin"][0])
+            sc = float(side_region.get("scale_x") or 20.0)
+            d1, d2 = (a1 - ox) * sc, (a2 - ox) * sc
+            lo_d, hi_d = min(d1, d2), max(d1, d2)
+            span = hi_d - lo_d
+            if abs(span - 2 * hw) <= max(400.0, 0.25 * hw):
+                # 全跨画线按 GT 拓扑拆两根半跨（层位横杆以半跨构件为主）
+                _spans_add = [(-hw, 0.0), (0.0, hw)]
+                for _sy1, _sy2 in _spans_add:
+                    _key = (round(_sy1), round(_sy2), round(z_snap))
+                    if any(
+                        (round(float(r["from"][1])), round(float(r["to"][1])),
+                         round(float(r["from"][2]))) == _key
+                        for r in reads if isinstance(r, dict) and r.get("from")
+                    ):
+                        continue
+                    reads.append({
+                        "from": [round(-hw, 2), round(float(_sy1), 2), round(float(z_snap), 2)],
+                        "to": [round(-hw, 2), round(float(_sy2), 2), round(float(z_snap), 2)],
+                        "x_source": "face_plane", "z_snapped": True, "bar_id": None,
+                        "section": None, "source_file": stem, "handle": None,
+                        "geometry_origin": "side_horiz_synth",
+                        "geometry_class": "recognized",
+                        "source_extractor": "centerline_extract",
+                        "confidence": 0.5, "reference": "side_horiz_synth",
+                    })
+                    added += 1
+                continue
+            elif abs(span - hw) <= max(350.0, 0.25 * hw) and abs(lo_d) <= max(400.0, 0.3 * hw):
+                y1r, y2r = 0, hw            # 半跨（中心→+hw）
+            elif abs(span - hw) <= max(350.0, 0.25 * hw) and abs(hi_d) <= max(400.0, 0.3 * hw):
+                y1r, y2r = -hw, 0           # 半跨（-hw→中心）
+            else:
+                continue  # 跨度不合半宽拓扑 → 非横杆线，弃
+            # 去重（同 (y1,y2,z) 已有读取则跳过）
+            key = (round(y1r), round(y2r), round(z_snap))
+            if any(
+                (round(float(r["from"][1])), round(float(r["to"][1])),
+                 round(float(r["from"][2]))) == key
+                for r in reads if isinstance(r, dict) and r.get("from")
+            ):
+                continue
+            reads.append({
+                "from": [round(-hw, 2), round(float(y1r), 2), round(float(z_snap), 2)],
+                "to": [round(-hw, 2), round(float(y2r), 2), round(float(z_snap), 2)],
+                "x_source": "face_plane",
+                "z_snapped": True,
+                "bar_id": None,
+                "section": None,
+                "source_file": stem,
+                "handle": None,
+                "geometry_origin": "side_horiz_synth",
+                "geometry_class": "recognized",
+                "source_extractor": "centerline_extract",
+                "confidence": 0.5,
+                "reference": "side_horiz_synth",
+            })
+            added += 1
+    if added:
+        df.properties["side_reads_n"] = len(reads)
+    return added
+
+
 def apply_side_reads(model: "EngineeringModel") -> int:
     """把 merge_view_bars 冻结的 side_reads 注入为全新 3D 组件。
 

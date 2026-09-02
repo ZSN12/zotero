@@ -376,6 +376,23 @@ def cross_file_batch(
             k: v for k, v in seg_gate.items() if k != "removed_ids"
         }
         merge_report["segment_gate_removed_ids"] = seg_gate["removed_ids"]
+        # P2.4j：侧立面横杆直读（side_horiz_synth）——在四面展开前追加
+        # （展开会重写 front 节点为四面镜像节点，hw 锥拟合需用展开前节点）。
+        try:
+            from .tower_views import side_horiz_synth
+            _dxf_by_stem = {}
+            for _dp in dxf_paths:
+                try:
+                    _st = Path(_dp).stem
+                    _dxf_by_stem[_st] = str(_dp)
+                except Exception:
+                    pass
+            if _dxf_by_stem:
+                _n_h = side_horiz_synth(merged, layer_map_path, _dxf_by_stem)
+                if _n_h:
+                    merge_report["side_horiz_synth"] = _n_h
+        except Exception:
+            pass
         from .tower_symmetry import expand_4_face_symmetry_model
         expanded = expand_4_face_symmetry_model(merged, overlay=layer_map_path)
         merged = expanded if expanded is not None else merged

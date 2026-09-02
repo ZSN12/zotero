@@ -1334,7 +1334,21 @@
     ]
    ],
    "diag_reanchor": true,
-   "diag_x2k": true
+   "diag_x2k": true,
+   "side_horiz_synth": false,
+   "side_horiz_synth_region": {
+    "region": [
+     34800.0,
+     34950.0,
+     -10700.0,
+     -9800.0
+    ],
+    "origin": [
+     34876.0,
+     -10395.0
+    ],
+    "scale_x": 20.0
+   }
   },
   "35A1-JC1-07": {
    "enabled": true,
@@ -1371,7 +1385,31 @@
      11500
     ]
    ],
-   "diag_reanchor": true
+   "diag_reanchor": true,
+   "side_horiz_synth": true,
+   "side_horiz_synth_region": {
+    "region": [
+     34610.0,
+     34805.0,
+     -11285.0,
+     -10910.0
+    ],
+    "origin": [
+     34688.0,
+     -11276.0
+    ],
+    "scale_x": 20.0,
+    "z_anchors": [
+     [
+      -11264.0,
+      6500.0
+     ],
+     [
+      -11033.0,
+      11500.0
+     ]
+    ]
+   }
   },
   "35A1-JC1-05": {
    "enabled": true,
@@ -1446,7 +1484,35 @@
    "_comment_leg_synth": "P2.2 扩展到 05 册（2026-09-04）：腿杆层位重参数化，跨型端点 z-only 设计常数，x 全部来自图纸腿链插值（taper_legs 5 条覆盖 y -9917.5..-9540.7）。起点 <18000 的跨型超出腿链覆盖（≤15u 外推限）自动跳过，仅作文档。",
    "diag_reanchor": true,
    "diag_subdivide": true,
-   "diag_complete": false
+   "diag_complete": false,
+   "side_horiz_synth": true,
+   "side_horiz_synth_region": {
+    "region": [
+     34600.0,
+     34870.0,
+     -9922.0,
+     -9538.0
+    ],
+    "origin": [
+     34735.0,
+     -9917.54
+    ],
+    "scale_x": 20.0,
+    "z_anchors": [
+     [
+      -9868.0,
+      17000.0
+     ],
+     [
+      -9802.0,
+      19000.0
+     ],
+     [
+      -9736.0,
+      21000.0
+     ]
+    ]
+   }
   },
   "35A1-JC1-04": {
    "enabled": true,
@@ -1485,7 +1551,31 @@
      30000
     ]
    ],
-   "diag_reanchor": true
+   "diag_reanchor": true,
+   "side_horiz_synth": true,
+   "side_horiz_synth_region": {
+    "region": [
+     34570.0,
+     34775.0,
+     -9130.0,
+     -8710.0
+    ],
+    "origin": [
+     34672.0,
+     -9105.0
+    ],
+    "scale_x": 20.0,
+    "z_anchors": [
+     [
+      -9047.0,
+      24000.0
+     ],
+     [
+      -8759.0,
+      30000.0
+     ]
+    ]
+   }
   },
   "35A1-JC1-02": {
    "enabled": true,
@@ -1600,5 +1690,6 @@
  },
  "panel_cross_skip_pairs": false,
  "leg_chain_stitch_break_terminal": true,
- "terminal_pair_structure": true
+ "terminal_pair_structure": true,
+ "side_horiz_synth": true
 }

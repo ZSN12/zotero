@@ -547,6 +547,24 @@ def deliver_project(
     # Phase 2：单立面 -> 四面封闭空间网架（overlay 开启时自动展开）。
     # 展开会重写 tower_node / tower_bar 组件；BOM / 节点板 / 图纸上下文保留。
     if merged_model is not None and ov.get("enable_4_face_expansion"):
+        # P2.4j：侧立面横杆直读（side_horiz_synth）——在四面展开前追加
+        # （展开会重写 front 节点为四面镜像节点，hw 锥拟合需用展开前节点）。
+        try:
+            from ..intake.tower_views import side_horiz_synth
+            _dxf_by_stem = {}
+            for _base in (input_dir, input_dir / "_dxf_scope"):
+                if _base.exists():
+                    for _dp in sorted(_base.glob("*.dxf")):
+                        _dxf_by_stem.setdefault(_dp.stem, str(_dp))
+            if _dxf_by_stem:
+                _n_h = side_horiz_synth(merged_model, layer_map_path, _dxf_by_stem)
+                if _n_h:
+                    _dfh = merged_model.components.get("drawing_file")
+                    if _dfh is not None:
+                        _dfh.properties.setdefault(
+                            "side_horiz_synth_report", {"added": _n_h})
+        except Exception:
+            pass
         expand_4_face_symmetry_model(merged_model, layer_map_path)
         # P2.4b（JC1）：side 直读杆注入——merge_view_bars 冻结的 side_reads
         # （side 画线 y/z + 面平面 x）在此处以全新组件落地：face='l' 直读
