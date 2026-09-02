@@ -84,6 +84,17 @@ def main() -> int:
     full_front = _pick_tol(cal.get("full") or {}, args.tol)
     dual_pure_row = (dual_cal.get("pure_dxf") or {}).get("sweep") or []
     dual_pure = dual_pure_row[0] if dual_pure_row else {}
+    # P2.5（2026-09-04 双视 pure 口径修正）：A2-dual-view-pure 此前取
+    # eval_a2_dual_caliber 的 front-only pure——名字带 dual 实则单视，
+    # 系统性低估「任一立面直读」能力（l/r 面斜材只在 side 剖面图绘制，
+    # front 结构性不可见）。改为 eval_a2_dual_view 的 pure 层（front∪
+    # side 杆粒度并集，与 A2-dual-view-reconstructed 同构同纪律：
+    # 仅 recognized 类入池，GT 杆任一视图匹配即召回，cid 去重计 FP）。
+    # 实测（legsynth11）：80→111 TP（+31，全部来自 side 直读的 l/r 面
+    # 杆），P 24.8%→32.5%（并集后 cid 去重 FP 同步下降）。
+    dual_pure_union_row = (((dual_view.get("calibers") or {}).get("pure") or {})
+                           .get("sweep") or [])
+    dual_pure_union = dual_pure_union_row[0] if dual_pure_union_row else {}
     full_sweep = ((dual_view.get("calibers") or {}).get("full") or {}).get("sweep") or []
     dual_full = full_sweep[0] if full_sweep else {}
 
@@ -95,10 +106,11 @@ def main() -> int:
             "R_pct": round(100 * float(front_pure.get("recall", 0)), 1),
         },
         "A2-dual-view-pure": {
-            "TP": dual_pure.get("tp", 0),
-            "FP": dual_pure.get("fp", 0),
-            "P_pct": round(100 * float(dual_pure.get("precision", 0)), 1),
-            "R_pct": round(100 * float(dual_pure.get("recall", 0)), 1),
+            "TP": dual_pure_union.get("tp", 0),
+            "FP": dual_pure_union.get("fp", 0),
+            "P_pct": round(100 * float(dual_pure_union.get("precision", 0)), 1),
+            "R_pct": round(100 * float(dual_pure_union.get("recall", 0)), 1),
+            "note": "front∪side 杆粒度并集、仅 recognized 入池（对外主口径）",
         },
         "A2-dual-view-reconstructed": {
             "TP": dual_full.get("tp", 0),
