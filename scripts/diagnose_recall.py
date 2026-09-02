@@ -358,6 +358,26 @@ def segment_gate(gt, model, segment, caliber, view, tol, gate_pct, all_window=Fa
     lo = min(_zspan(seg)[0] for seg in sheet_bars)
     hi = max(_zspan(seg)[1] for seg in sheet_bars)
 
+    # 2026-09-04 窗口口径修正：数据驱动窗口（模型杆 z min/max）随杆分类
+    # 变化抖动——06 册实测三次跑批窗口 [11406,17026]→[11855,17026]→
+    # [12012,16905]，末次因模型腿杆顶点只到 16905，把 GT 顶段（触 17000）
+    # 的腿杆全部踢出分母，指标虚高、门禁不可回归。改为优先用 overlay
+    # 模块标高带（z_offset + z_span_mm，与 eval_segment_2d.py 的 SEGMENT_Z
+    # 同语义），数据驱动只兜底。
+    try:
+        _ov = Path(__file__).resolve().parent.parent / \
+            "examples/external/guowang_35A1/layer_overlay.json"
+        if _ov.exists():
+            _ovd = json.loads(_ov.read_text(encoding="utf-8"))
+            _stem = f"35A1-JC1-{seg_code}"
+            for _r in (_ovd.get("view_regions") or {}).get(_stem, []):
+                _zo, _zs = _r.get("z_offset"), _r.get("z_span_mm")
+                if _zo is not None and _zs is not None:
+                    lo, hi = float(_zo), float(_zo) + float(_zs)
+                    break
+    except Exception:
+        pass
+
     # Phase 1 诊断发现：z_mid 落窗的 GT 会混入跨模块边界的杆（06 窗实测
     # 200 根里 84 根 z 15000→19000 跨入 05 册）。跨模块杆不可能是本册图纸
     # 的产出，按 z_mid 子集评召回会把「跨册杆」算成本册 FN，指标失真。

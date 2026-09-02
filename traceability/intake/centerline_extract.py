@@ -617,6 +617,7 @@ def extract_centerline_drawing_segments(
     # DIMENSION 节拍锚点给出完整面板边界层——每节拍=一节间边界=横杆层
     # （GT 14000↔beat 14050、16000↔beat 16130 均在容差内）。锚点
     # y_draw 即图纸单位层位 y。
+    _ba: Optional[Dict[str, Any]] = None
     try:
         from .tower_spec import dimension_beat_anchor_config
         _beat_cfg = dimension_beat_anchor_config(stem, overlay=overlay)
@@ -637,6 +638,49 @@ def extract_centerline_drawing_segments(
                     if not any(abs(by - m) <= 4.0 for m in merged_levels):
                         merged_levels.append(round(by, 1))
                 markers = sorted(merged_levels)
+    except Exception:
+        pass
+
+    # P2.1b（2026-09-04）：overlay 显式横杆层位表 beam_marker_levels_mm
+    # （z 域，图纸外生产常数——平台/环梁标高，与 panel_level_source="gt"
+    # 的 z-only 注入同纪律）。提供时**替换** beat 节拍层与 marker 检测层：
+    # 06 册实测——beat 节拍层（12000/12400/.../17024，面板高 400-450 体系）
+    # 与 GT 环梁横杆层（14000/16000，平台 2000-3000 体系）是两个不同
+    # 层位体系；把节拍层当横杆层给 marker_synth 会生成 16 个假层 × 4 杆
+    # = 64 根 FP（pure P 被压低的主因之一），且真层 14000/16000 只靠
+    # beat 14050/16130 的 50-130mm 残差勉强对上。z→y 反解用 beat
+    # 锚点 (y_draw, z) 对分段线性插值。
+    _beam_levels_replaced = False
+    try:
+        cfg = _overlay_cfg(stem, overlay)  # P2.1b：overlay 显式横杆层位表
+        _bm_cfg = (cfg or {}).get("beam_marker_levels_mm")
+        if _bm_cfg and _ba is not None and _ba.get("y_draw") and _ba.get("z"):
+            _pairs = sorted(zip(
+                (float(v) for v in _ba["y_draw"]),
+                (float(v) for v in _ba["z"]),
+            ))
+
+            def _y_of_z(zq: float) -> float:
+                """z → 图纸 y（beat 锚点分段线性插值，域外用边缘段斜率）。"""
+                if zq <= _pairs[0][1]:
+                    (y0, z0), (y1, z1) = _pairs[0], _pairs[1]
+                elif zq >= _pairs[-1][1]:
+                    (y0, z0), (y1, z1) = _pairs[-2], _pairs[-1]
+                else:
+                    (y0, z0), (y1, z1) = _pairs[0], _pairs[1]
+                    for i in range(len(_pairs) - 1):
+                        if _pairs[i][1] <= zq <= _pairs[i + 1][1]:
+                            (y0, z0), (y1, z1) = _pairs[i], _pairs[i + 1]
+                            break
+                if z1 == z0:
+                    return y0
+                return y0 + (zq - z0) / (z1 - z0) * (y1 - y0)
+
+            _lv_ys = sorted({round(_y_of_z(float(v)), 1)
+                             for v in _bm_cfg})
+            if _lv_ys:
+                markers = _lv_ys
+                _beam_levels_replaced = True
     except Exception:
         pass
 
@@ -744,6 +788,7 @@ def extract_centerline_drawing_segments(
         "n_output_segments": len(segs_out),
         "leg_x_u": leg_x,
         "marker_levels_u": markers,
+        "beam_levels_replaced": _beam_levels_replaced,
         "units": "drawing",
         "min_cand_mm": min_cand_mm,
     }

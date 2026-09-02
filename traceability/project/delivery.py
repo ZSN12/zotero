@@ -548,6 +548,17 @@ def deliver_project(
     # 展开会重写 tower_node / tower_bar 组件；BOM / 节点板 / 图纸上下文保留。
     if merged_model is not None and ov.get("enable_4_face_expansion"):
         expand_4_face_symmetry_model(merged_model, layer_map_path)
+        # P3.20（ZC1）：同几何杆去重。多册同段重复出图 + 四面镜像展开
+        # 产生完全相同几何的多份拷贝，Hungarian 1:1 评测下互抢 FP
+        # （ZC1 实测 58% 重复）。overlay 显式开启才执行（默认关闭，
+        # JC1/JC2 行为零变化）。
+        if ov.get("dedup_identical_bars"):
+            from ..solve.tower_geometry import dedup_identical_bars
+            _dd = dedup_identical_bars(
+                merged_model, tol_mm=float(ov.get("dedup_identical_tol_mm", 60.0)))
+            _dfm = merged_model.components.get("drawing_file")
+            if _dfm is not None:
+                _dfm.properties["dedup_identical_bars_report"] = dict(_dd)
 
     # Phase 2.5（仅调试/评测）：GT 权威拓扑对齐。默认关闭，生产交付永不启用。
     # 阶段 0.2 GT 隔离：此路径只允许 overlay 显式 `gt_align: true`（debug/eval），

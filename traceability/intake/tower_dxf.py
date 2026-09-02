@@ -1549,10 +1549,21 @@ def extract_tower_from_dxf(
             subdivided: List[Dict] = []
             for vk in sorted({seg["view_type"] or "_all" for seg in bar_segments}):
                 view_segs = [s for s in bar_segments if (s["view_type"] or "_all") == vk]
-                subdivided.extend(_subdivide_at_t_junctions(
-                    view_segs, snap_tol=sub_tol,
+                # P2.1b（2026-09-04）：marker_synth 段豁免 T 打断——合成横杆
+                # 是「分段终态」（[0,inner]+[inner,leg]+[0,leg] 全跨并存，
+                # 同层故意重叠）。全跨段 [0,leg] 的内部恰是 [0,inner] 的
+                # 端点（inner 位）——T 打断会把全跨段劈成 [0,inner]+[inner,leg]
+                # 与既有分段重复（06 册实测 12 段→16 段，下游去重后全跨段
+                # 恒丢失，GT [0,±hw] 全跨横杆恒 FN）。豁免后全跨段原样保留。
+                _t_segs = [s for s in view_segs
+                           if str(s.get("layer") or "") != "marker_synth"]
+                _t_out = _subdivide_at_t_junctions(
+                    _t_segs, snap_tol=sub_tol,
                     max_splits_per_seg=int(coll_cfg.get("subdivide_max_splits", 24)),
-                ))
+                )
+                subdivided.extend(_t_out)
+                subdivided.extend(s for s in view_segs
+                                  if str(s.get("layer") or "") == "marker_synth")
             bar_segments = subdivided
 
         # 阶段2.5（方案A）：按斜材端点 y 聚类导出的节间水平对通长主材做参数化打断。

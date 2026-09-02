@@ -374,6 +374,14 @@ def close_face_intersections(
         changed = False
         for bi in range(len(new_bars)):
             bar = new_bars[bi]
+            # P2.1b（2026-09-04）：marker_synth 合成横杆豁免 T 形打断——
+            # 它们是「层位终态」（[0,±inner]/[±inner,±leg]/[0,±leg] 分段
+            # 体系同层故意重叠，与 GT 环梁投影同构）。全跨段 [0,leg] 的
+            # 内部恰是 [0,inner] 的端点——被打断后劈出的子段与既有分段
+            # 在 stitch_segment_boundaries 端点对去重时撞 key，全跨段
+            # 被静默删除（06 册实测 12 根合成杆 15→9→8，全跨段全灭，
+            # GT [0,±hw] 全跨横杆恒 FN）。tower_dxf 的 T 打断已同样豁免。
+            _is_synth = str(bar.get("geometry_origin") or "") == "marker_synth"
             for end in ("from", "to"):
                 p = new_nodes.get(bar[end])
                 if p is None:
@@ -381,6 +389,10 @@ def close_face_intersections(
                 best = None
                 for bj, other in enumerate(new_bars):
                     if bi == bj:
+                        continue
+                    # 豁免杆的端点也不允许打断其它杆（打断目标杆同样
+                    # 破坏终态分段体系——劈出的子段就是去重撞 key 的来源）。
+                    if _is_synth and str(other.get("geometry_origin") or "") == "marker_synth":
                         continue
                     s1, s2 = new_nodes.get(other["from"]), new_nodes.get(other["to"])
                     if s1 is None or s2 is None:
@@ -395,6 +407,9 @@ def close_face_intersections(
                     continue
                 dist, bj, proj = best
                 other = new_bars[bj]
+                # marker_synth 杆既不做打断源、也不做被打断目标。
+                if _is_synth or str(other.get("geometry_origin") or "") == "marker_synth":
+                    continue
                 q = _get_or_add_node(new_nodes, proj, tol=1.0)
                 # 打断目标杆件（若 q 不是其端点），即使源端点已与交点重合，
                 # 也仍要打断目标杆件，否则 T 形交点不会成为共享节点。
@@ -791,8 +806,13 @@ def expand_4_face_symmetry(
                 new_bars.append(nb)
         elif "_C" in fm1:
             # 起点是中心，终点是各面：中心→每个共有面
+            # P2.1b（2026-09-04）：中心端节点的 face_maps 只有 {"_C"}，
+            # `common`（两端 face 交集）恒为空 → 循环零次、杆被静默丢弃
+            # （06 册 marker_synth 全跨横杆 [0,±leg] 与 [0,±inner] 段在
+            # 4 面展开时整族消失的直接根因）。中心轴节点在 4 个立面都
+            # 存在（(0,±w,z)/(±w,0,z)），应与非中心端的**全部面**生成。
             n_center = add_node(fm1["_C"])
-            for suffix in common:
+            for suffix in (s for s in ("_F", "_B", "_L", "_R") if s in fm2):
                 p2 = fm2[suffix]
                 n2 = add_node(p2)
                 if n_center == n2:
@@ -808,8 +828,9 @@ def expand_4_face_symmetry(
                 new_bars.append(nb)
         elif "_C" in fm2:
             # 终点是中心，起点是各面：每个共有面→中心
+            # P2.1b：同上——用起点（非中心端）的全部面，而非空交集。
             n_center = add_node(fm2["_C"])
-            for suffix in common:
+            for suffix in (s for s in ("_F", "_B", "_L", "_R") if s in fm1):
                 p1 = fm1[suffix]
                 n1 = add_node(p1)
                 if n1 == n_center:
@@ -3344,6 +3365,15 @@ def stitch_collinear_bars(
         bid = str(b.get("id"))
         if b.get("diaphragm"):
             skipped["diaphragm"] = skipped.get("diaphragm", 0) + 1
+            continue
+        # P2.1b（2026-09-04）：marker_synth 合成横杆豁免拼接——它们是
+        # 「层位终态完整杆」（[0,±inner]/[±inner,±leg]/[0,±leg] 分段
+        # 体系，GT 同构），与相邻斜杆/残段拼接会把横杆端点拉离层位
+        # （06 册实测：12 根合成杆被拼剩 7 根，全跨段 [0,±leg] 全灭，
+        # 端点 z 漂 212mm 变斜杆）。tower_dxf 的双线/共线合并、DT 残段
+        # 清扫、crossarm 剪枝均已豁免，这里补齐最后一块。
+        if str(b.get("geometry_origin") or "") == "marker_synth":
+            skipped["marker_synth"] = skipped.get("marker_synth", 0) + 1
             continue
         if str(b.get("role") or "").upper() == "CROSS":
             skipped["crossarm"] = skipped.get("crossarm", 0) + 1
@@ -5954,3 +5984,72 @@ def angle_steel_orientation(
     m[:3, :3] = np.column_stack((u, v, z))
     m[:3, 3] = c
     return m
+
+
+def dedup_identical_bars(
+    model,
+    *,
+    tol_mm: float = 60.0,
+) -> Dict[str, int]:
+    """P3.20（ZC1）：同几何杆去重（多册同段重复出图消解）。
+
+    多册同段图纸（ZC1 的 05/09/12 都画 z26000+32000 段）+ 四面镜像
+    展开后，同一物理杆会出现多份几何相同的组件拷贝——评测 Hungarian
+    1:1 匹配下互抢 FP，实测 ZC1 去重前 5096 杆中 58% 为完全同几何
+    重复（2966 根）。本函数按「两端点（无序）3D 坐标在 tol_mm 内」
+    分组，每组保留一根（优先保留 geometry_class=recognized 的——
+    证据最强；其次保留杆长更长/件号已知的），其余删除。
+
+    返回统计 {groups, removed, kept}。杆的 from/to 引用不重指
+    （删除的是杆组件，节点保留——节点度会降但无悬空副作用，
+    因为同几何组的其余成员仍在）。
+    """
+    from collections import defaultdict
+
+    bars = [c for c in model.components.values() if c.kind == "tower_bar"]
+    keyed: Dict[Tuple, List] = defaultdict(list)
+    for c in bars:
+        p = c.properties
+        fn, tn = p.get("from_node"), p.get("to_node")
+        fc, tc = model.components.get(fn), model.components.get(tn)
+        if fc is None or tc is None:
+            continue
+        fpp, tpp = fc.properties, tc.properties
+        if fpp.get("x") is None or fpp.get("z") is None:
+            continue
+        if tpp.get("x") is None or tpp.get("z") is None:
+            continue
+        fyz = (fpp.get("y") if fpp.get("y") is not None else 0.0,
+               fpp.get("z"))
+        tyz = (tpp.get("y") if tpp.get("y") is not None else 0.0,
+               tpp.get("z"))
+        q = tol_mm if tol_mm > 0 else 1.0
+        a = (round(float(fpp["x"]) / q), round(float(fyz[0]) / q),
+             round(float(fyz[1]) / q))
+        b = (round(float(tpp["x"]) / q), round(float(tyz[0]) / q),
+             round(float(tyz[1]) / q))
+        key = tuple(sorted([a, b]))
+        keyed[key].append(c)
+
+    def _rank(c) -> Tuple:
+        p = c.properties
+        # recognized > reconstructed > derived_parametric/derived；
+        # 同 class 时长杆优先、有件号优先。
+        cls = str(p.get("geometry_class") or "")
+        cls_r = {"recognized": 0, "reconstructed": 1}.get(cls, 2)
+        bid = str(p.get("bar_id") or "")
+        has_id = 0 if bid and not bid.startswith("UNLABELED") else 1
+        ln = float(p.get("length_mm_3d") or p.get("length_mm") or 0.0)
+        return (cls_r, has_id, -ln)
+
+    removed = 0
+    for key, group in keyed.items():
+        if len(group) < 2:
+            continue
+        group.sort(key=_rank)
+        for c in group[1:]:
+            model.components.pop(c.id, None)
+            removed += 1
+    return {"groups": sum(1 for g in keyed.values() if len(g) > 1),
+            "removed": removed,
+            "kept": len(bars) - removed}

@@ -142,6 +142,30 @@
         "z_axis_up": true,
         "z_offset": 24100.0,
         "z_span_mm": 4429.0
+      },
+      {
+        "kind": "side",
+        "title": "侧立面(塔身段 z24100-28324)",
+        "origin": [
+          38608.5,
+          -10071.4
+        ],
+        "region": [
+          38528.0,
+          38690.0,
+          -10075.0,
+          -9645.0
+        ],
+        "axes": [
+          "x",
+          "z"
+        ],
+        "scale_x": 10.3,
+        "scale_y": 10.3,
+        "z_flip": false,
+        "z_axis_up": true,
+        "z_offset": 24100.0,
+        "z_span_mm": 4594.0
       }
     ],
     "35A2-ZC1-01-1": [
@@ -218,6 +242,30 @@
         "z_axis_up": true,
         "z_offset": 33050.0,
         "z_span_mm": 5446.0
+      },
+      {
+        "kind": "side",
+        "title": "侧立面(上塔身段 z26500-32663)",
+        "origin": [
+          37596.0,
+          -9422.9
+        ],
+        "region": [
+          37526.0,
+          37666.0,
+          -9426.0,
+          -8858.0
+        ],
+        "axes": [
+          "x",
+          "z"
+        ],
+        "scale_x": 10.5,
+        "scale_y": 10.5,
+        "z_flip": false,
+        "z_axis_up": true,
+        "z_offset": 26500.0,
+        "z_span_mm": 5964.0
       }
     ],
     "35A2-ZC1-08": [
@@ -424,5 +472,7 @@
   "leg_chain_stitch_break_terminal": true,
   "terminal_pair_structure": true,
   "disable_scale_calibration": true,
-  "collinear_stitch_cross_sheet": true
+  "collinear_stitch_cross_sheet": true,
+  "dedup_identical_bars": true,
+  "dedup_identical_tol_mm": 120.0
 }

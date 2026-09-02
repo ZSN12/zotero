@@ -138,6 +138,14 @@ def _normalize_segment_view_y(
                     break
         if y1 == y0:
             return z0
+        # P2.1b（2026-09-04，修订 2）：锚点域外用**边缘段斜率线性延拓**。
+        # 初版「域外一律 None → 分位数兜底」误伤了显式层位表的域外层
+        # （07 册 6500 层：_y_of_z 反解到 y=-11265.4 < 首锚 -11239.3，
+        # 归一化时被兜底错送到 z=7100）。反解（centerline_extract
+        # _y_of_z）与正向（本函数）必须互逆——两者都允许域外一阶
+        # 延拓。06 册段底裁剪线残留同样会被延拓到 ~11400，但它们不是
+        # 横杆层、匹配不上 GT，只增加少量 FP（与 full-deliver 行为
+        # 一致，不引入新的诚实性问题）。
         return z0 + (vy - y0) / (y1 - y0) * (z1 - z0)
 
     # 1) 按 (drawing_view, view_kind) 收集 front/side 节点的 view_y。
