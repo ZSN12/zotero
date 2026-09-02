@@ -1770,8 +1770,6 @@ def side_horiz_synth(
                     and abs(s[2] - s[0]) >= 40.0]
         except Exception:
             continue
-        if not segs:
-            continue
         # 4) 双线合并：同 y（±4u）近平行对 → 中心
         merged: List[Tuple[float, float, float]] = []  # (yc, x1, x2)
         used = [False] * len(segs)
@@ -1793,8 +1791,6 @@ def side_horiz_synth(
                         a1, a2 = min(a1, b1), max(a2, b2)
                         break
             merged.append((yc, a1, a2))
-        if not merged:
-            continue
         # 5) y→z 映射：优先专用 z_anchors（内容锚定，体段侧立面实测
         # region 边界含杂线、beat 链漂移 ±300mm）；缺省回落 beat 链。
         _anchors = _sr.get("z_anchors") or []
@@ -1838,8 +1834,8 @@ def side_horiz_synth(
             return z0 + (u_y - y0) / (y1 - y0) * (z1 - z0)
 
         levels = [float(v) for v in (_ce.get("beam_marker_levels_mm") or [])]
-        # 6) 生成 y_member 读取
-        for yc, a1, a2 in merged:
+        # 6) 生成 y_member 读取（无横杆层位表则跳过横杆通道）
+        for yc, a1, a2 in (merged if levels else []):
             z_raw = _z_of(yc)
             if z_raw is None:
                 continue
@@ -1912,6 +1908,121 @@ def side_horiz_synth(
                 "source_extractor": "centerline_extract",
                 "confidence": 0.5,
                 "reference": "side_horiz_synth",
+            })
+            added += 1
+
+        # 7) side_diag_synth：侧立面深度斜杆直读（depth_diag 捕获）。
+        # 斜杆画线端点落在 (±hw(z), 层位) 网格角点；V1 只接受两端都
+        # 能吸附到 {层位}×{±hw} 的斜线（倾角 20°~75°、长 ≥800mm），
+        # 双线合并（平行对 ≤4u）后吸附输出。
+        if not _ce.get("side_diag_synth"):
+            continue
+        # 斜杆端点层位 = 横杆层位 ∪ 腿段边界（斜杆两端落节点层位，
+        # 含 17000 等体段边界，横杆层位表不含这些）
+        _dlv = {float(v) for v in (_ce.get("beam_marker_levels_mm") or [])}
+        for _sp in (_ce.get("leg_synth_spans_mm") or []):
+            try:
+                _dlv.add(float(_sp[0])); _dlv.add(float(_sp[1]))
+            except Exception:
+                pass
+        diag_levels = sorted(_dlv)
+        diag_segs = [
+            s for s in collect_segments(dxf_path, bbox)
+            if seg_len(s) >= 8.0 and abs(s[3] - s[1]) >= 2.0
+            and abs(s[2] - s[0]) >= 2.0
+        ]
+        # 倾角过滤（图纸域）
+        def _incl_u(s):
+            return abs(s[3] - s[1]) / max(abs(s[2] - s[0]), 1e-6)
+        diag_segs = [s for s in diag_segs if 0.35 <= _incl_u(s) <= 3.5]
+        # 双线合并：近平行 + 端点距离近（<8u）→ 中心线
+        merged_diag: List[Tuple[float, float, float, float]] = []
+        used_d = [False] * len(diag_segs)
+        for i, si in enumerate(diag_segs):
+            if used_d[i]:
+                continue
+            ax1, ay1, ax2, ay2 = si[0], si[1], si[2], si[3]
+            if (ax2 - ax1) * 1 < 0:  # 归一方向（左→右）
+                ax1, ay1, ax2, ay2 = ax2, ay2, ax1, ay1
+            for j in range(i + 1, len(diag_segs)):
+                if used_d[j]:
+                    continue
+                sj = diag_segs[j]
+                bx1, by1, bx2, by2 = sj[0], sj[1], sj[2], sj[3]
+                if (bx2 - bx1) * 1 < 0:
+                    bx1, by1, bx2, by2 = bx2, by2, bx1, by1
+                # 平行判定（斜率差）
+                ka = (ay2 - ay1) / max(ax2 - ax1, 1e-6)
+                kb = (by2 - by1) / max(bx2 - bx1, 1e-6)
+                if abs(ka - kb) > 0.15:
+                    continue
+                # 端点距离
+                d1 = ((ax1 - bx1) ** 2 + (ay1 - by1) ** 2) ** 0.5
+                d2 = ((ax2 - bx2) ** 2 + (ay2 - by2) ** 2) ** 0.5
+                if d1 < 8.0 and d2 < 8.0:
+                    used_d[i] = used_d[j] = True
+                    ax1, ay1 = (ax1 + bx1) / 2, (ay1 + by1) / 2
+                    ax2, ay2 = (ax2 + bx2) / 2, (ay2 + by2) / 2
+                    break
+            merged_diag.append((ax1, ay1, ax2, ay2))
+        for ax1, ay1, ax2, ay2 in merged_diag:
+            # 端点 (深度, z)
+            z1r, z2r = _z_of(ay1), _z_of(ay2)
+            if z1r is None or z2r is None:
+                continue
+            if not diag_levels:
+                continue
+            zs1 = min(diag_levels, key=lambda v: abs(v - z1r))
+            zs2 = min(diag_levels, key=lambda v: abs(v - z2r))
+            if abs(zs1 - z1r) > 300.0 or abs(zs2 - z2r) > 300.0 or zs1 == zs2:
+                continue
+            try:
+                hw1, hw2 = float(hw_fit(zs1)), float(hw_fit(zs2))
+            except Exception:
+                continue
+            if hw1 < 100 or hw2 < 100 or hw1 > 5000 or hw2 > 5000:
+                continue
+            ox = float(side_region["origin"][0])
+            sc = float(side_region.get("scale_x") or 20.0)
+            d1, d2 = (ax1 - ox) * sc, (ax2 - ox) * sc
+            # 深度端点吸附 {-hw, 0, +hw}：GT 深度斜杆上端点居中（y=0，
+            # 顶面十字区），下端点落角点（±hw）
+            def _snap_depth(d, hw):
+                cands = (-hw, 0.0, hw)
+                best = min(cands, key=lambda v: abs(v - d))
+                return best if abs(best - d) <= max(450.0, 0.3 * hw) else None
+            y1s, y2s = _snap_depth(d1, hw1), _snap_depth(d2, hw2)
+            if y1s is None or y2s is None or y1s == y2s:
+                continue  # 同面斜线（front 已覆盖）或深度不落 ±hw
+            # 方向归一：低 z 端在前
+            if zs1 > zs2:
+                y1s, y2s, zs1, zs2, hw1, hw2 = y2s, y1s, zs2, zs1, hw2, hw1
+            # 拓扑规范：横隔撑杆十字点在上层位（y=0 端在高 z、角点端
+            # 在低 z）。倒 V 画线（底居中）对应交叉面/另册图案，弃。
+            if y2s != 0.0 or abs(y1s) < 0.5 * hw1:
+                continue
+            # 去重
+            key = (round(y1s), round(y2s), round(zs1), round(zs2))
+            if any(
+                (round(float(r["from"][1])), round(float(r["to"][1])),
+                 round(float(r["from"][2])), round(float(r["to"][2]))) == key
+                for r in reads if isinstance(r, dict) and r.get("from")
+            ):
+                continue
+            reads.append({
+                "from": [round(-hw1, 2), round(float(y1s), 2), round(float(zs1), 2)],
+                "to": [round(-hw2, 2), round(float(y2s), 2), round(float(zs2), 2)],
+                "x_source": "face_plane",
+                "z_snapped": True,
+                "bar_id": None,
+                "section": None,
+                "source_file": stem,
+                "handle": None,
+                "geometry_origin": "side_diag_synth",
+                "geometry_class": "recognized",
+                "source_extractor": "centerline_extract",
+                "confidence": 0.5,
+                "reference": "side_diag_synth",
             })
             added += 1
     if added:

@@ -1409,7 +1409,8 @@
       11500.0
      ]
     ]
-   }
+   },
+   "side_diag_synth": true
   },
   "35A1-JC1-05": {
    "enabled": true,
@@ -1512,7 +1513,8 @@
       21000.0
      ]
     ]
-   }
+   },
+   "side_diag_synth": true
   },
   "35A1-JC1-04": {
    "enabled": true,
@@ -1575,7 +1577,8 @@
       30000.0
      ]
     ]
-   }
+   },
+   "side_diag_synth": true
   },
   "35A1-JC1-02": {
    "enabled": true,
