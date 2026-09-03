@@ -56,6 +56,38 @@ python3 scripts/run_35A2_zc1_full.py            # 35A2-ZC1（多塔 overlay 泛�
 python3 scripts/eval_a2_profiles.py examples/gt/35A1-JC1_ground_truth.json out/35A1-JC1-full-deliver/model.json
 ```
 
+### 2.1 新塔工作区（开源基座入口）
+
+换一座塔 = 建工作区 + 填配置 + 逐层跑（只改配置，不改代码）：
+
+```bash
+# 0. 脚手架：生成 overlay 模板（字段带 _doc 纪律说明）+ dxf/ + bom/
+python3 domains/angle-tower/scripts/init_domain.py ~/towers/35A2-JC3 --name 35A2-JC3
+
+# 1. 放图纸进 dxf/、BOM 进 bom/bom.csv、按图纸实测填 overlay.json
+
+# 2. 预检（z-only 注入面 fail-closed / BOM member 行 / 册-区域一致 / GT caveats）
+python3 domains/angle-tower/scripts/validate_workspace.py ~/towers/35A2-JC3
+
+# 3. 六层逐层可跑/可审计（首层自动跑 canonical 管线，后续复用产物）
+for L in 1 2 3 4 5 6; do
+  python3 domains/angle-tower/scripts/run_layer.py $L --workspace ~/towers/35A2-JC3
+done
+
+# 已有交付产物 → 审计模式（不重跑，只核契约）
+python3 domains/angle-tower/scripts/run_layer.py 5 --out-dir out/35A1-JC1-full-deliver
+```
+
+逐层契约（run_layer 审计内容）：
+| 层 | 审计 |
+|---|---|
+| L1 drawing | 每根杆 SourceRef + geometry_class；label/dim 观测已登记 |
+| L2 hypothesis | 假设四态状态机；观测普查；多册塔必须有假设产物 |
+| L3 rebuild | geometry_class∈口径层的杆必有 geometry_origin；节点求解率 |
+| L4 semantic-ir | 公共 IR 四键；bom_row/row_class 分布；bom_tree 冲突披露 |
+| L5 validation-gate | Rule.status 全合法；failed/pending 逐条披露（全 passed/review_exempted 才过） |
+| L6 complete-tower | GLB 存在；version.json 指纹链（model_sha ↔ 磁盘、overlay_sha）闭合 |
+
 ## 3. 换一座塔要改什么（多塔泛化纪律）
 
 只改配置，不改代码。以 35A2-ZC1 为例（对照 `examples/external/guowang_35A2_zc1/layer_overlay.json`）：
@@ -87,6 +119,9 @@ domains/angle-tower/
   SKILL.md                    # 本文件（六层契约）
   scripts/self_test.py        # 门禁 1：自检
   scripts/validate_public_ir.py  # 门禁 2：公共 IR 校验
+  scripts/init_domain.py      # 新塔工作区脚手架（overlay 模板 + 纪律说明）
+  scripts/validate_workspace.py  # 跑批前预检（GT 注入面 fail-closed）
+  scripts/run_layer.py        # 六层逐层可跑/可审计入口（L1..L6）
   docs/CALIBER_DISCIPLINE.md  # 口径纪律详表
 ../../traceability/           # 引擎（L1~L6 实现本体）
 ../../scripts/run_*.py        # 单塔管线入口
