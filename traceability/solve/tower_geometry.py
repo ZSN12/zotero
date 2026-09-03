@@ -869,13 +869,33 @@ def expand_4_face_symmetry(
         a, c = bb["from"], bb["to"]
         return (min(a, c), max(a, c))
 
+    # P3-4（2026-09-03）：同键冲突时优先保留 face='f' 副本。
+    # 正立面画的是前立面的**两条腿**（x=±w 都是 front 面真实杆件）：
+    # L 位 2D 杆的 _R 副本与 R 位 2D 杆的 _F 副本落在同一拐角 (+w,+w)
+    # （L._F≡R._L 同理），无序遍历先到先得会把 R 位杆的 _F（唯一
+    # recognized 通道）挤掉——05 册实测 R 位 leg_synth/diag_synth 的
+    # front 面识别副本全军覆没（face='b'/'r' 全 reconstructed），
+    # 双面对称塔的右半边 pure 池系统性缺失。修正：同键冲突时若
+    # 新杆 face='f' 而已存杆非 'f'，用新杆替换（后到的识别原貌
+    # 优先于先到的镜像派生）。f vs f 冲突保持先到（同位同面两源
+    # 需上层 exact_overlap_dedup 处理，不在此重复计数）。
+    def _is_front_face(bb: dict) -> bool:
+        return str(bb.get("face") or "").lower() == "f"
+
     seen: Dict[tuple, str] = {}
+    seen_idx: Dict[tuple, int] = {}
     deduped: List[dict] = []
     for b in new_bars:
         key = _bar_key(b)
         if key in seen:
+            if _is_front_face(b):
+                old_idx = seen_idx[key]
+                if not _is_front_face(deduped[old_idx]):
+                    deduped[old_idx] = b  # 识别原貌替换镜像派生
+                    seen[key] = b["id"]
             continue
         seen[key] = b["id"]
+        seen_idx[key] = len(deduped)
         deduped.append(b)
     new_bars = deduped
 

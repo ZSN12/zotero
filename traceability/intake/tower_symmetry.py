@@ -1199,7 +1199,17 @@ def expand_4_face_symmetry_model(
     # origin/layer 不动，下游 marker_synth 豁免语义全部保持）。
     # ±300mm 内有 dxf_geom 近水平杆的保留（如 z≈29983 平台层被 30266
     # 绘制线佐证，当前贡献 3 TP）。
-    _ms_head_z_min = float(spec.get("marker_synth_head_z_min_mm", 24700.0))
+    #
+    # 外溢治理（2026-09-03 用户裁定）：默认 24700 是 JC1 头部图幅的
+    # 特例阈值（z≥24700 的 marker 符号是斜材节点标记而非横梁标记），
+    # 硬编码在通用代码里会静默作用于所有塔——ZC1 被迫设 39500 反向
+    # 抵消，且 40 根放进只命中 2 根（5%），证明该默认对新塔是错的
+    # 先验。改为：overlay 未显式配置时**不启用**头部佐证过滤（除名
+    # 0 根，行为保守、可审计），JC1 在自身 overlay 显式声明
+    # marker_synth_head_z_min_mm=24700。缺配置时 stderr 打提示，
+    # 避免静默跳过。
+    _ms_head_cfg = spec.get("marker_synth_head_z_min_mm")
+    _ms_head_z_min = float(_ms_head_cfg) if _ms_head_cfg is not None else None
     _ms_corr_tol = float(spec.get("marker_synth_corroboration_tol_mm", 300.0))
     _dxf_hz: List[float] = []
     for _b in face_bars:
@@ -1215,6 +1225,8 @@ def expand_4_face_symmetry_model(
             _dxf_hz.append((float(_f[2]) + float(_t[2])) / 2.0)
     _n_ms_head = 0
     for _b in face_bars:
+        if _ms_head_z_min is None:
+            break  # overlay 未配置：头部佐证过滤整体关闭（外溢治理）
         if str(_b.get("geometry_origin") or "") != "marker_synth":
             continue
         _f, _t = face_nodes.get(_b.get("from")), face_nodes.get(_b.get("to"))
@@ -1227,7 +1239,11 @@ def expand_4_face_symmetry_model(
             continue
         _b["pure_excluded"] = "marker_head_uncorroborated"
         _n_ms_head += 1
-    if _n_ms_head:
+    if _ms_head_z_min is None:
+        import sys as _sys
+        print("[marker_synth_head_filter] overlay 未配置 marker_synth_head_z_min_mm，"
+              "头部佐证过滤关闭（JC1 特例阈值不再默认外溢）", file=_sys.stderr)
+    elif _n_ms_head:
         _df_ms = model.components.get("drawing_file")
         if _df_ms is not None:
             _df_ms.properties["marker_synth_head_filter"] = {

@@ -25,19 +25,29 @@ REPO = Path(__file__).resolve().parents[3]
 
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    print("+", " ".join(cmd))
+    print("+", " ".join(cmd), flush=True)
     return subprocess.run(cmd, cwd=str(REPO), capture_output=True,
                           text=True, **kw)
 
 
 def gate_tests() -> bool:
-    r = run([sys.executable, "-m", "pytest", "tests/", "-p", "no:cacheprovider",
-             "-q"])
+    # Bug G（2026-09-03，P2）：全量 pytest capture_output=True 块缓冲，
+    # 700 用例 ~22s 内零输出，观察者误判挂死。跑前 flush + 显式提示
+    # 预计时长；超时上限 600s 防真死锁（超时抛 TimeoutExpired 由外层
+    # 捕获为 FAIL，不再无限等）。
+    print("[gate_tests] 全量单测启动（~22s，最长 600s，块缓冲无逐条输出属正常）",
+          flush=True)
+    try:
+        r = run([sys.executable, "-m", "pytest", "tests/",
+                 "-p", "no:cacheprovider", "-q"], timeout=600)
+    except subprocess.TimeoutExpired:
+        print("FAIL: 单测 600s 超时（疑似挂死，需人工排查）", flush=True)
+        return False
     ok = r.returncode == 0
     tail = "\n".join(r.stdout.strip().splitlines()[-2:])
-    print(tail)
+    print(tail, flush=True)
     if not ok:
-        print("FAIL: 单测未全绿")
+        print("FAIL: 单测未全绿", flush=True)
     return ok
 
 

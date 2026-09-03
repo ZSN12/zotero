@@ -48,18 +48,59 @@ def _pick_tol(result: dict, tol: float = 500.0) -> dict:
     return rows[-1] if rows else {}
 
 
+def _resolve_overlay(model_path: Path, cli_value: Optional[str]) -> Optional[Path]:
+    """Bug F（P1，2026-09-03）：overlay 指纹反查。
+
+    旧默认写死 guowang_35A1/layer_overlay.json——ZC1 等其它塔的
+    a2_dual_view.json 记录的是 JC1 的 overlay 指纹，与该塔 version.json
+    的 overlay_sha 恒不一致，对外主口径的复核链第一个就复核不上。
+
+    解析优先级：
+      1. CLI 显式 --overlay（信任用户）；
+      2. model.json 同目录 version.json 的 overlay_path（生成该模型时
+         实际使用的 overlay，权威）；
+      3. 都取不到 → 返回 None 并 stderr 提示（overlay_sha256=null，
+         复核方能立刻看出指纹缺失，而非拿着错的指纹通过复核）。
+    反查到的 overlay 文件不存在时同样 None（指纹链断点显式化）。
+    """
+    if cli_value:
+        p = Path(cli_value)
+        return p if p.exists() else None
+    version_path = model_path.parent / "version.json"
+    if version_path.exists():
+        try:
+            v = json.loads(version_path.read_text(encoding="utf-8"))
+            op = v.get("overlay_path")
+            if op:
+                p = Path(op)
+                if not p.is_absolute():
+                    # version.json 记录的是仓库相对路径
+                    p = REPO / p
+                if p.exists():
+                    return p
+                print(f"[Bug F] version.json overlay_path 指向不存在的文件: {op}",
+                      file=sys.stderr)
+        except Exception as exc:
+            print(f"[Bug F] version.json 解析失败: {exc}", file=sys.stderr)
+    print("[Bug F] 未能反查 overlay（无 --overlay，version.json 无 overlay_path）"
+          "——overlay_sha256 将记为 null", file=sys.stderr)
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("gt")
     ap.add_argument("model")
-    ap.add_argument("--overlay", default=str(REPO / "examples/external/guowang_35A1/layer_overlay.json"))
+    ap.add_argument("--overlay", default=None,
+                    help="overlay 路径；缺省从 model 同目录 version.json 的 "
+                         "overlay_path 反查（Bug F：不再写死 JC1 overlay）")
     ap.add_argument("--tol", type=float, default=500.0)
     ap.add_argument("--json-out", type=Path, default=None)
     args = ap.parse_args()
 
     gt_path = Path(args.gt)
     model_path = Path(args.model)
-    overlay_path = Path(args.overlay) if args.overlay else None
+    overlay_path = _resolve_overlay(model_path, args.overlay)
 
     gt = json.loads(gt_path.read_text(encoding="utf-8"))
     model = json.loads(model_path.read_text(encoding="utf-8"))
