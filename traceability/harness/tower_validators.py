@@ -151,8 +151,16 @@ def validate_bom_length_match(model: EngineeringModel, rule_id: str) -> Optional
 
 
 def validate_bom_section_match(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:
-    """杆件截面 vs BOM 截面。"""
+    """杆件截面 vs BOM 截面。
+
+    P5 约束残差（2026-09-03）：件号挂接已判 suspect（bar_id_length_suspect，
+    P4.3 review 队列）的杆，其截面矛盾与长度矛盾是**同一处挂接错乱**的
+    两个症状——计入 review 计数（不重复引爆 FAILED），与
+    r_bom_length_match 的 suspect 语义对齐。截面是角钢对角钢的实质
+    不符且无 suspect 标记 → 仍然 FAILED（诚实失败）。
+    """
     mismatch = []
+    suspect = []
     matched = 0
     for cid, bar in _iter_bars(model):
         bid = bar.properties.get("bar_id")
@@ -162,13 +170,26 @@ def validate_bom_section_match(model: EngineeringModel, rule_id: str) -> Optiona
             continue
         matched += 1
         if _normalize_section(str(actual)) != _normalize_section(str(bom_dim.value)):
-            mismatch.append((bid, actual, bom_dim.value))
+            if bar.properties.get("bar_id_length_suspect") or (
+                    bar.properties.get("bar_id") is None):
+                # 已在长度阶梯的 review 队列（同源挂接错乱）→ 合并计数
+                suspect.append((bid, actual, bom_dim.value))
+            else:
+                mismatch.append((bid, actual, bom_dim.value))
     if matched == 0:
         return ValidationResult(rule_id, ValidationStatus.PENDING,
                                 "无足够数据做 BOM 截面核验", "bom-section")
     if mismatch:
         return ValidationResult(rule_id, ValidationStatus.FAILED,
-                                f"{len(mismatch)} 根杆件截面不符：{mismatch[:3]}", "bom-section")
+                                f"{len(mismatch)} 根杆件截面不符"
+                                + (f"（另 {len(suspect)} 根随件号 suspect 进 review 队列）" if suspect else "")
+                                + f"：{mismatch[:3]}", "bom-section")
+    if suspect:
+        return ValidationResult(
+            rule_id, ValidationStatus.PENDING,
+            f"{matched} 核验 / {len(suspect)} 根截面矛盾随件号 suspect 进 review "
+            f"队列（bar_id_length_suspect 同源挂接错乱）：{suspect[:3]}",
+            "bom-section")
     return ValidationResult(rule_id, ValidationStatus.PASSED,
                             f"{matched} 根杆件截面与 BOM 一致", "bom-section")
 

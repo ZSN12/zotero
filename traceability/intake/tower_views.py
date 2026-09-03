@@ -2062,6 +2062,7 @@ def apply_side_reads(model: "EngineeringModel") -> int:
 
     node_map: Dict[Tuple[float, float, float], str] = {}
     made = 0
+    made_quarantined = 0
     for i, r in enumerate(reads):
         try:
             p1, p2 = list(r["from"]), list(r["to"])
@@ -2110,6 +2111,26 @@ def apply_side_reads(model: "EngineeringModel") -> int:
             bid = r.get("bar_id")
             if not bid or str(bid).startswith("UNLABELED"):
                 bid = f"UNLABELED_SIDE{i:04d}"
+            # P5 约束残差（2026-09-03）：sidegen BOM 长度交叉核验门。
+            # 实测（JC1 02 册）：件号 154 挂到节点详图短线（B6C，含
+            # 1M16X50 螺栓标注上下文），40mm BOM 杆被注入成 441.68mm
+            # recognized 杆——污染 pure 池且引爆 r_bom_length_match。
+            # 纪律：BOM 交叉核验「把冲突记录为待验证项，不悄悄改数据」——
+            # 偏差 >50% 且 BOM 行存在时，该侧读的件号挂接几乎必然错误，
+            # 打 bar_id_length_suspect 隔离进 review 队列（验证器 PENDING
+            # 路径），不再冒充 recognized 直读。50% 阈值远宽于验证器 3%，
+            # 只拦挂接错乱（节点详图/材料表线混入），不碰正常识别杆
+            # （正常侧读长度偏差实测 <10%）。
+            _sg_len = ((qx1 - qx2) ** 2 + (y1 - y2) ** 2 + (z1 - z2) ** 2) ** 0.5
+            _bom_dim = model.dimensions.get(f"dim_bom_length_{bid}")
+            _bom_len = None
+            try:
+                _bom_len = float(_bom_dim.value) if (
+                    _bom_dim is not None and _bom_dim.value is not None) else None
+            except (TypeError, ValueError):
+                _bom_len = None
+            _quarantined = bool(
+                _bom_len and _bom_len > 0 and _sg_len > _bom_len * 1.5)
             # P2 门禁对齐（2026-09-03）：sidegen 杆带合成 SourceRef
             # （validate_public_ir 门禁要求 tower_bar 必有来源可追溯；
             # 来源 = 侧视读取 + 具体册/handle，conf 如实降档）。
@@ -2120,12 +2141,7 @@ def apply_side_reads(model: "EngineeringModel") -> int:
                         if r.get("handle") else "side_read inject"),
                 confidence=float(r.get("confidence") or 0.5),
             )
-            model.add_component(Component(
-                id=f"sidegen__b{i:04d}_{face}",
-                name=f"[sidegen] {face} bar {i}",
-                kind="tower_bar",
-                source=_sg_src,
-                properties={
+            _sg_props = {
                     "bar_id": bid,
                     "section": r.get("section"),
                     "from_node": nids[0],
@@ -2140,9 +2156,24 @@ def apply_side_reads(model: "EngineeringModel") -> int:
                     "side_promoted": True,
                     "x_source": r.get("x_source"),
                     "confidence": r.get("confidence") or 0.5,
-                    "length_mm_3d": round(
-                        ((qx1 - qx2) ** 2 + (y1 - y2) ** 2 + (z1 - z2) ** 2) ** 0.5, 2),
-                },
+                    "length_mm_3d": round(_sg_len, 2),
+            }
+            if _quarantined:
+                _sg_props.update({
+                    "bar_id_length_suspect": True,
+                    "quarantine_reason": (
+                        f"side_read len {_sg_len:.0f}mm > 1.5×BOM {_bom_len:.0f}mm"
+                        "（件号挂接存疑：节点详图/材料表线混入侧读）"),
+                    # pure 池隔离：件号不可信的杆不得冒充直读能力
+                    "pure_excluded": True,
+                })
+                made_quarantined += 1
+            model.add_component(Component(
+                id=f"sidegen__b{i:04d}_{face}",
+                name=f"[sidegen] {face} bar {i}",
+                kind="tower_bar",
+                source=_sg_src,
+                properties=_sg_props,
                 tags=["side_read"],
             ))
             # P1 审计（2026-09-05）：sidegen 杆在展开 DAG 重建之后落盘，
@@ -2154,4 +2185,21 @@ def apply_side_reads(model: "EngineeringModel") -> int:
                 & set(model.components))
             made += 1
     df.properties["side_reads_applied"] = made
+    if made_quarantined:
+        # 隔离计数披露（交付报告/审计用）：BOM 交叉核验拦下的件号挂接
+        # 存疑侧读杆数量。这些杆仍在模型里（几何真实），但件号标记
+        # suspect、退出 pure 池——与「悄悄改数据」的红线相反，显式留痕。
+        df.properties["side_reads_bom_quarantined"] = made_quarantined
+    if made:
+        # P5 约束残差（2026-09-03）：sidegen 杆补跑 P4.3 件号长度阶梯。
+        # _strip_misassociated_bar_ids 在 expand_4_face_symmetry_model 末尾
+        # 运行，而 sidegen 杆在其后才注入（delivery/batch 管线末端）——
+        # 此前 sidegen 杆从不经过 strip(2.5)/suspect(1.03) 阶梯，
+        # r_bom_length_match 的中等超差（如 bar 110 +36%/+13%，
+        # 塔头侧读 z-snap 偏差）直接 FAILED 拦交付。同阶梯补跑后：
+        # 中等超差 → suspect（review 队列，PENDING 不拦）；极端错配
+        # （>2.5×）→ 剥离件号进 orphan 登记簿。4f 杆已在 expand 内跑过，
+        # 此处幂等（suspect 已标/已剥离的跳过），仅新增 sidegen 覆盖。
+        from .tower_symmetry import _strip_misassociated_bar_ids
+        _strip_misassociated_bar_ids(model)
     return made

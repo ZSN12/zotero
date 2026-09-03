@@ -15,7 +15,11 @@ def _root_stem(cid: str) -> str:
 
     * 四面展开实例 ``4f_<stem>_F/_B/_L/_R``：剥面后缀，F/B/L/R 共享一杆；
     * split/panel 细分链 ``<stem>__splitN[__splitM...]``：剥 __split 链，
-      同一识别线的所有细分段合并回一根（BOM 数的是整件，不是段）。
+      同一识别线的所有细分段合并回一根（BOM 数的是整件，不是段）；
+    * sidegen 侧读注入对 ``sidegen__bNNNN_l/_r``（P5 2026-09-03）：小写
+      l/r 是同一物理杆的直读 + 镜像孪生——此前只有大写四面后缀被剥，
+      孪生被计成 2 根物理杆，bar 122/140 数量 2>1 假冲突直接引爆
+      r_project_bom_master。
     其余后缀（_front_56 等母杆序号）保留——不同识别线是不同物理杆。
     """
     s = cid[3:] if cid.startswith("4f_") else cid
@@ -23,6 +27,8 @@ def _root_stem(cid: str) -> str:
         if s.endswith(suf):
             s = s[: -len(suf)]
             break
+    if s.startswith("sidegen__") and s.rsplit("_", 1)[-1] in ("l", "r"):
+        s = s.rsplit("_", 1)[0]
     while "__split" in s:
         s = s[: s.index("__split")]
     return s

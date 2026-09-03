@@ -1837,9 +1837,15 @@ def _strip_misassociated_bar_ids(
           同号多杆歧义属 review 队列，不自动剥离）；
         ratio < 0.4（识别不全）不剥离——几何问题是 Phase 5/7 战场，
         件号关联本身没错，如实报超差（诚实失败）。
+
+    P5（2026-09-03）追加：截面属性同阶梯——杆自带截面为板材/螺栓形态
+    而 BOM member 行为角钢时，属性按 BOM 权威值重挂（section_detached
+    存原值，几何/件号不动）。
     """
+    from .tower_bom import classify_bom_row
     _detached: List[str] = []
     _suspect: List[str] = []
+    _sec_detached: List[tuple] = []
     for cid, comp in model.components.items():
         if comp.kind != "tower_bar":
             continue
@@ -1870,7 +1876,22 @@ def _strip_misassociated_bar_ids(
             p["bar_id_length_suspect"] = True
             if bid not in _suspect:
                 _suspect.append(bid)
-    if _detached or _suspect:
+        # P5 约束残差（2026-09-03）：截面属性同阶梯。杆自带截面是板材/
+        # 螺栓形态（'-6X40'，材料表文字误挂）而同 bar_id 的 BOM member 行
+        # 是角钢（L40X3）→ 属性错挂（实测 bar 112 长度吻合 99% 但截面抄到
+        # 垫板行）。BOM member 行为权威：section_detached 存原值 + 置空，
+        # r_bom_section_match 不再被属性污染引爆。几何/件号不动。
+        _sec_dim = model.dimensions.get(f"dim_bom_section_{bid}")
+        _sec = str(p.get("section") or "")
+        if (_sec_dim is not None and _sec_dim.value is not None and _sec
+                and classify_bom_row(bid, str(_sec_dim.value)) == "member"
+                and classify_bom_row(bid, _sec) != "member"):
+            p["section_detached"] = _sec
+            p["section"] = str(_sec_dim.value)
+            p["section_source"] = "bom_member_row"
+            if bid not in _sec_detached:
+                _sec_detached.append((bid, _sec, str(_sec_dim.value)))
+    if _detached or _suspect or _sec_detached:
         _df = model.components.get("drawing_file")
         if _df is not None:
             _orphans = list(_df.properties.get("orphan_label_ids") or [])
@@ -1881,6 +1902,7 @@ def _strip_misassociated_bar_ids(
                 "orphan_label_ids": _orphans,
                 "bar_id_misassociated_stripped": sorted(_detached),
                 "bar_id_length_suspect": sorted(_suspect),
+                "section_attribute_detached": sorted(_sec_detached),
             })
 
 

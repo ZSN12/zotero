@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -27,6 +28,36 @@ from ..model import (
     SourceRef,
     SourceType,
 )
+
+
+# P5 约束残差（2026-09-03）：BOM 行分类器。guowang 合并 BOM 实测 204 行
+# 里 103 行是杆件（角钢），其余是垫板/螺栓/mangled 文本碎片，全部挤在
+# 同一 bar_id 命名空间——非杆件行建 dim_bom_* 交叉核验是范畴错误
+# （拿 5M16X40 螺栓行核 tower_bar 截面必然 FAILED，实测 r_bom_section_match
+# 的 10 根「截面不符」全部源于此）。分类不丢数据：所有行照常进 bom_row
+# 组件；只有 member 行才建交叉核验维度。
+_BAR_ID_RE = re.compile(r"^\d{1,4}[A-Za-z]?$")
+_STEEL_PREFIX_RE = re.compile(r"^(Q345|Q355|Q235|Q420|16MN)", re.IGNORECASE)
+
+
+def classify_bom_row(bar_id: str, section: str) -> str:
+    """BOM 行分类：member / plate / bolt / mangled。
+
+    member —— 杆件行（角钢截面，可选钢种前缀）→ 参与杆件交叉核验；
+    plate  —— 垫板/节点板行（'-6X40'、'Q345-14X260'）；
+    bolt   —— 螺栓行（'5M16X40'）；
+    mangled —— CAD 转义/列错位碎片（'\\\\M+5B9E6…'、bar_id 非件号形态）。
+    """
+    sid = (bar_id or "").strip()
+    sec = (section or "").strip()
+    if not sid or "\\M" in sid or "\\M" in sec or not _BAR_ID_RE.match(sid):
+        return "mangled"
+    sec_u = _STEEL_PREFIX_RE.sub("", sec).upper()
+    if sec_u.startswith("L") and any(c.isdigit() for c in sec_u):
+        return "member"
+    if re.match(r"^\d+M\d+", sec_u) or sec_u.startswith("M"):
+        return "bolt"
+    return "plate"
 
 
 def parse_bom_csv(csv_path: str | Path) -> List[Dict]:
@@ -71,6 +102,11 @@ def cross_check_bom(model: EngineeringModel, bom_rows: List[Dict]) -> Engineerin
 
     for row in bom_rows:
         bid = row["bar_id"]
+        # P5 约束残差（2026-09-03）：行分类落盘（不丢数据），非 member 行
+        # 不建交叉核验维度——螺栓/垫板行核 tower_bar 是范畴错误。
+        row_class = classify_bom_row(bid, row.get("section", ""))
+        row = dict(row)
+        row["row_class"] = row_class
         model.add_component(Component(
             id=f"bom_{bid}",
             name=f"BOM 行 {bid}",
@@ -78,6 +114,9 @@ def cross_check_bom(model: EngineeringModel, bom_rows: List[Dict]) -> Engineerin
             source=SourceRef(SourceType.VENDOR, "tower_bom.csv", confidence=0.95),
             properties=row,
         ))
+
+        if row_class != "member":
+            continue
 
         matched = bars_by_id.get(bid, [])
         # 优先挂到立面/主视图投影；没有匹配则挂到 BOM 行自身，保证引用不悬空
