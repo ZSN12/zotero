@@ -1425,7 +1425,8 @@
           ]
         ]
       },
-      "side_diag_synth": true
+      "side_diag_synth": true,
+      "diag_x2k": true
     },
     "35A1-JC1-05": {
       "enabled": true,
