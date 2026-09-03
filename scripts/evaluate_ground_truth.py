@@ -98,12 +98,21 @@ def main():
                                  allow_legacy=args.allow_legacy_semantics)
 
     # P0.6（2026-08-31）：评测参数与输入指纹在报告头部声明（绑定语义）。
+    # P1-4：dataset 名从 GT 路径推断（与 eval_binding.dataset 同源）。
     print(f"=== A2 几何检测（{args.view} 投影，Hungarian 一对一匹配）===")
     print(f"评测参数: cost=d1+d2 (endpoint_sum_cost_lt_tol) | tols={list(tols)} | "
-          f"dataset_split=development（JC1）")
+          f"dataset={Path(args.gt).stem.replace('_ground_truth', '')} "
+          f"| dataset_split=development")
     print(f"输入指纹: GT={_file_sha256(Path(args.gt))} | model={_file_sha256(Path(args.model))}")
     print(f"GT 物理杆件 {args.view} 投影: {result['n_gt']}（保留投影重合杆 multiplicity）")
     print(f"模型物理杆件（排除 derived）: {result['n_model']}")
+    # P2-3：GT 来源等级警示（GLB 反提取 GT 不得与其他塔并列呈报）
+    try:
+        _cav = (gt or {}).get("caveats") or []
+        for _c in _cav:
+            print(f"⚠️ GT 来源警示: {_c}")
+    except Exception:
+        pass
 
     # P0 口径诚实化：physical 口径含「用 GT canonical 标高重建的横隔/节间」，
     # 属借助 GT 的增强成分。对外汇报必须以纯 DXF 口径为主口径，辅助增量单列，
@@ -231,9 +240,17 @@ def main():
                           cwd=str(out_dir.resolve().parent)).stdout.strip()
     except Exception:
         _commit = "unknown"
+    # P2-3（2026-09-03 审计）：GT 来源等级披露——GLB 反提取的 GT（模型当
+    # GT）不得与 .mod/.NODE 直出 GT 并列呈报。binding 里带上 caveats，
+    # 报表/对比页读取时自动带出警示。
+    try:
+        _gt_caveats = list((gt or {}).get("caveats") or [])
+    except Exception:
+        _gt_caveats = []
     eval_binding = {
         "commit": _commit,
         "dataset_split": "development",
+        "gt_caveats": _gt_caveats,
         # P1-4（2026-09-03 审计）：数据集名从 GT 路径推断（ZC1/JC2 等
         # 多塔共用此脚本；此前硬编码 35A1-JC1 导致他塔 metrics 标注错误）。
         # _ground_truth 后缀剥掉，但保留 _mod 等派生后缀——同一塔的
