@@ -1287,8 +1287,10 @@ def expand_4_face_symmetry_model(
                       "过滤 no-op（检查 overlay beam_marker_levels_mm 披露）",
                       file=sys.stderr)
             elif len(_all_levels) < 3:
+                # k3 复审（2026-09-04）：<3 层时佐证面过窄、误杀风险不可控，
+                # 过滤不执行（no-op）——文案与行为保持一致，不写"继续执行"。
                 print(f"[dxf_horiz_level_corroboration] 层位并集仅 {len(_all_levels)} 层，"
-                      "佐证面过窄，误杀风险升高（继续执行但请复核层位表完备性）",
+                      "佐证面过窄，过滤 no-op（请复核 overlay beam_marker_levels_mm 披露）",
                       file=sys.stderr)
             else:
                 _to_exclude: List[Dict[str, Any]] = []
