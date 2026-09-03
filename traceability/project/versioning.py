@@ -138,7 +138,7 @@ def model_counts(model: dict) -> dict:
         "z_range_mm": [zmin, zmax] if zmin is not None else None,
         "base_segment": base,
     }
-    # P0 架构对齐（2026-09-05 审计）：证据层计数（观测按子类、假设按四态）
+    # P0 架构对齐（2026-09-03 审计）：证据层计数（观测按子类、假设按四态）
     if observations:
         result["observations"] = observations
     if hypotheses:
@@ -177,7 +177,7 @@ def collect_version_info(out_dir: Path, repo_root: Path,
         info["git_error"] = git["error"]
     if overlay_path.exists():
         info["overlay_sha"] = sha256_file(overlay_path)
-        # P0 审计（2026-09-05）：GT z-only 注入面在 version.json 里显式标注，
+        # P0 审计（2026-09-03）：GT z-only 注入面在 version.json 里显式标注，
         # 「默认开着且不标注」的状态结束。列出的键 = 该跑批实际启用的
         # GT 注入面（overlay 声明为准），对应评测口径需带 level-assisted
         # 说明（A2-dual-view-pure 等纯直读口径不包含这些注入）。
@@ -190,13 +190,32 @@ def collect_version_info(out_dir: Path, repo_root: Path,
             ]
             _active: dict = {k: _ov.get(k) for k in _gt_keys
                              if _ov.get(k) not in (None, False)}
-            # 跨度表只记条数不记全表（version.json 保持精简，
+            # 跨度表/层表覆写只记条数不记全表（version.json 保持精简，
             # 全表在 overlay 里，overlay_sha 已固定指纹）
             _wl = _ov.get("terminal_pair_span_whitelist")
             if isinstance(_wl, list) and _wl:
                 _active["terminal_pair_span_whitelist"] = f"{len(_wl)} pairs"
+            # P0-3（2026-09-03 审计）：多塔覆写表也要登记——ZC1 用自己的
+            # 33 层 z 表跑 level-assisted，若只看 use_gt_platform_levels:
+            # true 会误以为用的是 JC1 canonical 15 层表。
+            for _ovk, _label in (
+                ("gt_platform_levels_override", "platform levels"),
+                ("gt_terminal_levels_override", "terminal levels"),
+                ("gt_diaphragm_levels_override", "diaphragm levels"),
+            ):
+                _ovv = _ov.get(_ovk)
+                if isinstance(_ovv, list) and _ovv:
+                    _active[_ovk] = f"{len(_ovv)} z-levels ({_label})"
             if _ov.get("panel_level_source") == "gt":
                 _active["panel_level_source"] = "gt"
+            # 终止层表面：无论来自 JC1 canonical 硬编码还是 overlay 覆写，
+            # 只要 terminal_pair_structure 生成器启用就显式登记（此前该
+            # 注入面从未被命名，评测口径边界模糊）。
+            if _ov.get("terminal_pair_structure"):
+                if "gt_terminal_levels_override" in _active:
+                    _active["terminal_levels_injected"] = "override table"
+                else:
+                    _active["terminal_levels_injected"] = "JC1 canonical table"
             if _active:
                 info["gt_injected"] = {
                     "surfaces": _active,

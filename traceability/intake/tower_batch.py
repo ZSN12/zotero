@@ -229,6 +229,11 @@ def merge_cross_file_views(
     beat_by_sheet: Dict[str, Any] = {}
     source_files: List[str] = []
     skipped_sheets: List[str] = []
+    # P0-2/P1-1（2026-09-03 审计）：聚合各册 evidence_layer 普查——
+    # 此前合并丢弃 per-sheet drawing_file（只透传节拍锚点），
+    # observations 普查与 drawing_file→dim 观测的 DAG 边全部丢失，
+    # 最终 model.json 只剩 tower_symmetry 后写的 hypotheses。
+    _ev_census: Dict[str, Dict[str, int]] = {}
 
     for model in models:
         stem = _model_stem(model) or model.name
@@ -248,6 +253,17 @@ def merge_cross_file_views(
             _ba = df.properties.get("dimension_beat_anchors")
             if isinstance(_ba, dict) and _ba.get("vy") and _ba.get("z"):
                 beat_by_sheet[stem] = _ba
+            # P0-2：evidence_layer 普查跨册累加（observations/hypotheses
+            # 各子键计数求和；hypotheses 后面由 tower_symmetry 重写最终值）
+            _el = df.properties.get("evidence_layer") or {}
+            if isinstance(_el, dict):
+                for _k, _sub in _el.items():
+                    if not isinstance(_sub, dict):
+                        continue
+                    _bucket = _ev_census.setdefault(str(_k), {})
+                    for _kk, _vv in _sub.items():
+                        if isinstance(_vv, int):
+                            _bucket[str(_kk)] = _bucket.get(str(_kk), 0) + _vv
 
         for cid, comp in model.components.items():
             if comp.kind == "drawing_file":
@@ -292,9 +308,13 @@ def merge_cross_file_views(
                 if nid and f"{prefix}{nid}" in merged.components:
                     new_bar.properties[end] = f"{prefix}{nid}"
 
-    # P0 架构对齐（2026-09-05 审计）：跨文件合并保留依赖边（前缀重指）。
+    # P0 架构对齐（2026-09-03 审计）：跨文件合并保留依赖边（前缀重指）。
     # 此前 dependencies 不随合并迁移——证据层（杆 → obs 观测）与
     # 镜像杆（→front）的 DAG 边在合并模型里全部丢失。
+    # P1-1 特例：源节点是 per-sheet drawing_file 时不加前缀——组件循环
+    # 跳过了 drawing_file（不复制 per-sheet 实例），前缀重指会指向
+    # 不存在的 {stem}__drawing_file。统一挂到合并模型的 drawing_file：
+    # 「改任一册 DIM 标注 → 合并标定结果 stale」的传播链由此接通。
     for model in models:
         stem = _model_stem(model) or model.name
         prefix = f"{stem}__"
@@ -302,7 +322,10 @@ def merge_cross_file_views(
         for node, ups in model.dependencies.items():
             if not ups:
                 continue
-            new_node = f"{prefix}{node}" if node in _ids else node
+            new_node = (
+                "drawing_file" if node == "drawing_file"
+                else (f"{prefix}{node}" if node in _ids else node)
+            )
             new_ups = {f"{prefix}{u}" if u in _ids else u for u in ups}
             merged.dependencies.setdefault(new_node, set()).update(new_ups)
 
@@ -331,6 +354,10 @@ def merge_cross_file_views(
     if beat_by_sheet:
         # P2.1：各册 DIMENSION 节拍锚点（key = stem/drawing_view）
         _merged_df_props["dimension_beat_anchors_by_sheet"] = beat_by_sheet
+    if _ev_census:
+        # P0-2：跨册聚合的证据层普查（observations 计数 + 早期
+        # hypotheses 阶段值；tower_symmetry 稍后 merge 覆写最终值）
+        _merged_df_props["evidence_layer"] = _ev_census
     merged.add_component(Component(
         id="drawing_file",
         name="跨文件合并",

@@ -234,7 +234,12 @@ def main():
     eval_binding = {
         "commit": _commit,
         "dataset_split": "development",
-        "dataset": "35A1-JC1",
+        # P1-4（2026-09-03 审计）：数据集名从 GT 路径推断（ZC1/JC2 等
+        # 多塔共用此脚本；此前硬编码 35A1-JC1 导致他塔 metrics 标注错误）。
+        # _ground_truth 后缀剥掉，但保留 _mod 等派生后缀——同一塔的
+        # 两份不同来源 GT（如 35A2-JC2 vs 35A2-JC2_mod）必须区分，
+        # 否则两份指标会混进同一个 dataset 名下。
+        "dataset": Path(args.gt).stem.replace("_ground_truth", ""),
         "gt_sha256": _file_sha256(Path(args.gt)),
         "model_sha256": _file_sha256(Path(args.model)),
         "view": args.view,

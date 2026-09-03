@@ -2062,7 +2062,7 @@ def extract_tower_from_dxf(
                 model, msp, detail_regions, stem, dxf_path, overlay=layer_map_path,
             )
 
-    # ---- 7) 证据层（P0 架构对齐，2026-09-05 审计）----
+    # ---- 7) 证据层（P0 架构对齐，2026-09-03 审计）----
     # 件号文字关联提升为 observation 组件（稳定 ID + confidence），
     # 杆件 DAG 登记到其证据观测（改标注文字 → 杆 stale）。
     # 纯增量：新组件 kind=observation，不触碰既有杆/节点计数与评测。
@@ -2095,11 +2095,28 @@ def extract_tower_from_dxf(
                     stem, _e.get("label_component_id"))
                 if _oid in model.components:
                     depend_on_observations(model, _bc.id, [_oid])
+        # P1-1（2026-09-03 审计）：DIM 观测 → 标定结果的 DAG 入边。
+        # drawing_file 组件承载 scale_calibration（regions 标定）与
+        # dimension_beat_anchors（节拍锚定）——两者都由 DIM 样本推导，
+        # 改任一标注应传播 stale 到标定结果。观测 ID 形如
+        # obs_{stem}_dim_{handle}，与 register_dim_observations 一致。
+        _dim_obs_ids = [
+            cid for cid in model.components
+            if cid.startswith(f"obs_{stem}_dim_")
+            and (model.components[cid].properties.get("observation_kind")
+                 == "dim_sample")
+        ]
+        if _dim_obs_ids:
+            depend_on_observations(
+                model, "drawing_file", _dim_obs_ids)
         _df_ev = model.components.get("drawing_file")
         if _df_ev is not None:
-            _df_ev.properties["evidence_layer"] = {
-                "observations": observation_census(model),
-            }
+            # P0-2（2026-09-03 审计）：merge 而非整体赋值——tower_symmetry
+            # 稍后也要写 evidence_layer.hypotheses，赋值会互相覆盖，
+            # 最终 model.json 只剩最后一个写者的键。
+            _df_ev.properties.setdefault("evidence_layer", {}).update(
+                {"observations": observation_census(model)}
+            )
 
     return model
 

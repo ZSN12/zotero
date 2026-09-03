@@ -1,4 +1,4 @@
-"""P0 架构对齐（2026-09-05 审计）：observations / hypotheses 证据层。
+"""P0 架构对齐（2026-09-03 审计）：observations / hypotheses 证据层。
 
 背景：杆件的证据（件号文字关联、DIMENSION 标注样本）此前埋在
 tower_bar.bar_id_evidence / drawing_file 报告字段里——没有组件身份、
@@ -127,9 +127,15 @@ def register_dim_observations(
         obs_id = f"obs_{stem}_dim_{handle}"
         if obs_id in model.components:
             continue
-        val = getattr(s, "value", None)
+        # P0-1（2026-09-03 审计）：DimSample 的值字段是 text_value
+        # （scale_calibration.py:59），不是 value——此前读错字段名导致
+        # 463 条 dim 观测的 value 全为 null，标注→标定的 stale 传播
+        # 链条失去证据载体。dict 分支同时兼容两种键名。
+        val = getattr(s, "text_value", None)
+        if val is None:
+            val = getattr(s, "value", None)
         if val is None and isinstance(s, dict):
-            val = s.get("value")
+            val = s.get("text_value", s.get("value"))
         try:
             val = float(val) if val is not None else None
         except (TypeError, ValueError):

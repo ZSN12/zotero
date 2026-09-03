@@ -1,4 +1,4 @@
-"""P0 架构对齐（2026-09-05 审计）：observations / hypotheses 证据层测试。
+"""P0 架构对齐（2026-09-03 审计）：observations / hypotheses 证据层测试。
 
 对照审计要求：
   * observations：bar_id_evidence / DIM 样本 → 独立 component kind
@@ -113,14 +113,40 @@ class DimObservationTest(unittest.TestCase):
         m = _model()
         made = register_dim_observations(
             m, "S1", "t.dxf",
-            [{"handle": "777", "value": 1600.0},
-             {"handle": None, "value": 0.0}],   # 无 handle 跳过
+            [{"handle": "777", "text_value": 1600.0},
+             {"handle": None, "text_value": 0.0}],   # 无 handle 跳过
             context="scale_calibration")
         self.assertEqual(made, ["obs_S1_dim_777"])
         obs = m.components["obs_S1_dim_777"]
         self.assertEqual(obs.properties["observation_kind"], "dim_sample")
         self.assertAlmostEqual(obs.properties["value"], 1600.0)
         self.assertEqual(observation_census(m), {"dim_sample": 1})
+
+    def test_real_dimsample_objects(self):
+        """P0-1 回归：真实 DimSample（text_value 字段）的值必须被记录。
+
+        此前 fixture 只喂 dict（value 键），把「读错字段名」的 bug 永久
+        掩盖——生产路径喂的是 DimSample 对象，值字段叫 text_value。
+        """
+        from traceability.intake.scale_calibration import DimSample
+        m = _model()
+        made = register_dim_observations(
+            m, "S2", "t.dxf",
+            [DimSample(text_value=5800.0, measured_distance=116.0,
+                       dx=116.0, dy=0.0, midpoint=(10.0, 20.0),
+                       handle="ABC1"),
+             DimSample(text_value=1000.0, measured_distance=20.0,
+                       dx=0.0, dy=20.0, midpoint=(11.0, 21.0),
+                       handle="ABC2")],
+            context="scale_calibration")
+        self.assertEqual(len(made), 2)
+        self.assertAlmostEqual(m.components["obs_S2_dim_ABC1"].properties["value"], 5800.0)
+        self.assertAlmostEqual(m.components["obs_S2_dim_ABC2"].properties["value"], 1000.0)
+        # 旧键名 value 的 dict 仍兼容（过渡期输入）
+        made2 = register_dim_observations(
+            m, "S3", "t.dxf",
+            [{"handle": "999", "value": 77.0}], context="scale_calibration")
+        self.assertAlmostEqual(m.components["obs_S3_dim_999"].properties["value"], 77.0)
 
 
 class HypothesisTest(unittest.TestCase):
@@ -210,6 +236,59 @@ class ExpansionSurvivalTest(unittest.TestCase):
         ups = m.dependencies.get(front_id) or set()
         self.assertIn(obs_id, ups,
                       "展开后杆 → 观测证据边必须按新 ID 重挂")
+
+
+class EvidenceLayerMergeTest(unittest.TestCase):
+    """P0-2 契约：observations 与 hypotheses 两个普查键共存于 model.json。
+
+    tower_dxf（observations）与 tower_symmetry（hypotheses）先后向
+    drawing_file.properties["evidence_layer"] 写入——此前两处都是整体
+    赋值，后者覆盖前者，最终交付物只剩 hypotheses 一个键（单看
+    model.json 会误判「没有观测层」）。契约：merge 写入。
+    """
+
+    def test_observations_and_hypotheses_coexist(self):
+        m = _model()
+        df = m.components["drawing_file"]
+        # 模拟 tower_dxf 的写入点（merge 语义）
+        df.properties.setdefault("evidence_layer", {}).update(
+            {"observations": observation_census(m)})
+        # 模拟 tower_symmetry 的写入点（merge 语义）
+        df.properties.setdefault("evidence_layer", {}).update(
+            {"hypotheses": hypothesis_census(m)})
+        ev = df.properties["evidence_layer"]
+        self.assertIn("observations", ev)
+        self.assertIn("hypotheses", ev)
+
+
+class DimObservationDagTest(unittest.TestCase):
+    """P1-1 契约：DIM 观测 → 标定结果的 stale 传播链。
+
+    tower_dxf 的 drawing_file 组件承载 scale_calibration 与
+    dimension_beat_anchors——改 DIM 标注必须传播 stale 到该组件
+    （463 条 dim 观测此前 0 条 DAG 入边，链条空转）。
+    """
+
+    def test_drawing_file_depends_on_dim_observations(self):
+        from traceability.intake.scale_calibration import DimSample
+        m = _model()
+        made = register_dim_observations(
+            m, "S1", "t.dxf",
+            [DimSample(text_value=5800.0, measured_distance=116.0,
+                       dx=116.0, dy=0.0, midpoint=(10.0, 20.0),
+                       handle="D1"),
+             DimSample(text_value=1000.0, measured_distance=20.0,
+                       dx=0.0, dy=20.0, midpoint=(11.0, 21.0),
+                       handle="D2")],
+            context="scale_calibration")
+        # 模拟 tower_dxf 的接线：drawing_file 依赖全部 dim 观测
+        depend_on_observations(m, "drawing_file", made)
+        self.assertEqual(
+            m.dependencies.get("drawing_file"), set(made))
+        # 改一条 DIM 标注 → 标定结果（drawing_file）stale
+        stale = m.invalidate({made[0]})
+        self.assertIn("drawing_file", stale,
+                      "改 DIM 观测必须传播 stale 到标定结果组件")
 
 
 if __name__ == "__main__":

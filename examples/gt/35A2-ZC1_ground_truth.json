@@ -1,5 +1,5 @@
 {
- "name": "35A1-JC1 标准 30m 呼高单座独立铁塔 (计算文件 .NODE + GIM .mod)",
+ "name": "35A2-ZC1 转角塔 ZC1 (GIM .mod + .NODE 计算文件)",
  "source": "/Users/zsn/Downloads/输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)/GIM/35A2/35A2-ZC1/35A2-ZC1-GIM输出/MOD/35A2-ZC1.mod",
  "nodes": {
   "10": [
