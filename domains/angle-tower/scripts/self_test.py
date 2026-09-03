@@ -40,7 +40,15 @@ def gate_tests() -> bool:
     try:
         r = run([sys.executable, "-m", "pytest", "tests/",
                  "-p", "no:cacheprovider", "-q"], timeout=600)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        # k3 审查（2026-09-04）：超时后保留 pytest 已产出的尾部输出，
+        # 给挂死排查留线索（capture_output=True 下 TimeoutExpired.output
+        # 携带已被捕获的部分输出）。
+        partial = exc.stdout if isinstance(exc.stdout, str) else (
+            (exc.stdout or b"").decode("utf-8", errors="replace"))
+        if partial:
+            print("--- 超时前 pytest 输出尾部 ---", flush=True)
+            print("\n".join(partial.strip().splitlines()[-8:]), flush=True)
         print("FAIL: 单测 600s 超时（疑似挂死，需人工排查）", flush=True)
         return False
     ok = r.returncode == 0

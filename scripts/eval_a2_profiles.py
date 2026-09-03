@@ -65,7 +65,15 @@ def _resolve_overlay(model_path: Path, cli_value: Optional[str]) -> Optional[Pat
     """
     if cli_value:
         p = Path(cli_value)
-        return p if p.exists() else None
+        if p.exists():
+            return p
+        # k3 审查（2026-09-04）：CLI 显式路径打错时静默 None 会让用户拿到
+        # overlay_sha256=null 还以为走了指纹链——显式报错退出（与
+        # version.json 反查分支的 stderr 提示对齐，但 CLI 显式输入是用户
+        # 主动行为，直接 fail-fast）。
+        print(f"[Bug F] --overlay 显式指定的文件不存在: {cli_value}",
+              file=sys.stderr)
+        sys.exit(2)
     version_path = model_path.parent / "version.json"
     if version_path.exists():
         try:

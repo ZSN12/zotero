@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import copy
 import math
+import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..model import Component, EngineeringModel, SourceRef, SourceType
 
@@ -1240,9 +1241,8 @@ def expand_4_face_symmetry_model(
         _b["pure_excluded"] = "marker_head_uncorroborated"
         _n_ms_head += 1
     if _ms_head_z_min is None:
-        import sys as _sys
         print("[marker_synth_head_filter] overlay 未配置 marker_synth_head_z_min_mm，"
-              "头部佐证过滤关闭（JC1 特例阈值不再默认外溢）", file=_sys.stderr)
+              "头部佐证过滤关闭（JC1 特例阈值不再默认外溢）", file=sys.stderr)
     elif _n_ms_head:
         _df_ms = model.components.get("drawing_file")
         if _df_ms is not None:
@@ -1264,10 +1264,15 @@ def expand_4_face_symmetry_model(
     # （z-only 设计常数，已在 overlay 披露）——杆件的 z 窗可能由相邻册
     # 表覆盖（实测 07 窗 z=6500 平台横杆由 06 册直读而 06 册自身表无
     # 6500，仅用来源册表的全量 A/B 误杀跨册 TP −5 reshuffle）。
+    # k3 审查（2026-09-04）加固：层位并集为空/过小（<3 层）时 stderr 告警
+    # 留痕；除名改为两阶段事务（先收集后打标），异常时零污染。
+    # 前提说明：L 只计 dz/dx 两分量——face_bars 均为同一 face 平面内杆
+    # （节点 y 恒等于该面深度），dy≡0，两分量即全长度。
     _hlm_cfg = spec.get("dxf_horiz_level_corroboration")
     _hlm_enabled = bool(_hlm_cfg.get("enabled")) if isinstance(_hlm_cfg, dict) else False
     _hlm_tol = float(_hlm_cfg.get("tol_mm", 300.0)) if isinstance(_hlm_cfg, dict) else 300.0
     _n_hlm = 0
+    _hlm_levels_n = 0
     if _hlm_enabled:
         try:
             from .centerline_extract import _overlay_cfg, stems_with_centerline_extract
@@ -1276,7 +1281,17 @@ def expand_4_face_symmetry_model(
                 _ce2 = _overlay_cfg(_st, overlay) or {}
                 _all_levels += [float(v) for v in (_ce2.get("beam_marker_levels_mm") or [])]
             _all_levels = sorted(set(_all_levels))
-            if _all_levels:
+            _hlm_levels_n = len(_all_levels)
+            if not _all_levels:
+                print("[dxf_horiz_level_corroboration] 全塔层位表并集为空，"
+                      "过滤 no-op（检查 overlay beam_marker_levels_mm 披露）",
+                      file=sys.stderr)
+            elif len(_all_levels) < 3:
+                print(f"[dxf_horiz_level_corroboration] 层位并集仅 {len(_all_levels)} 层，"
+                      "佐证面过窄，误杀风险升高（继续执行但请复核层位表完备性）",
+                      file=sys.stderr)
+            else:
+                _to_exclude: List[Dict[str, Any]] = []
                 for _b in face_bars:
                     if str(_b.get("geometry_origin") or "") != "dxf_geom":
                         continue
@@ -1293,8 +1308,10 @@ def expand_4_face_symmetry_model(
                     _zm2 = (float(_f2[2]) + float(_t2[2])) / 2.0
                     if any(abs(_zm2 - _v2) <= _hlm_tol for _v2 in _all_levels):
                         continue
+                    _to_exclude.append(_b)
+                for _b in _to_exclude:
                     _b["pure_excluded"] = "dxf_horiz_off_level"
-                    _n_hlm += 1
+                _n_hlm = len(_to_exclude)
         except Exception as _exc_hlm:
             print(f"[dxf_horiz_level_corroboration] 过滤异常（跳过）: {_exc_hlm!r}",
                   file=sys.stderr)
@@ -1304,7 +1321,7 @@ def expand_4_face_symmetry_model(
                 _df_hlm.properties["dxf_horiz_level_filter"] = {
                     "n_reclassified": _n_hlm,
                     "tol_mm": _hlm_tol,
-                    "levels_union": len(_all_levels),
+                    "levels_union": _hlm_levels_n,
                 }
 
     # S4 贪心共线拼接（Phase 2）：把断裂碎片杆拼回整杆。
