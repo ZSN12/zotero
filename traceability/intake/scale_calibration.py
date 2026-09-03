@@ -33,6 +33,7 @@ import math
 import re
 from dataclasses import dataclass
 from statistics import median
+from typing import Optional, Tuple
 from typing import Any, Dict, List, Optional, Tuple
 
 #: 常见图纸比例档位（含中间档 2.5，用于四舍五入归一）。
@@ -60,6 +61,7 @@ class DimSample:
     dx: float                  # defpoint3.x - defpoint2.x
     dy: float                  # defpoint3.y - defpoint2.y
     midpoint: Tuple[float, float]  # (defpoint2 + defpoint3) / 2
+    handle: Optional[str] = None   # DXF 实体句柄（证据层观测 ID 用）
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +144,7 @@ def extract_dim_samples(msp) -> List[DimSample]:
             dx=dx,
             dy=dy,
             midpoint=((p2[0] + p3[0]) / 2.0, (p2[1] + p3[1]) / 2.0),
+            handle=str(getattr(e.dxf, "handle", "") or "") or None,
         ))
     return samples
 

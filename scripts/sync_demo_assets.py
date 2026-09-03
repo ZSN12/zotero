@@ -61,6 +61,13 @@ ASSET_MANIFEST: List[Tuple[str, str, bool]] = [
     ("review_queue.json", "review_queue.json", True),
     ("diff.glb", "diff.glb", False),
     ("diff_report.json", "diff_report.json", False),
+    # A4（产品观感）：权威塔资产（L0 canonical/GT）进统一收口链——
+    # compare 页默认加载 latest_deliver/canonical.glb（M1–M6 模块渐变），
+    # canonical.bar_map.json 提供 权威塔杆件→角色 映射（点击信息卡）。
+    # 可选：canonical 由 deliver_project 的 CanonicalTower 导出，缺失时
+    # compare 页自动回退 demo 根目录 gt_reference.glb（diagnose 产物）。
+    ("canonical.glb", "canonical.glb", False),
+    ("canonical.bar_map.json", "canonical.bar_map.json", False),
     # Phase 6.5：详图页（节点板样例数据源），缺失不影响其余资产
     ("sheets/35A1-JC1-03.json", "sheets/35A1-JC1-03.json", False),
 ]

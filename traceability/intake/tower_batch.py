@@ -292,6 +292,20 @@ def merge_cross_file_views(
                 if nid and f"{prefix}{nid}" in merged.components:
                     new_bar.properties[end] = f"{prefix}{nid}"
 
+    # P0 架构对齐（2026-09-05 审计）：跨文件合并保留依赖边（前缀重指）。
+    # 此前 dependencies 不随合并迁移——证据层（杆 → obs 观测）与
+    # 镜像杆（→front）的 DAG 边在合并模型里全部丢失。
+    for model in models:
+        stem = _model_stem(model) or model.name
+        prefix = f"{stem}__"
+        _ids = set(model.components) | set(model.dimensions)
+        for node, ups in model.dependencies.items():
+            if not ups:
+                continue
+            new_node = f"{prefix}{node}" if node in _ids else node
+            new_ups = {f"{prefix}{u}" if u in _ids else u for u in ups}
+            merged.dependencies.setdefault(new_node, set()).update(new_ups)
+
     # 合并 drawing_file：指向主立面 stem（供 view_regions 查找 overlay）
     primary = source_files[0] if source_files else "cross_file"
     for stem in source_files:

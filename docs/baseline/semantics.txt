@@ -1,8 +1,44 @@
-=== 语义计数 ===
-  reconstructed: 3651
-  recognized: 1217
-  derived: 498
-total_bars: 5366
-nonderived_bars: 4868
-projection_refs覆盖: 0/4868 = 0.0%
-derived_from可解析: 0
+=== 语义计数（2026-09-05 重测，对应 out/35A1-JC1-full-deliver） ===
+  total_bars: 3730
+  projection_refs 覆盖: 913/3730 = 24.5%
+    其中 recognized 335 根中 287 根带 refs = 85.7%（源头证据链基本完好）
+  真实缺口归因（无 refs 的杆，按 geometry_origin）：
+    panel_template_completion 1586 + terminal_pair_gen 608 +
+    diaphragm_reconstructed 338 + derived_4face 80 +
+    derived_parametric_base 44 + side_direct 37（模板/参数化生成杆
+    天然无 2D 投影出处——非断链，是生成机制使然）
+  derived_from 可解析: 四面展开阶段 4.3 已把镜像杆 derived_from 重写
+    为 front 面物理杆（可解析），见 tower_symmetry.py。
+
+=== 历史声明更正 ===
+  旧文件写 "projection_refs覆盖: 0/4868 = 0.0%" —— 已过时。2026-09-05
+  实测 913/3730 = 24.5%；recognized 源头证据链 85.7% 完好。旧 0.0%
+  对应早期（杆数 5366 时代）的测量或未跑证据回填。基线文件无生成
+  脚本、无人维护是已知风险；本文件由本轮复核手动更新。
+
+=== DAG 覆盖（2026-09-05 P1 审计后） ===
+  旧态：3698 根杆仅 570 有入边（15.4%）——front 杆 derived_from 指向
+  展开前旧 ID、生成杆指向生成器标签，均被 DAG 重建跳过；tower_node
+  0 入边。修复（tower_symmetry.py 展开重建 + tower_views.py sidegen）：
+  每杆登记端点节点 + drawing_file 上游边。契约测试
+  test_dag_bar_coverage_contract 门槛 98%。运行时真值以 model.json
+  dependencies 字段实测为准（本文件不固化数字）。
+
+=== GT 注入面登记（2026-09-05 P0 审计后） ===
+  z-only 注入面（层表/跨度表/横隔层）以 overlay 声明为准，
+  version.json 自动标注 gt_injected.surfaces；terminal_pair_span_whitelist
+  已从 debug/gt_profile 硬编码迁移到 overlay（换塔只改配置，新塔未
+  声明则生成器跳过留痕）。x/y 坐标注入仍严禁（红线）。
+
+=== 证据层（2026-09-05 P0 架构对齐） ===
+  observation 组件（kind=observation）：件号文字关联
+  （obs_{stem}_label_{handle}）与 DIMENSION 标注样本
+  （obs_{stem}_dim_{handle}），稳定 ID + confidence；杆件 DAG 登记
+  到其证据观测（改标注 → 杆 stale）。
+  hypothesis 组件（kind=hypothesis）：斜杆拓扑解释候选四态
+  proposed/accepted/rejected/superseded，拒绝原因
+  （span_off_grid/duplicate_h/panel_crossing）显式落盘
+  （reject_reason 字段），ID 随层对稳定不随分数漂移。
+  开关 overlay evidence_layer（默认开）。四面展开 _KEEP_KINDS
+  放行（证据身份跨展开存活）。计数见 drawing_file.evidence_layer
+  （observations/hypotheses census）。

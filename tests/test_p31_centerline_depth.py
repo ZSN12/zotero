@@ -80,9 +80,9 @@ class TestDiaphragmDepthFilter(unittest.TestCase):
             hw_tol_ratio=0.2,
             level_validation_report=report,
         )
-        # P3.7：22 杆双层十字拓扑 + P3.7c y 向全宽梁 1 根 = 23 杆
-        # （中心对角 2 根替代原内十字贯通 2 杆，每层净 +1）。
-        self.assertEqual(len(bars), 23)
+        # P3.7：22 杆双层十字拓扑 + P3.7c y 向全宽梁 1 根
+        # + P3.13 内十字 y 贯通 2 根 = 25 杆/层。
+        self.assertEqual(len(bars), 25)
 
     def test_filter_diaphragm_not_on_leg(self):
         z = 14000.0

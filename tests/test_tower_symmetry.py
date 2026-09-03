@@ -247,6 +247,93 @@ class AppliesToRetargetTest(unittest.TestCase):
         )
 
 
+class ExpandDagRebuildTest(unittest.TestCase):
+    """P0 修复（2026-09-05）：四面展开后依赖 DAG 不得清空。
+
+    契约：改动沿 DAG 传播 stale（Skill contract / staleness 机制）。
+    展开重建组件 ID 后旧图悬空——此前直接 model.dependencies = {} 清空
+    （DAG 契约失效）。修复后按新 ID 重建：镜像杆 → front 杆；
+    dimension/rule → applies_to 目标。
+    """
+
+    def test_expand_rebuilds_dag_and_propagates_stale(self):
+        from traceability.intake.tower_symmetry import expand_4_face_symmetry_model
+        m = _make_model()
+        expand_4_face_symmetry_model(m, add_diaphragms=False, weld_corner_legs=False)
+        # 1. DAG 非空：镜像杆 derived_from → front 杆的边存在
+        self.assertTrue(
+            m.dependencies,
+            "四面展开后 dependencies 必须按新组件 ID 重建，不得清空",
+        )
+        bar_edges = {
+            n: ups for n, ups in m.dependencies.items()
+            if n in m.components and m.components[n].kind == "tower_bar"
+        }
+        self.assertTrue(bar_edges, "至少存在镜像杆 → front 杆的 DAG 边")
+        # 2. 边的两端都在新组件集内（无悬空引用）
+        known = set(m.components) | set(m.dimensions) | set(m.rules)
+        for node, ups in m.dependencies.items():
+            self.assertIn(node, known, f"DAG 节点 {node} 悬空")
+            for u in ups:
+                self.assertIn(u, known, f"DAG 边 {node}→{u} 上游悬空")
+        # 3. 失效传播：invalidate(front 杆) 必须波及其镜像下游
+        edge_node, edge_ups = next(iter(bar_edges.items()))
+        stale = m.invalidate(set(edge_ups))
+        self.assertIn(
+            edge_node, stale,
+            f"invalidate({edge_ups}) 必须沿 DAG 传播到下游镜像 {edge_node}",
+        )
+
+    def test_rule_applies_to_list_edges(self):
+        """Rule.applies_to 为 list 时 DAG 边逐目标登记（防 TypeError 回归）。"""
+        from traceability.intake.tower_symmetry import expand_4_face_symmetry_model
+        from traceability.model import Rule
+        m = _make_model()
+        bar_ids = [c.id for c in m.components.values() if c.kind == "tower_bar"]
+        m.add_rule(Rule(id="r_list", name="列表规则", description="",
+                        applies_to=bar_ids))
+        expand_4_face_symmetry_model(m, add_diaphragms=False, weld_corner_legs=False)
+        # 不抛 TypeError 且 rule 节点入 DAG
+        self.assertIn("r_list", m.dependencies)
+        self.assertTrue(m.dependencies["r_list"])
+
+    def test_dag_bar_coverage_contract(self):
+        """P1 审计（2026-09-05）契约：DAG 杆覆盖率不得回退。
+
+        展开重建后每根 tower_bar 必须有 ≥1 条上游边（端点节点和/或
+        drawing_file / 镜像→front）。孤岛杆 = 「改源头不失效」的静默
+        契约破坏——此前 84.6% 杆无入边。门槛 0.98 而非 1.0：允许极少数
+        无端点引用的杆存在（生成器输出未绑节点），但整体覆盖率必须
+        停留在「几乎全覆盖」。
+        """
+        from traceability.intake.tower_symmetry import expand_4_face_symmetry_model
+        m = _make_model()
+        expand_4_face_symmetry_model(m, add_diaphragms=False, weld_corner_legs=False)
+        bars = [c for c in m.components.values() if c.kind == "tower_bar"]
+        self.assertTrue(bars, "测试模型必须有杆")
+        covered = sum(
+            1 for c in bars
+            if m.dependencies.get(c.id)
+        )
+        ratio = covered / len(bars)
+        self.assertGreaterEqual(
+            ratio, 0.98,
+            f"DAG 杆覆盖率 {ratio:.1%}（{covered}/{len(bars)}）低于 98% 契约门槛"
+            "——存在孤岛杆，改源头不传播 stale",
+        )
+        # 节点级传播：invalidate 某节点必须波及引用它的杆
+        node_ids = [c.id for c in m.components.values()
+                    if c.kind == "tower_node"]
+        self.assertTrue(node_ids)
+        probe = next((n for n in node_ids
+                      if m.downstream_of(n)), node_ids[0])
+        stale = m.invalidate({probe})
+        self.assertTrue(
+            stale & {c.id for c in bars},
+            f"invalidate(节点 {probe}) 必须沿 DAG 传播到引用该节点的杆",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 

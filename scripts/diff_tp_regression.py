@@ -83,8 +83,13 @@ def diff_tp_regression(
 
     base_full = _pick_sweep(base_eval, "full")
     cmp_full = _pick_sweep(cmp_eval, "full")
-    base_pure = _pick_sweep(base_eval, "pure_dxf")
-    cmp_pure = _pick_sweep(cmp_eval, "pure_dxf")
+    # P0 修复（2026-09-05）：eval_a2_multi_caliber 返回 key "pure"（P1
+    # 五层口径重构 94c7fad 起），旧名 "pure_dxf" 只存在于
+    # eval_a2_dual_caliber。双 key 兼容，否则 pure 层 diff 恒空。
+    base_pure = (_pick_sweep(base_eval, "pure")
+                 or _pick_sweep(base_eval, "pure_dxf"))
+    cmp_pure = (_pick_sweep(cmp_eval, "pure")
+                or _pick_sweep(cmp_eval, "pure_dxf"))
 
     base_matched = _matched_gt_ids(base_eval, tol)
     cmp_matched = _matched_gt_ids(cmp_eval, tol)

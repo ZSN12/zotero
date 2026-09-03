@@ -100,6 +100,8 @@ def model_counts(model: dict) -> dict:
     param_bars = 0
     param_zmin: Optional[float] = None
     param_zmax: Optional[float] = None
+    observations: Dict[str, int] = {}
+    hypotheses: Dict[str, int] = {}
     for c in (model.get("components") or {}).values():
         props = c.get("properties") or {}
         if c.get("kind") == "tower_bar":
@@ -121,15 +123,27 @@ def model_counts(model: dict) -> dict:
                 z = float(z)
                 zmin = z if zmin is None else min(zmin, z)
                 zmax = z if zmax is None else max(zmax, z)
+        elif c.get("kind") == "observation":
+            ok = str(props.get("observation_kind") or "unknown")
+            observations[ok] = observations.get(ok, 0) + 1
+        elif c.get("kind") == "hypothesis":
+            hs = str(props.get("status") or "proposed")
+            hypotheses[hs] = hypotheses.get(hs, 0) + 1
     base: dict = {"bars": param_bars, "note": BASE_NOTE}
     if param_zmin is not None:
         base["z_range_mm"] = [param_zmin, param_zmax]
-    return {
+    result = {
         "model_components": bars,
         "model_nodes": nodes,
         "z_range_mm": [zmin, zmax] if zmin is not None else None,
         "base_segment": base,
     }
+    # P0 架构对齐（2026-09-05 审计）：证据层计数（观测按子类、假设按四态）
+    if observations:
+        result["observations"] = observations
+    if hypotheses:
+        result["hypotheses"] = hypotheses
+    return result
 
 
 def collect_version_info(out_dir: Path, repo_root: Path,
@@ -163,6 +177,35 @@ def collect_version_info(out_dir: Path, repo_root: Path,
         info["git_error"] = git["error"]
     if overlay_path.exists():
         info["overlay_sha"] = sha256_file(overlay_path)
+        # P0 审计（2026-09-05）：GT z-only 注入面在 version.json 里显式标注，
+        # 「默认开着且不标注」的状态结束。列出的键 = 该跑批实际启用的
+        # GT 注入面（overlay 声明为准），对应评测口径需带 level-assisted
+        # 说明（A2-dual-view-pure 等纯直读口径不包含这些注入）。
+        try:
+            _ov = json.loads(overlay_path.read_text(encoding="utf-8"))
+            _gt_keys = [
+                "use_gt_platform_levels",
+                "use_gt_half_width",
+                "use_gt_diaphragm_levels",
+            ]
+            _active: dict = {k: _ov.get(k) for k in _gt_keys
+                             if _ov.get(k) not in (None, False)}
+            # 跨度表只记条数不记全表（version.json 保持精简，
+            # 全表在 overlay 里，overlay_sha 已固定指纹）
+            _wl = _ov.get("terminal_pair_span_whitelist")
+            if isinstance(_wl, list) and _wl:
+                _active["terminal_pair_span_whitelist"] = f"{len(_wl)} pairs"
+            if _ov.get("panel_level_source") == "gt":
+                _active["panel_level_source"] = "gt"
+            if _active:
+                info["gt_injected"] = {
+                    "surfaces": _active,
+                    "note": ("z-only 设计常数注入（层表/跨度表）；x/y 严禁注入。"
+                             "含 level_source=gt 的跑批为 level-assisted 口径，"
+                             "与纯直读口径（A2-dual-view-pure）区分呈报。"),
+                }
+        except (ValueError, OSError):
+            pass
 
     model_path = out_dir / "model.json"
     if model_path.exists():

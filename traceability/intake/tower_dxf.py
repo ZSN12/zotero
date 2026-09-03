@@ -1280,6 +1280,7 @@ def extract_tower_from_dxf(
         )
     except Exception:
         _disable_calib = False
+    _dim_samples = []
     if not _disable_calib:
         try:
             from .scale_calibration import extract_dim_samples, calibrate_region_scales
@@ -2060,6 +2061,45 @@ def extract_tower_from_dxf(
             extract_detail_connections(
                 model, msp, detail_regions, stem, dxf_path, overlay=layer_map_path,
             )
+
+    # ---- 7) 证据层（P0 架构对齐，2026-09-05 审计）----
+    # 件号文字关联提升为 observation 组件（稳定 ID + confidence），
+    # 杆件 DAG 登记到其证据观测（改标注文字 → 杆 stale）。
+    # 纯增量：新组件 kind=observation，不触碰既有杆/节点计数与评测。
+    try:
+        from .tower_spec import load_tower_spec as _lts_ev
+        _ev_enabled = bool(
+            (load_tower_spec(layer_map_path) or {}).get("evidence_layer", True)
+        ) if _lts_ev else True
+    except Exception:
+        _ev_enabled = True
+    if _ev_enabled:
+        from .evidence_layer import (
+            register_label_observations,
+            register_dim_observations,
+            depend_on_observations,
+            label_observation_id,
+            observation_census,
+        )
+        register_label_observations(
+            model, stem, dxf_path, handle_label_evidence)
+        register_dim_observations(
+            model, stem, dxf_path, _dim_samples, context="scale_calibration")
+        # 杆 → 证据观测：观测 ID 按文字实体（label_component_id）
+        # 构造，杆的 bar_id_evidence 引用同一文字 → 直接登记。
+        for _bc in model.components.values():
+            if _bc.kind != "tower_bar":
+                continue
+            for _e in (_bc.properties.get("bar_id_evidence") or []):
+                _oid = label_observation_id(
+                    stem, _e.get("label_component_id"))
+                if _oid in model.components:
+                    depend_on_observations(model, _bc.id, [_oid])
+        _df_ev = model.components.get("drawing_file")
+        if _df_ev is not None:
+            _df_ev.properties["evidence_layer"] = {
+                "observations": observation_census(model),
+            }
 
     return model
 

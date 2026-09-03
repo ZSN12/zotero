@@ -724,8 +724,16 @@ def expand_4_face_symmetry_model(
         _pb_nodes, _pb_bars, _pb_rep = extrapolate_base_segment(
             snapped_nodes, snapped_bars, _hw_for_base,
             z_top=float(_z_top_pb),
+            # P5.2 修复（2026-09-05）：_extrap_fn 非空时也走 prefer
+            # 路径。此前只有 taper 拟合成功才 prefer——腿线延拓成功
+            # 时内部会**无 base_fn 重派生**纯直线（斜率 -0.0736 全域
+            # 外推到塔顶 hw(36600)≈100，真实锥体 267），report 的
+            # hw_fn_extrapolated 纯直线随后替换全局 half_width_fn，
+            # 上段几何整体漂移。传入的 _extrap_fn 本身就是分段闭包
+            # （z>=腿证据下界回落 monotone fit，仅低 z 用延拓线），
+            # 直接优先使用。
             prefer_passed_half_width=(
-                _extrap_fn is None and _taper_fit_ok
+                (_extrap_fn is not None) or _taper_fit_ok
             ),
             skirt_depth_mm=float(
                 spec.get("parametric_base_skirt_depth_mm", 2500.0)),
@@ -798,28 +806,66 @@ def expand_4_face_symmetry_model(
     if bool(spec.get("terminal_pair_structure", False)) and level_source == "gt":
         from ..solve.tower_geometry import reconstruct_terminal_pair_structure
         from ..debug.gt_profile import gt_diagonal_terminal_levels
-        _crossarm_z_max_tp = None
-        _df_tp = model.components.get("drawing_file")
-        if _df_tp is not None:
-            _cld_tp = _df_tp.properties.get("crossarm_layer_detection") or {}
-            _layers_tp = _cld_tp.get("layers") or []
-            if _layers_tp:
-                _crossarm_z_max_tp = min(float(l["z_lo"]) for l in _layers_tp)
-        face_nodes, face_bars, _tp_rep = reconstruct_terminal_pair_structure(
-            face_nodes, face_bars,
-            [float(z) for z in gt_diagonal_terminal_levels()],
-            crossarm_z_max=_crossarm_z_max_tp,
-            max_gap_mm=5600.0,
-            level_source_label="gt_canonical",
-            half_width_fn=half_width_fn,
+        # P0 审计（2026-09-05）：节间跨度白名单从 debug/gt_profile 硬编码
+        # 迁移到 overlay（terminal_pair_span_whitelist，[[zlo,zhi],...]）——
+        # 「换塔只改配置」方向对齐；新塔未声明时生成器跳过（不静默错杀）。
+        # JC1 的 42 对表已写入 guowang_35A1 overlay（z-only 设计常数）。
+        _span_wl_raw = spec.get("terminal_pair_span_whitelist")
+        _span_whitelist = (
+            [tuple(float(v) for v in pair) for pair in _span_wl_raw]
+            if _span_wl_raw else None
         )
-        roles = classify_members(face_nodes, face_bars)
-        _df_tp2 = model.components.get("drawing_file")
-        if _df_tp2 is not None:
-            _df_tp2.properties["terminal_pair_structure"] = {
-                "generated": _tp_rep.get("generated", 0),
-                "pairs": len(_tp_rep.get("pairs", [])),
-            }
+        if _span_whitelist is None:
+            # 未声明跨度表：层表全组合配对会产出大量 0-TP 层对
+            # （JC1 实测 172 对中 137 对 0 TP / 1652 FP），宁缺毋滥，
+            # 跳过生成并留痕。
+            _df_tp_skip = model.components.get("drawing_file")
+            if _df_tp_skip is not None:
+                _prev_skip = _df_tp_skip.properties.get("terminal_pair_structure") or {}
+                _prev_skip["skipped_reason"] = (
+                    "overlay 未声明 terminal_pair_span_whitelist（避免全组合 0-TP 层对）")
+                _df_tp_skip.properties["terminal_pair_structure"] = _prev_skip
+        else:
+            _crossarm_z_max_tp = None
+            _df_tp = model.components.get("drawing_file")
+            if _df_tp is not None:
+                _cld_tp = _df_tp.properties.get("crossarm_layer_detection") or {}
+                _layers_tp = _cld_tp.get("layers") or []
+                if _layers_tp:
+                    _crossarm_z_max_tp = min(float(l["z_lo"]) for l in _layers_tp)
+            face_nodes, face_bars, _tp_rep = reconstruct_terminal_pair_structure(
+                face_nodes, face_bars,
+                [float(z) for z in gt_diagonal_terminal_levels()],
+                crossarm_z_max=_crossarm_z_max_tp,
+                max_gap_mm=5600.0,
+                level_source_label="gt_canonical",
+                half_width_fn=half_width_fn,
+                # P0 收紧：节间跨度白名单（z-only 设计常数，与层表同纪律）。
+                # 全组合配对的 0-TP 层对不再生成（JC1 实测 -1188 FP / 0 TP）。
+                span_whitelist=_span_whitelist,
+                span_tol_mm=400.0,
+                # P1（2026-09-05）：塔专属区间参数化（默认 = JC1 实测）。
+                # overlay tp_dual_subsystem_zones: [[zlo0,zlo1,g0,g1],...]、
+                # tp_center_cross_zones 同构、tp_tip_z_min_mm——换塔只改配置。
+                dual_subsystem_zones=[
+                    tuple(float(v) for v in zone)
+                    for zone in (spec.get("tp_dual_subsystem_zones") or [])
+                ] or None,
+                center_cross_zones=[
+                    tuple(float(v) for v in zone)
+                    for zone in (spec.get("tp_center_cross_zones") or [])
+                ] or None,
+                tip_z_min=float(spec.get("tp_tip_z_min_mm", 29100.0)),
+            )
+            roles = classify_members(face_nodes, face_bars)
+            _df_tp2 = model.components.get("drawing_file")
+            if _df_tp2 is not None:
+                _df_tp2.properties["terminal_pair_structure"] = {
+                    "generated": _tp_rep.get("generated", 0),
+                    "pairs": len(_tp_rep.get("pairs", [])),
+                    "span_whitelist_size": len(_span_whitelist),
+                    "span_whitelist_source": "overlay",
+                }
         # P3.8：塔尖顶平台补生成——36600 层 4 角节点由 tps 生成
         # （expand 内 diaphragm 跑得更早、当时无角点证据，整层漏生成）。
         # 精简 10 杆拓扑（外框 4 + 边中点分 4 + 中心对角 2），
@@ -902,6 +948,69 @@ def expand_4_face_symmetry_model(
                     "kchain_pairs", "selection", "candidates", "twist_candidates")
                 if k in _dt_rep
             }
+        # P0 架构对齐（2026-09-05 审计）：解释候选提升为 hypothesis
+        # 组件（四态：proposed/accepted/rejected/superseded）。
+        # 多册模式 selection 是 {sheet: audit}，单册是 audit 本体——
+        # 两种形态都解析出 rejected 列表，按册登记（ID 稳定含 sheet）。
+        # 存活者（per_sheet.interpretations，已生成几何）→ accepted；
+        # 被拒候选（reason=span_off_grid/duplicate_h/panel_crossing）
+        # → rejected；被模板杆替代的原始投影计数 → superseded。
+        if bool(spec.get("evidence_layer", True)):
+            from .evidence_layer import (
+                register_hypotheses,
+                mark_hypotheses_accepted,
+                hypothesis_census,
+            )
+            _per_sheet = list(_dt_rep.get("per_sheet") or [])
+            if _per_sheet:
+                # 多册模式：per_sheet 各自带 interpretations/selection
+                for _ps in _per_sheet:
+                    _sh = str(_ps.get("sheet") or "dt")
+                    _ps_interps = list(_ps.get("interpretations") or [])
+                    _ps_rej = list((_ps.get("selection") or {}).get("rejected") or [])
+                    _ps_rm = _ps.get("removed_originals")
+                    _n_rm = (len(_ps_rm) if isinstance(_ps_rm, (list, tuple))
+                             else int(_ps_rm or 0))
+                    register_hypotheses(
+                        model, _sh, _ps_interps,
+                        rejected=_ps_rej,
+                        superseded=([{"kind": "original_projection",
+                                      "z_lo": 0.0, "z_hi": 0.0}] if _n_rm else []),
+                        generator="diagonal_topology",
+                    )
+                    mark_hypotheses_accepted(
+                        model,
+                        (f"hyp_{_sh}_diagonal_topology_"
+                         f"{r.get('kind', '?')}_{round(float(r.get('z_lo', 0))):d}_"
+                         f"{round(float(r.get('z_hi', 0))):d}"
+                         for r in _ps_interps),
+                    )
+            else:
+                # 单册模式：顶层 interpretations + selection
+                _dt_interps = list(_dt_rep.get("interpretations") or [])
+                _dt_rej = list((_dt_rep.get("selection") or {}).get("rejected") or [])
+                _rm = _dt_rep.get("removed_originals")
+                _n_rm = len(_rm) if isinstance(_rm, (list, tuple)) else int(_rm or 0)
+                _dt_sheet_label = "+".join(
+                    _dt_rep.get("sheets") or _dt_sheets) or "dt"
+                register_hypotheses(
+                    model, _dt_sheet_label, _dt_interps,
+                    rejected=_dt_rej,
+                    superseded=([{"kind": "original_projection",
+                                  "z_lo": 0.0, "z_hi": 0.0}] if _n_rm else []),
+                    generator="diagonal_topology",
+                )
+                mark_hypotheses_accepted(
+                    model,
+                    (f"hyp_{_dt_sheet_label}_diagonal_topology_"
+                     f"{r.get('kind', '?')}_{round(float(r.get('z_lo', 0))):d}_"
+                     f"{round(float(r.get('z_hi', 0))):d}"
+                     for r in _dt_interps),
+                )
+            if _dt_df is not None:
+                _dt_df.properties["evidence_layer"] = {
+                    "hypotheses": hypothesis_census(model),
+                }
 
     # S8：塔身 K-fan 辐条补全（2026-09）。图纸分段册在册间过渡区（如
     # 06 册 z≈15500-16500）存在真实空白（原始 DXF 该面板仅数条短线），
@@ -937,6 +1046,9 @@ def expand_4_face_symmetry_model(
                 "gt_canonical" if level_source == "gt" else "dxf_derived"
             ),
             twist_height_hints=_dt_heights,
+            # P1（2026-09-05）：塔专属扭结上界参数化（overlay
+            # kfan_twist_z_max_mm，默认 29500 = JC1 实测）。
+            twist_z_max_mm=float(spec.get("kfan_twist_z_max_mm", 29500.0)),
         )
         roles = classify_members(face_nodes, face_bars)
         _df_kfan = model.components.get("drawing_file")
@@ -1240,6 +1352,26 @@ def expand_4_face_symmetry_model(
                           + int(_fw2.get("degenerate_pruned", 0)),
             }
 
+    # P0 收紧（2026-09，产品观感）：terminal_pair_gen 与其它来源的几何
+    # 重复杆去重——在所有生成器（S8 kfan/S8.4 head-panel/S10 crossarm/
+    # 拼接/修复）之后终态执行。规则：tps 杆若与任一非 tps 杆几何等价
+    # （双端点 <=150mm，任意朝向），删 tps 杆（几何由孪生杆保留，
+    # 匹配/召回零损失；纯几何规则，无 GT 耦合）。tps-tps 重复不动
+    # （P3.5f 允许多子系统同投影计数）。删除量随管线版本浮动，不在此
+    # 固化数字——运行时真值以 drawing_file.terminal_pair_dedup 报告为准
+    # （2026-09-05 JC1 全管线 removed=440，历史版本曾为 384）。
+    if bool(spec.get("terminal_pair_dedup", True)):
+        from ..solve.tower_geometry import dedup_terminal_pair_bars
+        face_bars, _tdedup_rep = dedup_terminal_pair_bars(
+            face_nodes, face_bars,
+            tol_mm=float(spec.get("terminal_pair_dedup_tol_mm", 150.0)),
+        )
+        if _tdedup_rep.get("removed"):
+            roles = classify_members(face_nodes, face_bars)
+        _df_td = model.components.get("drawing_file")
+        if _df_td is not None:
+            _df_td.properties["terminal_pair_dedup"] = _tdedup_rep
+
     # Phase 3：门禁度量「交付几何」——全部几何变换（展开/拼接/修复）之后
     # 用同一 half_width_fn 终算 topology（half_width_fn 在本作用域仍可用，
     # baseline_report 事后无法复现的问题不适用此处）。
@@ -1248,6 +1380,9 @@ def expand_4_face_symmetry_model(
     # 重建模型组件
     _KEEP_KINDS = frozenset({
         "drawing_file", "bom_row", "gusset_plate", "bolt_group", "detail_view",
+        # P0 架构对齐（2026-09-05 审计）：证据层组件无几何面语义，
+        # 不参与展开，原样保留（观测/假设的身份与状态跨展开存活）。
+        "observation", "hypothesis",
     })
     keep_components: Dict[str, Component] = {}
     for cid, comp in model.components.items():
@@ -1472,6 +1607,20 @@ def expand_4_face_symmetry_model(
 
     model.components = keep_components
     model.staleness = {cid: st for cid, st in model.staleness.items() if cid in model.components}
+    # P0 架构对齐（2026-09-05 审计）：展开前保留「证据层」依赖边
+    # （杆 → obs 观测），ID 重写后按 front 面新 ID 重新挂接（镜像杆
+    # 经 derived_from → front 链式传播到观测）。
+    _pre_obs_deps: Dict[str, set] = {
+        cid: {u for u in ups if u.startswith("obs_") or "__obs_" in u}
+        for cid, ups in model.dependencies.items() if ups
+    }
+    _pre_obs_deps = {k: v for k, v in _pre_obs_deps.items() if v}
+    # P0 修复（2026-09-05）：四面展开重建全部组件 ID（旧 ID →
+    # 4f_<old>_{F,B,L,R}），旧 dependencies 全为悬空引用——此前直接
+    # 清空，导致展开后 DAG 为空、staleness 传播契约失效。改为在函数
+    # 末尾按新 ID 重建：镜像杆（B/L/R 面）依赖 front 面物理杆（阶段
+    # 4.3 的 derived_from 语义），dimension/rule 依赖其 applies_to
+    # 目标（阶段 4.6 重指后的引用）。
     model.dependencies = {}
 
     # 阶段 4.3：证据链悬空引用修复。mirrored（b/l/r）杆件的 derived_from
@@ -1511,6 +1660,84 @@ def expand_4_face_symmetry_model(
     #   * node 引用（old_node_id）→ 该 node 对应的展开后节点
     # 使 rules/dimensions 在展开后保持引用完整，不产生悬空 applies_to。
     _retarget_applies_to(model, _stem_to_front, set(src_nodes), face_nodes)
+
+    # P0 修复（2026-09-05）续：按展开后的新组件 ID 重建依赖 DAG。
+    #   1. 镜像杆（B/L/R）→ front 面物理杆：derived_from 已重写（阶段
+    #      4.3），DAG 边与其对齐——改 front 杆时 3 面镜像沿 DAG 传播
+    #      stale；
+    #   2. dimension / rule → applies_to 目标（阶段 4.6 重指后的新 ID）：
+    #      改目标杆时对应 dimension/rule 传播 stale。
+    # 只登记引用存在（目标在 model.components / dimensions / rules 内）
+    # 的边，保证 DAG 无悬空节点。
+    _known = set(model.components) | set(model.dimensions) | set(model.rules)
+    for _cid, _comp in model.components.items():
+        if _comp.kind != "tower_bar":
+            continue
+        _dep_src = (_comp.properties or {}).get("derived_from")
+        if (isinstance(_dep_src, str) and _dep_src != _cid
+                and _dep_src in _known):
+            model.dependencies.setdefault(_cid, set()).add(_dep_src)
+    for _did, _dim in model.dimensions.items():
+        _tgt = _dim.applies_to
+        if _tgt and _tgt in _known and _tgt != _did:
+            model.dependencies.setdefault(_did, set()).add(_tgt)
+    for _rid, _rule in model.rules.items():
+        # Rule.applies_to 是 list[str]（0..n 个目标）
+        _tgts = getattr(_rule, "applies_to", None) or []
+        if isinstance(_tgts, str):
+            _tgts = [_tgts]
+        for _tgt in _tgts:
+            if _tgt and _tgt in _known and _tgt != _rid:
+                model.dependencies.setdefault(_rid, set()).add(_tgt)
+    # P1 审计修复（2026-09-05）：DAG 覆盖率缺口——实测 3698 根杆仅 570
+    # 有入边（15.4%），其余为孤岛：
+    #   1) 杆 → 端点节点边（from_node/to_node）：节点几何变更沿 DAG
+    #      传播到杆（此前 tower_node 0 入边、节点级变更不传播）；
+    #   2) 杆 → drawing_file 边：全部杆的最终上游是解析图纸（dxf_geom
+    #      直读、生成器输出均以图纸证据为输入），「改源头 DXF → 全部杆
+    #      stale」传播契约成立（此前 front 杆 derived_from 指向外部
+    #      展开前 ID 被跳过，84.6% 杆不随源变更失效）。
+    _df_up_id = "drawing_file" if "drawing_file" in model.components else None
+    for _cid, _comp in model.components.items():
+        if _comp.kind != "tower_bar":
+            continue
+        _ups = model.dependencies.setdefault(_cid, set())
+        for _nk in ((_comp.properties or {}).get("from_node"),
+                    (_comp.properties or {}).get("to_node")):
+            if (isinstance(_nk, str) and _nk != _cid
+                    and _nk in model.components):
+                _ups.add(_nk)
+        if _df_up_id is not None:
+            _ups.add(_df_up_id)
+    # P0 架构对齐（2026-09-05 审计）：证据层边重挂——展开前的杆 → obs
+    # 边按展开后新 ID 重接（观测组件经 _KEEP_KINDS 存活，ID 未变；
+    # 旧杆 ID 优先映射 front 面杆 4f_<old>_F，无则回退任一面变体）。
+    if _pre_obs_deps:
+        _known_pre = set(model.components)
+        for _old_cid, _obs_ups in _pre_obs_deps.items():
+            _cands_pre = []
+            if _old_cid in _known_pre:
+                _cands_pre.append(_old_cid)
+            _stem_pre = (_old_cid[:-2] if _old_cid.endswith(("_F", "_B", "_L", "_R"))
+                         else _old_cid)
+            for _suf in ("_F", "_B", "_L", "_R", "_C"):
+                _cand = f"4f_{_stem_pre}{_suf}"
+                if _cand in _known_pre:
+                    _cands_pre.append(_cand)
+            if not _cands_pre:
+                continue
+            _new_cid = _cands_pre[0]
+            _ups_ev = {u for u in _obs_ups if u in _known_pre}
+            if _ups_ev:
+                model.dependencies.setdefault(_new_cid, set()).update(_ups_ev)
+    # 防御：剔除任何指向已删组件的边（展开重建后不应存在）
+    _known = set(model.components) | set(model.dimensions) | set(model.rules)
+    for _node in list(model.dependencies):
+        _ups = {u for u in model.dependencies[_node] if u in _known}
+        if _ups:
+            model.dependencies[_node] = _ups
+        else:
+            del model.dependencies[_node]
 
     df = model.components.get("drawing_file")
     if df is not None:

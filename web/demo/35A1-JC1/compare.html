@@ -75,12 +75,12 @@
 <body>
 <div id="topbar">
   <b>35A1-JC1 三维模型</b>
-  <button id="btn-model" class="active">当前模型</button>
+  <button id="btn-model" class="active">工程模式（管线识别）</button>
+  <button id="btn-gt">权威塔 M1–M6（GT 参考）</button>
   <button id="btn-diff">新旧 diff</button>
-  <button id="btn-detail">节点详图</button>
-  <button id="btn-gt">GT 官方</button><br>
+  <button id="btn-detail">节点详图</button><br>
   <div id="runbar">版本信息加载中…</div>
-  <span id="desc">DXF 管线重建骨架（点击杆件看截面）</span>
+  <span id="desc">工程模式：DXF 管线重建骨架（默认仅显示「识别」池 · 权威塔半透明叠加可开 · 点击杆件看截面）</span>
   <a href="/" style="margin-left:8px">返回主控制台</a>
 </div>
 
@@ -248,7 +248,12 @@ const ORIGIN_GROUPS = {
   // P4：底段参数化外推（z<6500 无图纸来源）——半透明紫，图例带免责声明
   parametric: { label: '参数化底段', color: '#a855f7', origins: ['derived_parametric_base'] },
 };
-const ORIGIN_DEFAULT_ON = { template: false };  // 其余组默认可见
+  // A3（产品观感）：工程模式默认只显示「识别」池——辅助/拼接/派生/模板/
+  // 参数化默认关（消除银蓝紫噪声，需要时在右层面板勾选打开）。
+  const ORIGIN_DEFAULT_ON = {
+    recognized: true, assisted: false, stitch: false,
+    derived: false, template: false, parametric: false,
+  };
 function defaultOriginSet() {
   return new Set(Object.keys(ORIGIN_GROUPS).filter(g => ORIGIN_DEFAULT_ON[g] !== false));
 }
@@ -276,6 +281,36 @@ const MATS = {
 };
 const GHOST = new THREE.MeshStandardMaterial({
   color: 0x8a9099, transparent: true, opacity: 0.10, roughness: 0.9, metalness: 0, depthWrite: false });
+
+// ---------------- A2：M1–M6 塔段模块渐变配色（权威塔默认口径） ----------------
+// 模块边界 = 六张立面分册的自然接缝（02 塔头 30000+ / 04 23000 / 05 16000 /
+// 06 11000 / 07 5500 / 40 底段 0，见 docs/CJ1_FILES_STRUCTURE.md）。
+// 配色对齐产品愿景页三：顶部蓝 → 中部青绿 → 底部金黄。
+const MODULES = [
+  { id: 'M1', label: 'M1 塔头', zLo: 30000, zHi: 36700, color: '#4f8ef7' },
+  { id: 'M2', label: 'M2 上段', zLo: 23000, zHi: 30000, color: '#3fa7c9' },
+  { id: 'M3', label: 'M3 中段', zLo: 16000, zHi: 23000, color: '#35b5a8' },
+  { id: 'M4', label: 'M4 中下段', zLo: 11000, zHi: 16000, color: '#4dbd7f' },
+  { id: 'M5', label: 'M5 下段', zLo: 5500, zHi: 11000, color: '#8fc35a' },
+  { id: 'M6', label: 'M6 底段', zLo: 0, zHi: 5500, color: '#d8a833' },
+];
+const MODULE_MATS = MODULES.map(m => new THREE.MeshStandardMaterial({
+  color: new THREE.Color(m.color), metalness: 0.70, roughness: 0.38 }));
+function moduleOfZ(zm) {
+  for (let i = 0; i < MODULES.length; i++)
+    if (zm >= MODULES[i].zLo && zm < MODULES[i].zHi) return i;
+  return zm >= MODULES[0].zHi ? 0 : MODULES.length - 1;
+}
+// 权威塔按杆件 z 中点赋模块渐变材质（缓存原材质供还原）
+function applyModuleMaterials(group) {
+  group.traverse(obj => {
+    if (!obj.isMesh) return;
+    obj.userData.origMat = obj.material;
+    obj.castShadow = true;
+    obj.userData.module = moduleOfZ(zMidOf(obj));
+    obj.material = MODULE_MATS[obj.userData.module];
+  });
+}
 
 const ROLE_LABELS = { LEG: '主腿', DIAG: '斜材', HORIZ: '水平材', CROSS: '横担', DIA: '横隔' };
 const ORIGIN_LABELS = {
@@ -323,15 +358,21 @@ function applyProvenanceMaterials(group) {
 }
 
 // ---------------------------------------------------------------- 过滤状态
+// P1 审计（2026-09-05）：默认视图改回工程模式（管线产出）——评测诚实性
+// 优先，「打开第一眼 = 管线识别结果」。权威塔（GT）通过按钮或 URL 参数
+// ?mode=gt 查看；?mode=model 可显式分享工程模式。GT 半透明叠加
+// （gtOverlay）在工程模式下默认开启，作为背景参考而非主体。
+const _urlMode = new URLSearchParams(location.search).get('mode');
 const state = {
-  mode: 'model',           // model | diff | detail | gt
+  mode: (_urlMode === 'gt' || _urlMode === 'model' || _urlMode === 'diff') ? _urlMode : 'model',
   origins: defaultOriginSet(),
+  modules: new Set(MODULES.map(m => m.id)),   // A2：GT 模式模块可见性
   sheets: new Set(),
   roles: new Set(Object.keys(ROLE_LABELS)),
   review: true,
   grid: true,
   diffGroups: new Set(['added', 'removed', 'moved', 'unchanged']),
-  gtOverlay: 'off',         // P2：off | overlay | only（GT 半透明叠加）
+  gtOverlay: (_urlMode === 'gt') ? 'off' : 'overlay',   // P2：off | overlay | only（GT 半透明叠加）
   zLo: null, zHi: null,     // P2：高度切片（null=不限）
 };
 let ATTRS = {};
@@ -426,10 +467,27 @@ function applyDiffFilters() {
 function applyFilters() {
   if (state.mode === 'model') applyModelFilters();
   else if (state.mode === 'diff') applyDiffFilters();
+  else if (state.mode === 'gt') applyGtFilters();
   if (reviewGroupObj) reviewGroupObj.visible = state.review && (state.mode === 'model' || state.mode === 'diff');
   ground.visible = state.grid && state.mode !== 'detail';
   updateGtOverlay();
   renderLegend();
+}
+
+// A2：权威塔模块可见性过滤（图例色块点击切换 M1–M6）
+function applyGtFilters() {
+  const grp = MESHES.gt;
+  if (!grp) return;
+  let visible = 0, total = 0;
+  grp.traverse(obj => {
+    if (!obj.isMesh) return;
+    total++;
+    const mi = obj.userData.module;
+    const v = mi == null || state.modules.has(MODULES[mi].id);
+    obj.visible = v;
+    if (v) visible++;
+  });
+  $('visibleCount').textContent = `可见 ${visible}/${total}`;
 }
 
 // ---------------- P2：GT 半透明叠加（独立组，可与 model/diff 共存） ----------------
@@ -437,7 +495,7 @@ let gtOverlayLoading = false;
 function ensureGtOverlay() {
   if (MESHES.gtoverlay || gtOverlayLoading) return;
   gtOverlayLoading = true;
-  loadGLB('gt_reference.glb').then(g => {
+  loadGLB(BASE + 'canonical.glb').catch(() => loadGLB('gt_reference.glb')).then(g => {
     g.traverse(o => {
       if (!o.isMesh) return;
       o.material = o.material.clone ? o.material.clone() : o.material;
@@ -486,12 +544,30 @@ function pickAt(cx, cy) {
   let target = null;
   if (state.mode === 'model' && MESHES.skeleton) target = MESHES.skeleton;
   else if (state.mode === 'detail' && MESHES.detail) target = MESHES.detail;
+  else if (state.mode === 'gt' && MESHES.gt) target = MESHES.gt;
   if (!target) { clearSelection(); hideInfoCard(); return; }
   const hits = raycaster.intersectObject(target, true).filter(h => h.object.isMesh && h.object.visible);
   if (!hits.length) { clearSelection(); hideInfoCard(); return; }
   const obj = hits[0].object;
   if (state.mode === 'model') selectBar(obj);
+  else if (state.mode === 'gt') showGtCard(obj);
   else showDetailCard(obj);
+}
+
+// A1/A2：权威塔点击信息卡（模块 + 角色；canonical.bar_map 同步后可显示 bar_id）
+function showGtCard(obj) {
+  const name = meshNameOf(obj);
+  const e = (DATA.canonicalMap || []).find(x => String(x.component_id) === name);
+  const mi = obj.userData.module;
+  const mod = mi != null ? MODULES[mi] : null;
+  const role = e ? (ROLE_LABELS[e.role] || e.role) : null;
+  $('infocard').innerHTML = `
+    <button class="close" onclick="this.parentElement.style.display='none'">✕</button>
+    <h3>杆件 ${esc(e ? e.bar_id : name)}</h3>
+    <div class="row"><span class="k">模块</span><span class="v">${mod ? `${mod.label}（z ${mod.zLo}–${mod.zHi}）` : '—'}</span></div>
+    <div class="row"><span class="k">角色</span><span class="v">${role || '—'}</span></div>
+    <div class="note">权威塔参考（canonical/GT）· 非管线识别结果</div>`;
+  $('infocard').style.display = 'block';
 }
 
 function selectBar(obj) {
@@ -713,12 +789,13 @@ function buildLayerPanel() {
 
   $('btn-reset').onclick = () => {
     state.origins = new Set(Object.keys(ORIGIN_GROUPS));
+    state.modules = new Set(MODULES.map(m => m.id));   // A2：模块全显
     state.sheets = new Set(SHEETS);
     state.roles = new Set(Object.keys(ROLE_LABELS));
     state.review = true;
     state.grid = true;
     state.diffGroups = new Set(['added', 'removed', 'moved', 'unchanged']);
-    state.gtOverlay = 'off'; $('gtOverlay').value = 'off';
+    state.gtOverlay = 'overlay'; $('gtOverlay').value = 'overlay';
     state.zLo = null; state.zHi = null;
     $('zLo').value = ZBOUNDS.lo; $('zHi').value = ZBOUNDS.hi; $('zread').textContent = '';
     $('sheetSelect').value = 'all';
@@ -767,8 +844,19 @@ function renderLegend() {
     item('复核', '#ff2828', state.review, () => { state.review = !state.review; applyFilters(); });
   } else if (state.mode === 'detail') {
     el.innerHTML = '<span class="note">节点板样例（凸包修复轮廓 + 孔位标记 + 示意杆）· 点击查看数据</span>';
-  } else {
-    el.innerHTML = '<span class="note">GT 官方塔（575 杆）· 无分层数据</span>';
+  } else if (state.mode === 'gt') {
+    // A2：权威塔模块图例（点击色块切换 M1–M6 显示）
+    for (const m of MODULES) {
+      item(m.label, m.color, state.modules.has(m.id), () => {
+        state.modules.has(m.id) ? state.modules.delete(m.id) : state.modules.add(m.id);
+        applyFilters();
+      });
+    }
+    const note = document.createElement('span');
+    note.className = 'note';
+    note.style.cssText = 'display:block;margin-top:4px;border-top:1px solid #333;padding-top:4px;max-width:430px';
+    note.textContent = '权威塔（canonical/GT）· 模块边界=六张立面分册接缝 · 顶部蓝→中部青绿→底部金黄';
+    el.appendChild(note);
   }
 }
 function toggleDiff(g) {
@@ -794,6 +882,20 @@ function sweepAt(cal, tol) {
 }
 function renderStats() {
   const lines = [];
+  // A2：权威塔模式 —— 分模块杆数（一眼看出「哪型塔、分几段」）
+  if (state.mode === 'gt' && MESHES.gt) {
+    const counts = new Array(MODULES.length).fill(0);
+    let total = 0;
+    MESHES.gt.traverse(o => {
+      if (!o.isMesh) return;
+      total++;
+      const mi = o.userData.module;
+      if (mi != null) counts[mi]++;
+    });
+    lines.push(`<b>权威塔 ${total} 杆 · 6 塔段</b>（模块边界=分册接缝）`);
+    lines.push(MODULES.map((m, i) =>
+      `<span class="dim" style="color:${m.color}">${m.label} ${counts[i]}</span>`).join(' · '));
+  }
   if (DATA.model) {
     let bars = 0, nodes = 0, zmin = Infinity, zmax = -Infinity;
     for (const c of Object.values(DATA.model.components)) {
@@ -864,10 +966,10 @@ function setMode(mode) {
     $(id).classList.toggle('active', m === mode);
   $('layers').classList.toggle('disabled', mode === 'gt' || mode === 'detail');
   const descs = {
-    model: 'DXF 管线重建骨架（银识别/蓝辅助/黄拼接/灰派生 · 点击杆件看截面）',
+    model: '工程模式：DXF 管线重建骨架（默认仅显示「识别」池 · 来源/分册/角色分层可调 · 点击杆件看截面）',
     diff: '基线 vs 当前模型几何 diff（绿=新增 / 红=删除 / 橙=待复核微调 / 灰半透=未变）',
     detail: '节点板 D1 样例（详图页 polygon_local + 56 孔 + 示意杆，非塔上 3D 位置）',
-    gt: '国网官方 35A1 完整铁塔（GT 参考）',
+    gt: '权威塔 M1–M6 塔段模块渐变（顶部蓝 → 中部青绿 → 底部金黄）· 点击杆件看模块/角色',
   };
   $('desc').textContent = descs[mode];
   showMode(mode);
@@ -881,7 +983,12 @@ function attach(key, group) {
 function showMode(mode) {
   if (currentKey) scene.remove(MESHES[currentKey]);
   const lazy = {
-    gt: () => loadGLB('gt_reference.glb').then(g => attach('gt', g)),
+    // A1/A4：权威塔优先走 latest_deliver/canonical.glb（收口链统一资产），
+    // 缺失回退 demo 根目录 gt_reference.glb（diagnose 脚本产物）。
+    // A2：加载后按 z 中点赋 M1–M6 模块渐变材质。
+    gt: () => loadGLB(BASE + 'canonical.glb')
+      .catch(() => loadGLB('gt_reference.glb'))
+      .then(g => { applyModuleMaterials(g); attach('gt', g); }),
     diff: () => Promise.all([loadGLB(BASE + 'diff.glb'),
                              fetchJSON('diff_report.json').catch(() => null)])
       .then(([g, rep]) => { DATA.diffReport = rep; attach('diff', g); }),
@@ -894,7 +1001,7 @@ function showMode(mode) {
       }),
   };
   if (lazy[mode] && !MESHES[mode]) {
-    setLoading(true, `加载${mode === 'gt' ? ' GT 官方塔' : mode === 'diff' ? ' diff.glb' : '节点板样例'}…`);
+    setLoading(true, `加载${mode === 'gt' ? '权威塔（canonical/GT）' : mode === 'diff' ? ' diff.glb' : '节点板样例'}…`);
     lazy[mode]()
       .then(() => finishShow(mode))
       .catch(() => {
@@ -1023,7 +1130,7 @@ function renderRunbar() {
 (async function init() {
   setLoading(true, '加载数据资产…');
   try {
-    const [barMap, modelBuf, multi, byRole, byOrigin, review, version] = await Promise.all([
+    const [barMap, modelBuf, multi, byRole, byOrigin, review, version, canonicalMap] = await Promise.all([
       fetchJSON('bar_map.json'),
       fetchBytes(BASE + 'model.json'),     // P0：字节级加载 + SHA 实测
       fetchJSON('metrics_multi_caliber.json').catch(() => null),
@@ -1031,9 +1138,11 @@ function renderRunbar() {
       fetchJSON('metrics_by_origin.json').catch(() => null),
       fetchJSON('review_queue.json').catch(() => null),
       fetchJSON('version.json').catch(() => null),
+      // A4：权威塔杆件映射（canonical.bar_map.json，sync 链统一资产）
+      fetchJSON('canonical.bar_map.json').catch(() => null),
     ]);
     const model = JSON.parse(new TextDecoder().decode(modelBuf));
-    Object.assign(DATA, { barMap, model, multi, byRole, byOrigin, review, version });
+    Object.assign(DATA, { barMap, model, multi, byRole, byOrigin, review, version, canonicalMap });
     ATTRS = buildAttrs(barMap);
     BARINFO = {};
     for (const e of barMap) BARINFO[String(e.component_id)] = e;
@@ -1063,7 +1172,13 @@ function renderRunbar() {
     $('btn-detail').onclick = () => setMode('detail');
     $('btn-gt').onclick = () => setMode('gt');
 
-    finishShow('model');
+    // P1 审计（2026-09-05）：默认进工程模式（管线识别骨架，GT 半透明
+    // 叠加默认开启作背景参考）；?mode=gt 深链直接进权威塔。
+    // 骨架已后台加载好，切换无需再等加载。
+    setMode(state.mode);
+    // 同步 gtOverlay 下拉（默认 overlay 已在 state 初始化生效）
+    const _gtSel = $('gtOverlay');
+    if (_gtSel) _gtSel.value = state.gtOverlay;
   } catch (e) {
     setLoading(false);
     $('stats').innerHTML = `<span class="warn">资产加载失败：${e.message}<br>请用 python3 -m http.server 8000 从仓库根启动，并先跑 scripts/sync_demo_assets.py</span>`;

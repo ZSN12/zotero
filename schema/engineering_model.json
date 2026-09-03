@@ -15,7 +15,10 @@
         "properties": {
           "id": { "type": "string" },
           "name": { "type": "string" },
-          "kind": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "description": "组件类别：tower_node/tower_bar/drawing_file/bom_row/gusset_plate/bolt_group/detail_view；证据层（P0 架构对齐 2026-09-05）：observation=图纸原始观测（bar_label 件号文字 / dim_sample DIMENSION 标注，稳定 ID obs_{stem}_{kind}_{handle}），hypothesis=结构解释候选（四态 proposed/accepted/rejected/superseded，稳定 ID hyp_{stem}_{generator}_{kind}_{zlo}_{zhi}）"
+          },
           "source": { "$ref": "#/$defs/sourceRef" },
           "properties": {
             "type": "object",
@@ -29,7 +32,14 @@
                 "enum": [
                   "mllm_geom", "hough", "hough_fallback", "dxf_vector", "dxf_geom",
                   "multiview_solve", "symmetry_rule", "derived_4face", "derived_diaphragm",
-                  "mllm_inject", "gim"
+                  "mllm_inject", "gim",
+                  "boundary_leg_bridge", "collinear_stitch", "crossarm_truss_completion",
+                  "derived_parametric_base", "diag_complete", "diag_synth",
+                  "diagonal_topology_reconstructed", "diaphragm_reconstructed",
+                  "leg_chain_stitch", "leg_synth", "marker_synth", "multiview_hypothesis",
+                  "panel_cross_reconstructed", "panel_subdivision", "panel_template_completion",
+                  "side_diag_synth", "side_direct", "side_horiz_synth", "side_mirror",
+                  "terminal_pair_gen", "x_crossing_uncouple"
                 ]
               }
             }

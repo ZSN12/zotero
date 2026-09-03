@@ -1297,6 +1297,9 @@ def merge_view_bars(
     # 重建组件：保留主视图节点/杆件 + 图纸上下文 + BOM + 连接详图
     _KEEP_KINDS = frozenset({
         "drawing_file", "bom_row", "gusset_plate", "bolt_group", "detail_view",
+        # P0 架构对齐（2026-09-05 审计）：证据层组件（观测/假设）无视图
+        # 几何语义，不参与重建，原样保留。
+        "observation", "hypothesis",
     })
     keep_components = {}
     for cid, c in model.components.items():
@@ -1537,6 +1540,13 @@ def merge_view_bars(
 
     valid_nodes = set(keep_components) | set(model.dimensions) | set(model.connections) | set(model.rules)
     new_deps: Dict[str, set] = defaultdict(set)
+    # P0 架构对齐（2026-09-05 审计）：重建依赖时保留仍然有效的既有边
+    # （证据层：杆 → obs 观测；镜像/生成链），端点仍在 valid_nodes 的
+    # 边不丢弃——此前 dependencies 整体重置导致证据 DAG 断链。
+    for _n, _ups in model.dependencies.items():
+        _keep_ups = {u for u in _ups if u in valid_nodes}
+        if _n in valid_nodes and _keep_ups:
+            new_deps[_n].update(_keep_ups)
     for did, d in model.dimensions.items():
         if did.startswith("dim_bom_length_") or did.startswith("dim_bom_section_"):
             bid = did.rsplit("_", 1)[-1]
@@ -2059,6 +2069,11 @@ def apply_side_reads(model: "EngineeringModel") -> int:
             x2, y2, z2 = float(p2[0]), float(p2[1]), float(p2[2])
         except (KeyError, TypeError, ValueError, IndexError):
             continue
+        # P2（2026-09-05）：微碎杆过滤。side 画线提取的中心线碎段（实测
+        # JC1 塔头 8-64mm 杆 58 根全 FP）无结构语义——真实角钢最小段
+        # （GT 实测 ~300mm+）远大于此，全局丢弃。
+        if ((x1 - x2) ** 2 + (y1 - y2) ** 2 + (z1 - z2) ** 2) ** 0.5 < 100.0:
+            continue
         # 同一物理杆两个 3D 形态：l 面直读（x 原值/面平面）与 r 面镜像
         for face, m, origin, cls in (
             ("l", 1.0, "side_direct", "recognized"),
@@ -2120,6 +2135,13 @@ def apply_side_reads(model: "EngineeringModel") -> int:
                 },
                 tags=["side_read"],
             ))
+            # P1 审计（2026-09-05）：sidegen 杆在展开 DAG 重建之后落盘，
+            # 此前不登记依赖边（孤岛杆）。登记端点节点 + drawing_file：
+            # side_reads 变化（图纸 side 画线重读）→ 侧读杆 stale 传播。
+            _sg_id = f"sidegen__b{i:04d}_{face}"
+            model.dependencies.setdefault(_sg_id, set()).update(
+                {nids[0], nids[1], "drawing_file"}
+                & set(model.components))
             made += 1
     df.properties["side_reads_applied"] = made
     return made

@@ -80,7 +80,13 @@ def main() -> int:
     ceiling = front_view_ceiling(gt)
     cal = multi.get("calibers") or {}
 
-    front_pure = _pick_tol(cal.get("pure_dxf") or {}, args.tol)
+    # P0 修复（2026-09-05）：eval_a2_multi_caliber 自 P1 五层口径重构
+    # （94c7fad）起返回 key "pure"，旧名 "pure_dxf" 仅存在于
+    # eval_a2_dual_caliber 的返回。两处兼容读取，任一命中即可——
+    # 否则 A2-front-pure 恒 0，multi_view_tp_gain_vs_front_pure 被
+    # 系统性夸大（1048−0 而非 1048−131）。
+    front_pure = _pick_tol(
+        cal.get("pure") or cal.get("pure_dxf") or {}, args.tol)
     full_front = _pick_tol(cal.get("full") or {}, args.tol)
     dual_pure_row = (dual_cal.get("pure_dxf") or {}).get("sweep") or []
     dual_pure = dual_pure_row[0] if dual_pure_row else {}

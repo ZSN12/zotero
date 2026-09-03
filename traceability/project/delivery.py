@@ -563,8 +563,15 @@ def deliver_project(
                     if _dfh is not None:
                         _dfh.properties.setdefault(
                             "side_horiz_synth_report", {"added": _n_h})
-        except Exception:
-            pass
+        except Exception as _exc_sh:
+            # P1 修复（2026-09-05）：拒绝必须显式记录。失败原因写入
+            # drawing_file.properties（落盘可审计），不再静默吞。
+            _dfh = merged_model.components.get("drawing_file")
+            if _dfh is not None:
+                _dfh.properties.setdefault(
+                    "side_horiz_synth_error",
+                    {"error": f"{type(_exc_sh).__name__}: {_exc_sh}"})
+            print(f"[P2.4j] side_horiz_synth 失败：{_exc_sh!r}")
         expand_4_face_symmetry_model(merged_model, layer_map_path)
         # P2.4b（JC1）：side 直读杆注入——merge_view_bars 冻结的 side_reads
         # （side 画线 y/z + 面平面 x）在此处以全新组件落地：face='l' 直读
@@ -578,9 +585,66 @@ def deliver_project(
                 if _dfp is not None and _n_side:
                     _dfp.properties.setdefault(
                         "side_read_promotion_report", {"injected": _n_side})
-            except Exception:
-                # 注入失败不阻断交付；side_reads 冻结证据仍在 drawing_file
-                pass
+            except Exception as _exc_sr:
+                # P1 修复（2026-09-05）：注入失败不阻断交付（side_reads
+                # 冻结证据仍在 drawing_file），但拒绝必须显式记录——
+                # 失败原因落盘可审计，不再静默吞。
+                _dfp = merged_model.components.get("drawing_file")
+                if _dfp is not None:
+                    _dfp.properties.setdefault(
+                        "side_read_promotion_error",
+                        {"error": f"{type(_exc_sr).__name__}: {_exc_sr}"})
+                print(f"[P2.4b] apply_side_reads 失败：{_exc_sr!r}")
+            # P2（2026-09-05）：塔尖区 side 杆修剪。塔顶收尖段（四棱金字塔）
+            # 的 side 画线被 face_plane 投影到假想竖直面——实测 JC1 z≥34200
+            # 段 52 根 side 杆全 FP（真结构已由 tps/panel 链覆盖）。overlay
+            # 指定尖段下界 z（side_lift_prune_above_z_mm）后按杆 z 中点剪除。
+            _prune_z = ov.get("side_lift_prune_above_z_mm")
+            if _prune_z is not None:
+                _prune_z = float(_prune_z)
+                _node_z: dict = {}
+                for _cid, _comp in merged_model.components.items():
+                    if _comp.kind == "tower_node":
+                        _pp = _comp.properties or {}
+                        if _pp.get("z") is not None:
+                            _node_z[_cid] = float(_pp["z"])
+                _rm = []
+                for _cid, _comp in merged_model.components.items():
+                    if _comp.kind != "tower_bar":
+                        continue
+                    _pr = _comp.properties or {}
+                    if not _pr.get("side_promoted"):
+                        continue
+                    _za = _node_z.get(_pr.get("from_node"))
+                    _zb = _node_z.get(_pr.get("to_node"))
+                    if _za is None or _zb is None:
+                        continue
+                    if (_za + _zb) / 2.0 >= _prune_z:
+                        _rm.append(_cid)
+                for _cid in _rm:
+                    del merged_model.components[_cid]
+                _dfp = merged_model.components.get("drawing_file")
+                if _dfp is not None and _rm:
+                    _dfp.properties["side_lift_tip_prune_report"] = {
+                        "pruned": len(_rm), "above_z_mm": _prune_z}
+            # P2（2026-09-05）：合成 x 源剪除。x_source=z_pair 的 side 杆
+            # x 完全由跨册 z 配对解算合成（非图面读数），实测 JC1 全部
+            # 6 根皆 FP（含 4m 级塔顶尖刺）。overlay 列表指定后按源剪除。
+            _drop_xs = ov.get("side_lift_drop_x_source") or []
+            if _drop_xs:
+                _drop_xs = {str(s) for s in _drop_xs}
+                _rm2 = [
+                    _cid for _cid, _comp in merged_model.components.items()
+                    if _comp.kind == "tower_bar"
+                    and (_comp.properties or {}).get("side_promoted")
+                    and str((_comp.properties or {}).get("x_source")) in _drop_xs
+                ]
+                for _cid in _rm2:
+                    del merged_model.components[_cid]
+                _dfp = merged_model.components.get("drawing_file")
+                if _dfp is not None and _rm2:
+                    _dfp.properties["side_lift_xsource_prune_report"] = {
+                        "pruned": len(_rm2), "x_source": sorted(_drop_xs)}
         # P3.20（ZC1）：同几何杆去重。多册同段重复出图 + 四面镜像展开
         # 产生完全相同几何的多份拷贝，Hungarian 1:1 评测下互抢 FP
         # （ZC1 实测 58% 重复）。overlay 显式开启才执行（默认关闭，
@@ -737,9 +801,17 @@ def deliver_project(
         if _dangling:
             for cid in _dangling:
                 merged_model.components.pop(cid, None)
+            # P1 修复（2026-09-05）：清理计数此前挂 merged_model.meta——
+            # EngineeringModel 无 meta 字段、to_dict 不序列化，数字只活在
+            # 内存里无法审计。改为写入 drawing_file.properties（随
+            # save_model 落盘 model.json，事后可审计删了多少/哪些）。
+            _dfd = merged_model.components.get("drawing_file")
+            if _dfd is not None:
+                _dfd.properties["dropped_dangling_bars"] = {
+                    "count": len(_dangling),
+                    "removed_ids": _dangling[:200],
+                }
             save_model(merged_model, out_dir / "model.json")
-            merged_model.meta = getattr(merged_model, "meta", {})
-            merged_model.meta["dropped_dangling_bars"] = len(_dangling)
             print(f"[P3.15] 清理悬空杆 {len(_dangling)} 根（export 前）")
 
         skeleton_gate = tower_geometry_gate(merged_model, layer_map_path)

@@ -60,6 +60,46 @@ class LegChainExtrapolatorTest(unittest.TestCase):
         bars = [{"id": "diag", "from": "a", "to": "b"}]  # 斜杆非腿
         self.assertIsNone(leg_chain_extrapolator(nodes, bars))
 
+    def test_leg_synth_pollution_regression(self):
+        """P5.2（2026-09-05）：leg_synth 跨型腿不得污染延拓线。
+
+        实测事故（35A1-JC1）：leg_synth 腿低 z 端点 |x| 继承夹紧 hw，
+        与最低 dxf 腿点组成零斜率对 → 旧逻辑直接 return None →
+        底段半宽退回夹紧常数 → 裙部全平底（GT 张开 2762@z0）。
+        修复：合成来源杆被排除 + 零斜率点对跳过继续找。
+        """
+        from traceability.solve.tower_geometry import leg_chain_extrapolator
+        nodes, bars = _fixture()  # dxf 腿证据：z>=6700
+        # 模拟 leg_synth 跨型腿：z=6800 起点挂到夹紧半宽 2300（与
+        # 最低 dxf 腿点 (6700, 2300) 同 |x| → 零斜率对）
+        nodes["ls_lo"] = (2300.0, 0.0, 6800.0)
+        nodes["ls_hi"] = (2100.0, 0.0, 10000.0)
+        bars.append({"id": "ls1", "from": "ls_lo", "to": "ls_hi",
+                     "geometry_origin": "leg_synth"})
+        fn = leg_chain_extrapolator(nodes, bars, base_fn=lambda z: 2300.0)
+        # 修复前：None（退回夹紧常数 → 平底裙部）
+        self.assertIsNotNone(fn, "leg_synth 污染不得让延拓失败")
+        self.assertGreater(fn(0.0), 2400.0,
+                           "z=0 半宽须显著张开（锥线延拓生效）")
+
+    def test_zero_slope_pair_skipped(self):
+        """P5.2（续）：最低两点同 |x|（零斜率）时跳过该对，找下一个可用点。"""
+        from traceability.solve.tower_geometry import leg_chain_extrapolator
+        # 最低两个腿点同 |x|=2300（z 6700 与 6800），上有真实锥度腿
+        nodes = {
+            "a": (-2300.0, 0.0, 6700.0), "b": (2300.0, 0.0, 6700.0),
+            "c": (-2300.0, 0.0, 6800.0), "d": (2300.0, 0.0, 6800.0),
+            "e": (-2100.0, 0.0, 10000.0), "f": (2100.0, 0.0, 10000.0),
+        }
+        bars = [
+            {"id": "l1", "from": "a", "to": "e"},
+            {"id": "l2", "from": "b", "to": "f"},
+        ]
+        fn = leg_chain_extrapolator(nodes, bars, base_fn=lambda z: 2300.0)
+        # 修复前：最低点对 (6700,2300)-(6800,2300) 零斜率 → None
+        self.assertIsNotNone(fn)
+        self.assertGreater(fn(0.0), fn(6700.0))
+
 
 class ExtrapolateBaseSegmentTest(unittest.TestCase):
     def test_skirt_fan_spokes_topology(self):

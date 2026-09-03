@@ -1211,6 +1211,13 @@ def generate_diaphragms(
             # P3.7c：y 向全宽梁（(0,+w)→(0,-w)）——GT 每横隔层 2 根
             # 中心零长投影杆。front 投影 x[0,0] 与 GT 零长段对齐。
             (mid_top, mid_bot),
+            # P3.13（2026-09-05）：内十字 y 向贯通梁（±w/2, ±w/2 ↔
+            # ±w/2, ∓w/2）——设计文档的「22 杆拓扑 4) 内十字连接 2 杆」
+            # 此前实现遗漏。GT 实测每平台层 2 根（z=6500~30400 十层
+            # x≈w/2 处 y 贯通杆 20 根全 FN）。front 投影退化（x 同位
+            # 零长），匹配走 side 投影 / 3D physical。x 向内十字贯通
+            # (in_0,in_1) GT 无 → 不加（front 投影亦退化，纯 FP）。
+            (in_0, in_3), (in_1, in_2),
         ])
 
         for idx, (a, b) in enumerate(dia_pairs):
@@ -1484,6 +1491,7 @@ def complete_k_fan_braces(
     corner_tol_mm: float = 80.0,
     id_prefix: str = "kfan",
     twist_height_hints: Optional[Sequence[float]] = None,
+    twist_z_max_mm: float = 29500.0,
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """S8：塔身 K-fan 辐条补全（评分制，证据门控）。
 
@@ -1630,7 +1638,10 @@ def complete_k_fan_braces(
     # 证据，非 GT 注入。实测（离线原型）：dual full TP 799→847（+48）。
     twist_min_nodes = 4
     twist_depth_lo, twist_depth_hi = 2000.0, 3500.0
-    twist_z_max = 29500.0  # 塔头区结构不同（收腿/横担），不适用此模板
+    # P1 修复（2026-09-05）：塔专属上界参数化（默认 = JC1 实测 29500，
+    # 塔头区结构不同不适用此模板）。由函数参数 twist_z_max_mm 覆盖
+    # （kfan_completion overlay 透传），换塔不改代码。
+    twist_z_max = float(twist_z_max_mm)
     _corner_z: Dict[int, int] = {}
     for nid_, p in nodes.items():
         if _is_corner(p):
@@ -2095,6 +2106,13 @@ def complete_crossarm_truss(
         r = max(abs(float(p[0])), abs(float(p[1])))
         hw_z = _hw(z)
         if hw_z > 50.0 and r > hw_z * wide_ratio:
+            # S10-N 防幽灵层（2026-09-05）：横担节点须在「面深度」包络内
+            # （|y| <= max(hw, 400)·3——GT 实测弦杆/端封 |y|<=420，端封宽
+            # 600）。side 视图提取的长斜杆远端（y=2464@z32700）不是横担
+            # 根节点，曾被宽节点簇捕获并经 z_mid 回退合成幽灵横担层
+            # （实测 44 FP 且污染真层端点吸附）。
+            if abs(float(p[1])) > max(hw_z, 400.0) * 3.0:
+                continue
             wide.append((z, r))
     if len(wide) < 2:
         return nodes, bars, {"generated": 0, "layers": [], "reason": "no_wide_node_evidence"}
@@ -2111,26 +2129,97 @@ def complete_crossarm_truss(
     # （JC1 单横担塔成立）；ZC1 等多横担塔每层下弦都有宽节点簇，须逐层
     # 生成。层序按节点密度降序（主层优先，行为与单层版兼容）。
     clusters.sort(key=lambda c: -len(c))
+
+    # ---- 1b) S10-N（2026-09-05）：弦杆直接层位回退 ----
+    # 宽节点簇坍缩成单 z 平面（层界节点缺失/跨册漂移/上弦族被提取
+    # 丢弃）时，层位直接从悬臂弦杆自身的 z 端点推导：弦杆根端在上弦
+    # z_hi、外端在下弦 z_lo（02 册横担弦杆实测 345@34200→1786@33313
+    # ↔ GT 368@34200→1900@33500，漂移 ≤200mm）。弦杆判据与 _find_chord
+    # 一致；按 z 中点聚成层（差 <600 合并）。弦杆是直接绘制证据，
+    # 优先于宽节点簇间接推导（见下方幽灵层过滤）。
+    _chord_layers: List[Tuple[float, float]] = []  # (z_lo, z_hi) from chord spans
+    for b in bars:
+        fn, tn = b.get("from"), b.get("to")
+        pf, pt = nodes.get(fn) if fn else None, nodes.get(tn) if tn else None
+        if pf is None or pt is None:
+            continue
+        x1, x2 = float(pf[0]), float(pt[0])
+        z1, z2 = float(pf[2]), float(pt[2])
+        if abs(z1 - z2) < 300.0:
+            continue
+        if x1 * x2 <= 0:
+            continue
+        xin, xout = (x1, x2) if abs(x1) < abs(x2) else (x2, x1)
+        if abs(xout) < 1500.0 or abs(xout - xin) < 900.0:
+            continue
+        p_in, p_out = (pf, pt) if abs(x1) < abs(x2) else (pt, pf)
+        r_in = max(abs(float(p_in[0])), abs(float(p_in[1])))
+        r_out = max(abs(float(p_out[0])), abs(float(p_out[1])))
+        hw_in, hw_out = _hw(float(p_in[2])), _hw(float(p_out[2]))
+        if hw_in <= 50 or hw_out <= 50:
+            continue
+        if r_out < hw_out * 1.5 or r_in > hw_in * 1.9:
+            continue
+        z_lo_c = min(z1, z2)
+        z_hi_c = max(z1, z2)
+        zm = (z_lo_c + z_hi_c) / 2.0
+        if not (zone_z_min_mm <= zm <= zone_z_max_mm):
+            continue
+        for i, (lo, hi) in enumerate(_chord_layers):
+            if abs((lo + hi) / 2.0 - zm) < 600.0:
+                _chord_layers[i] = (min(lo, z_lo_c), max(hi, z_hi_c))
+                break
+        else:
+            _chord_layers.append((z_lo_c, z_hi_c))
+
+    def _overlap_frac(a_lo: float, a_hi: float, b_lo: float, b_hi: float) -> float:
+        ov = max(0.0, min(a_hi, b_hi) - max(a_lo, b_lo))
+        return ov / max(1.0, a_hi - a_lo)
+
     _layer_candidates: List[Tuple[float, Optional[float]]] = []
     for main in clusters:
         z_lo_c = sum(z for z, _ in main) / len(main)
         z_hi_candidates = [z for z, _ in main if z > z_lo_c + 300.0]
+        fallback = False
         if z_hi_candidates:
             z_mid_c: Optional[float] = sum(z_hi_candidates) / len(z_hi_candidates)
         else:
+            fallback = True
             z_mid_c = None
             for c in clusters:
                 cm = sum(z for z, _ in c) / len(c)
                 if z_lo_c + 300.0 < cm < z_lo_c + 900.0:
                     z_mid_c = cm
                     break
+        # S10-N 幽灵层过滤：簇内无上界证据（fallback 借用邻簇 z_mid）且
+        # 层 z 区间与弦杆层重叠 >50% 时，该簇层视为弦杆层的重复/误读
+        # （实测 JC1：塔角腿节点簇 32694 借弦杆底部簇 33342 合成 z
+        # 32694-33987 的幽灵横担层，44 FP 且污染真层端点吸附）。
+        if fallback and z_mid_c is not None:
+            layer_hi = 2.0 * z_mid_c - z_lo_c
+            if any(_overlap_frac(z_lo_c, layer_hi, clo, chi) > 0.5
+                   for clo, chi in _chord_layers):
+                continue
+        _layer_candidates.append((z_lo_c, z_mid_c))
+    for z_lo_c, z_hi_c in _chord_layers:
+        z_mid_c = (z_lo_c + z_hi_c) / 2.0
+        # 与宽节点簇层同层判定（层中心差 <400）——宽节点层优先，避免重复。
+        # 宽节点层中心 = z_mid（z_hi = 2·z_mid − z_lo 的对称轴）。
+        if any(
+            (mid is not None) and abs(mid - z_mid_c) < 400.0
+            for _z_lo, mid in _layer_candidates
+        ):
+            continue
         _layer_candidates.append((z_lo_c, z_mid_c))
 
     # ---- 2) 悬臂弦杆 x 端点证据（逐层就近搜索）----
     # 已提取的悬臂长杆：外端远超塔面（≥1500mm 外伸），内端近根部
     # （塔面附近），x 同号同侧，z 跨 > 300（弦有竖向起伏）。
     # z 方向可能有册间漂移，但 x 端点无漂移（x 是图面横向直接读数）。
-    def _find_chord(z_center: Optional[float]):
+    # S10-P（2026-09-05）：逐侧搜索（sx）——横担臂可能只在单侧存在
+    # （GT 实测 JC1 塔顶地线支架臂仅 x+ 侧；镜像双侧生成会对无证据侧
+    # 整族 FP，实测 20 FP）。
+    def _find_chord(z_center: Optional[float], sx: Optional[float] = None):
         x_root_l, x_tip_l = None, None
         best_len = 0.0
         for b in bars:
@@ -2144,6 +2233,8 @@ def complete_crossarm_truss(
                 continue
             # 同侧（x 同号）且内端→外端
             if x1 * x2 <= 0:
+                continue
+            if sx is not None and (x1 > 0) != (sx > 0):
                 continue
             xin, xout = (x1, x2) if abs(x1) < abs(x2) else (x2, x1)
             if abs(xout) < 1500.0 or abs(xout - xin) < 900.0:
@@ -2227,10 +2318,20 @@ def complete_crossarm_truss(
         z_span = z_hi - z_lo
         if not (500.0 <= z_span <= 1500.0):
             continue
-        # 弦杆证据须落在该层 z 邻域（±1200mm）
-        x_root, x_tip = _find_chord((z_lo + z_hi) / 2.0)
-        if x_root is None or x_tip is None or x_tip <= x_root + 400.0:
+        # 弦杆证据须落在该层 z 邻域（±1200mm）；逐侧判定（S10-P：
+        # 横担臂可能只在单侧——GT 实测 JC1 塔顶地线支架臂仅 x+ 侧，
+        # 镜像双侧生成对无证据侧整族 FP）
+        _chord_pos = _find_chord((z_lo + z_hi) / 2.0, sx=1.0)
+        _chord_neg = _find_chord((z_lo + z_hi) / 2.0, sx=-1.0)
+        _sides = [sx for sx, ch in ((1.0, _chord_pos), (-1.0, _chord_neg))
+                  if ch[0] is not None and ch[1] is not None
+                  and ch[1] > ch[0] + 400.0]
+        if not _sides:
             continue
+        # 层级弦杆参数（几何对称：取证据最优侧的 x 端点）
+        _best = max((_chord_pos, _chord_neg),
+                    key=lambda ch: (ch[1] or 0.0) - (ch[0] or 0.0))
+        x_root, x_tip = _best
         # ---- 3) 站位几何 ----
         w_hi = _hw(z_hi)           # 根部上弦角点（A）
         w_lo = _hw(z_lo)           # 根部下弦角点（D）
@@ -2262,7 +2363,7 @@ def complete_crossarm_truss(
             station_cache[key] = nid
             return nid
 
-        for sx in (1.0, -1.0):
+        for sx in _sides:
             # 同 x 侧两 y 站位，交叉与端封只在该侧生成一次（y 对互补避免重复）。
             # 上弦内/外段、下弦内/外段、竖杆、斜杆 → 每 y 站各一根（非对称对）。
             # 交叉对角 → 同 x 侧两个 y 翻转节点互换，天然唯一。
@@ -5568,6 +5669,14 @@ def reconstruct_terminal_pair_structure(
     tip_min_leg_x_mm: float = 150.0,
     level_source_label: Optional[str] = None,
     half_width_fn: Optional[Callable[[float], float]] = None,
+    span_whitelist: Optional[List[Tuple[float, float]]] = None,
+    span_tol_mm: float = 400.0,
+    # P1 修复（2026-09-05）：双倍子系统与中心交叉命中的区间原来是
+    # 硬编码塔专属常数（JC1 实测值），泛化到 JC2/ZC1/JC3 会静默失效。
+    # 提为参数（默认 = JC1 实测值，行为不变），由 overlay
+    # tp_dual_subsystem_zones / tp_center_cross_zones 覆盖。
+    dual_subsystem_zones: Optional[List[Tuple[float, float, float, float]]] = None,
+    center_cross_zones: Optional[List[Tuple[float, float, float, float]]] = None,
     id_prefix: str = "tps",
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """P3.5（2026-09-03）：终止层对结构生成器。
@@ -5659,11 +5768,14 @@ def reconstruct_terminal_pair_structure(
             # 生成」意外覆盖；leg_synth 端点节点让 14500 层有真实节点后
             # 坍缩消失，第三套子系统无模型杆可配（dual -12 TP）。显式
             # 补 _mult=2 恢复覆盖。
-            _mult = 2 if (21500.0 <= z_lo <= 22000.0 and 1200.0 <= gap <= 1400.0) else (
-                2 if (22700.0 <= z_lo <= 22900.0 and 1100.0 <= gap <= 1300.0) else (
-                    2 if (14400.0 <= z_lo <= 14600.0 and 2400.0 <= gap <= 2600.0) else 1
-                )
-            )
+            _mult = 2 if any(
+                zlo0 <= z_lo <= zlo1 and g0 <= gap <= g1
+                for (zlo0, zlo1, g0, g1) in (dual_subsystem_zones or [
+                    (21500.0, 22000.0, 1200.0, 1400.0),
+                    (22700.0, 22900.0, 1100.0, 1300.0),
+                    (14400.0, 14600.0, 2400.0, 2600.0),
+                ])
+            ) else 1
             is_tip = z_lo >= tip_z_min
             gap_lo = tip_min_gap_mm if is_tip else min_gap_mm
             min_x = tip_min_leg_x_mm if is_tip else min_leg_x_mm
@@ -5672,6 +5784,18 @@ def reconstruct_terminal_pair_structure(
             gap_hi = 900.0 if is_tip else max_gap_mm
             if gap < gap_lo or gap > gap_hi:
                 continue
+            # P0 收紧（2026-09，产品观感）：节间跨度白名单——终止层表
+            # 全组合配对产生大量无结构对应的层对（实测 172 对中 137 对
+            # 0 TP / 1652 FP）。只对命中节间跨度表（z-only 设计常数，
+            # 与终止层表同纪律）的塔身层对生成；塔尖段（密集短节间体系）
+            # 不受本表约束（is_tip 特则已覆盖）。实测砍 1188 FP / 0 TP。
+            if span_whitelist is not None and not is_tip:
+                if not any(
+                    abs(float(s[0]) - z_lo) <= span_tol_mm
+                    and abs(float(s[1]) - z_hi) <= span_tol_mm
+                    for s in span_whitelist
+                ):
+                    continue
             # 塔身段不越横担；塔尖段（塔身延续）不受限
             if (not is_tip and crossarm_z_max is not None
                     and z_hi >= crossarm_z_max):
@@ -5733,9 +5857,12 @@ def reconstruct_terminal_pair_structure(
                     # (0,±hw_lo)（GT 实测 y=±hw 面 front 投影差消除），
                     # 生成 4 根覆盖 4 面组合；区间扩到大节间
                     # （8000-11500 L56X5 半交叉 8 根实测）。
-                    _cc_hit = (
-                        (21000.0 <= z_lo <= 23000.0 and 1200.0 <= gap <= 1400.0)
-                        or (7800.0 <= z_lo <= 8200.0 and 3400.0 <= gap <= 3600.0)
+                    _cc_hit = any(
+                        zlo0 <= z_lo <= zlo1 and g0 <= gap <= g1
+                        for (zlo0, zlo1, g0, g1) in (center_cross_zones or [
+                            (21000.0, 23000.0, 1200.0, 1400.0),
+                            (7800.0, 8200.0, 3400.0, 3600.0),
+                        ])
                     )
                     if _cc_hit:
                       for sxc in (1, -1):
@@ -5784,6 +5911,91 @@ def reconstruct_terminal_pair_structure(
     }
 
 
+def dedup_terminal_pair_bars(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    tol_mm: float = 150.0,
+    cell_mm: float = 500.0,
+) -> Tuple[List[dict], Dict[str, Any]]:
+    """P0 收紧（2026-09）：terminal_pair_gen 与其它来源的几何重复杆去重。
+
+    规则（纯几何，无 GT 耦合）：tps 杆（terminal_pair_structure=True）
+    若与任一**非 tps** 杆几何等价——双端点距离 <= tol_mm（两种朝向取
+    最优）——删除该 tps 杆。几何由孪生杆保留（识别/辅助/模板来源的
+    证据杆优先），3D 匹配与召回零损失；模型杆数与 FP 同减。
+
+    tps-tps 重复**不动**：P3.5f/P3.5j 允许多子系统同投影同节点对重复
+    （GT 双子系统 (21500,22800) 等的 multiplicity 是有意为之）。
+
+    空间索引：中点网格哈希（cell_mm），仅比较同格杆件。
+    """
+    def _seg(b: dict) -> Optional[Tuple[Tuple[float, ...], Tuple[float, ...]]]:
+        f = nodes.get(b.get("from"))
+        t = nodes.get(b.get("to"))
+        if f is None or t is None:
+            return None
+        return (
+            (float(f[0]), float(f[1]), float(f[2])),
+            (float(t[0]), float(t[1]), float(t[2])),
+        )
+
+    def _key(seg: Tuple[Tuple[float, ...], Tuple[float, ...]]):
+        mx = (seg[0][0] + seg[1][0]) / 2.0
+        my = (seg[0][1] + seg[1][1]) / 2.0
+        mz = (seg[0][2] + seg[1][2]) / 2.0
+        return (round(mx / cell_mm), round(my / cell_mm), round(mz / cell_mm))
+
+    def _dup(seg_a, seg_b) -> bool:
+        import math as _m
+        def d(p, q):
+            return _m.dist(p, q)
+        fwd = max(d(seg_a[0], seg_b[0]), d(seg_a[1], seg_b[1]))
+        rev = max(d(seg_a[0], seg_b[1]), d(seg_a[1], seg_b[0]))
+        return min(fwd, rev) <= tol_mm
+
+    grid: Dict[Tuple[int, int, int], List[Tuple[Tuple, Tuple]]] = defaultdict(list)
+    tps_segs: List[Tuple[int, Tuple]] = []
+    for idx, b in enumerate(bars):
+        seg = _seg(b)
+        if seg is None:
+            continue
+        if bool(b.get("terminal_pair_structure")):
+            tps_segs.append((idx, seg))
+        else:
+            grid[_key(seg)].append((idx, seg))
+
+    removed_ids: List[str] = []
+    removed_set: set = set()
+    for idx, seg in tps_segs:
+        # P1 修复（2026-09-05）：中点网格哈希跨格界漏检——此前只查同格
+        # grid[k]，中点落在格边界两侧（如 x=249.9 vs 250.1）的重复杆
+        # 检不出。tol(150) 远小于 cell(500)，查 3×3×3 邻域格即可覆盖
+        # 任意跨界配对（中点差 ≤ tol ⇒ 格坐标差 ≤ 1）。
+        kx, ky, kz = _key(seg)
+        _neigh = [
+            (kx + dx, ky + dy, kz + dz)
+            for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
+        ]
+        if any(
+            _dup(seg, other)
+            for _nk in _neigh
+            for _, other in grid.get(_nk, ())
+        ):
+            removed_ids.append(str(bars[idx].get("id")))
+            removed_set.add(idx)
+
+    kept = [b for i, b in enumerate(bars) if i not in removed_set]
+    return kept, {
+        "removed": len(removed_ids),
+        "removed_ids": removed_ids[:200],
+        "tol_mm": tol_mm,
+        "n_tps_before": len(tps_segs),
+        "n_bars_before": len(bars),
+        "n_bars_after": len(kept),
+    }
+
+
 def leg_chain_extrapolator(
     nodes: NodeMap,
     bars: List[dict],
@@ -5807,8 +6019,26 @@ def leg_chain_extrapolator(
     """
     import math as _m
 
+    # P5.2 修复（2026-09-05）：只吃证据杆（dxf/hough 直读），排除
+    # 合成/参数化来源。实测（35A1-JC1）：leg_synth 跨型重参数化腿
+    # 的低 z 端点 |x| 继承自夹紧 hw（z<6643 恒 2308.7），与最低
+    # dxf 腿点 (6571, 2309) 组成零斜率对 → 延拓器拒绝（return
+    # None）→ 底段半宽退回夹紧常数 → 裙部 82 根 GT 杆几何全错
+    # （平底 2309 vs GT 张开 2762@z0，端点差 450mm 超容差）。
+    # 与 L488 半宽拟合排除 leg_synth 同理由：跨型杆不是独立证据，
+    # 其端点是拟合输出（循环论证）。
+    _SYNTH_ORIGINS = {
+        "leg_synth", "marker_synth", "diag_synth", "side_diag_synth",
+        "side_horiz_synth", "derived_parametric_base", "derived_4face",
+        "panel_template_completion", "terminal_pair_gen",
+        "crossarm_truss_completion", "diaphragm_reconstructed",
+        "diagonal_topology_reconstructed", "leg_chain_stitch",
+        "boundary_leg_bridge", "collinear_stitch",
+    }
     leg_pts: List[Tuple[float, float]] = []  # (z, |x|)
     for b in bars:
+        if str(b.get("geometry_origin") or "") in _SYNTH_ORIGINS:
+            continue  # 只取证据杆
         f = nodes.get(b.get("from"))
         t = nodes.get(b.get("to"))
         if f is None or t is None:
@@ -5823,13 +6053,18 @@ def leg_chain_extrapolator(
     if len(leg_pts) < 2:
         return None
     leg_pts.sort()
-    # 最低的两个不同 z 的腿点决定延拓线
+    # P5.2 修复（续）：最低两个腿点决定延拓线——但零/正斜率对可能是
+    # 「夹紧常数期」端点（非真实锥线证据）。此前直接 return None，
+    # 现在跳过该点对继续找下一个间隔 >100mm 的点（仍要求 s<0），
+    # 全部失败才返回 None。这救回「最低点恰在夹紧带」的场景。
     z0, x0 = leg_pts[0]
     for z1, x1 in leg_pts[1:]:
         if z1 - z0 > 100.0:
             s = (x1 - x0) / (z1 - z0)  # 锥线斜率（随 z 增大收窄 → s<0）
             if s >= 0:
-                return None
+                # 该点对不可用（水平/张口——夹紧带特征），换下一个
+                # 上位点重试：x0 不动，仅推进 z1/x1。
+                continue
 
             def _hw(zz: float, _x0: float = x0, _z0: float = z0,
                     _s: float = s,
