@@ -75,7 +75,7 @@ python3 scripts/eval_a2_profiles.py examples/gt/35A1-JC1_ground_truth.json out/3
 | `A2-dual-view-reconstructed` | + 确定性重建（镜像） | 内部归因 |
 | `level_assisted` / `parametric` | + z-only 层表补全 / 参数化外推 | 内部归因，分层披露 |
 
-当前基线（2026-09-03）：JC1 dual-view-pure TP 214 / P 57.2% / R 20.0%；
+当前基线（2026-09-03）：JC1 dual-view-pure TP 220 / P 58.2% / R 20.5%；
 ZC1 dual-union（reconstructed）R 75.8%。GT 来源等级：`.mod/.NODE` 直出可
 并列呈报；GLB 反提取（如 JC2 canonical）仅限内部回归，见 GT `caveats`。
 
