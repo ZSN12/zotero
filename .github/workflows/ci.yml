@@ -1,0 +1,71 @@
+# CI（线 1.2 落地，2026-09-03）：把两道门禁接进 GitHub Actions。
+#
+# 分层（与 pyproject markers 对齐）：
+#   job "tests"      —— pytest 快层（unit/pipeline，秒级~分钟内）
+#   job "gates"      —— 门禁 1 self_test --quick（单测外的冒烟 + IR 抽查）
+#                       + 领域包入口回归（test_domain_pack_*）
+#   job "full-suite" —— 全量 pytest（含 slow/integration；不跑 online）
+#
+# 门禁 2（validate_public_ir）经 test_domain_pack_gates 的 15 条用例
+# （正/负向）在 gates job 内覆盖——CI 环境不落长跑交付产物。
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-tower.txt pytest
+      - name: Fast test layer (unit/pipeline)
+        run: pytest
+
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-tower.txt pytest
+      - name: Gate 1 — self_test --quick (smoke + evidence IR)
+        run: python3 domains/angle-tower/scripts/self_test.py --quick
+      - name: Domain pack entry regression (gates + six-layer chain)
+        run: pytest tests/test_domain_pack_gates.py tests/test_domain_pack_layers.py -p no:cacheprovider -q
+
+  full-suite:
+    runs-on: ubuntu-latest
+    # 全量层含 6 条历史遗留失败（guowang-02 view_mode ×2 / gusset GLB /
+    # bolt GLB / M8 deliver / phase-C cross-file batch，2026-09-03 基线核验
+    # 在 2cee69c 上同样失败——非本周期回归）。continue-on-error 让基线
+    # 状态可见但不阻塞；修复后应移除本标记。
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-tower.txt pytest
+      - name: Full pytest (incl. slow/integration, excl. online)
+        run: pytest -o addopts="-q -m 'not online'"

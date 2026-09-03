@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Engineering Traceability — 从图纸到可信工程上下文</title>
+<meta name="description" content="角钢塔领域包：多册 DXF 图纸 → 可追溯、可验证、可变更管理的三维工程模型。六层契约 + 证据链 + 交付门禁。" />
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <span class="brand">Engineering<span class="dot">·</span>Traceability</span>
+  <a href="index.html" class="active">首页</a>
+  <a href="product.html">产品能力</a>
+  <a href="demo.html">在线演示</a>
+  <a href="opensource.html">开源</a>
+  <a href="about.html">关于</a>
+  <a class="cta" href="/">进入 Demo →</a>
+</nav>
+
+<div class="wrap">
+  <section class="hero">
+    <div class="kicker">图纸 → 三维 → 证据链</div>
+    <h1>AI 生成的 3D 塔「看着像」。<br/>我们让它「说得清」。</h1>
+    <p class="lead">
+      输电角钢塔图纸（多册 DXF）进，<b>可追溯、可验证、可变更管理</b>的
+      全塔三维模型出。每一根构件都能回答四个问题：来自哪张图？
+      尺寸是实测还是推断？哪些连接验证过？改了判断后哪些结果要作废？
+    </p>
+    <div class="actions">
+      <a class="btn primary" href="/">⚡ 在线演示（3D 交互）</a>
+      <a class="btn ghost" href="opensource.html">开源快速开始</a>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>当前基线 <span style="font-size:14px;color:var(--ink-dim)">（诚实呈报 · 2026-09-03）</span></h2>
+    <div class="grid c3">
+      <div class="card">
+        <span class="caliber-tag pure">对外主口径 · 纯直读</span>
+        <div class="num ok">220 <span style="font-size:16px">TP</span></div>
+        <div class="label">A2-dual-view-pure · 35A1-JC1<br/>P 58.2% / R 20.5% @500mm</div>
+      </div>
+      <div class="card">
+        <span class="caliber-tag assist">辅助口径 · 重建并集</span>
+        <div class="num assist">1068 <span style="font-size:16px">TP</span></div>
+        <div class="label">dual-union（含镜像/层表补全）· JC1<br/>99.7% @500mm · 仅内部归因</div>
+      </div>
+      <div class="card">
+        <span class="caliber-tag pure">换塔泛化</span>
+        <div class="num">9 <span style="font-size:16px">TP</span></div>
+        <div class="label">A2-dual-view-pure · 35A2-ZC1<br/>P 6.5% / R 3.2%（只改配置不改代码）</div>
+      </div>
+    </div>
+    <p class="footnote">
+      口径纪律：纯直读（recognized 图面读数并集）与重建并集<b>分开呈报</b>，
+      重建口径不得冒充直读能力；GT 注入面在 version.json 强制披露并由
+      交付门禁 fail-closed 核验。详见<a href="about.html">口径纪律</a>。
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>为什么可信</h2>
+    <div class="grid c2">
+      <div class="card">
+        <h3>🔗 三条证据链</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          图纸读数（SourceRef 逐实体）× BOM 交叉核验（件号/截面/数量）
+          × 几何验证（闭环/求解/重复件号）。评测器是门禁不是可调参数。
+        </p>
+      </div>
+      <div class="card">
+        <h3>📦 六层契约</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          drawing → hypothesis → rebuild → semantic-IR → validation-gate →
+          complete-tower。每层只消费上一层产物，每层<b>独立可跑、独立可审计</b>。
+        </p>
+      </div>
+      <div class="card">
+        <h3>🧾 版本指纹链</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          version.json 记录模型/overlay/骨架的 SHA 指纹与 GT 注入面；
+          产物改过后指纹不匹配 = 交付无效。
+        </p>
+      </div>
+      <div class="card">
+        <h3>🚦 两道交付门禁</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          门禁 1 self_test（单测 + 内置示例端到端）；门禁 2 validate_public_ir
+          （schema + 口径纪律 + GT 披露闭环）。红就是红，不粉饰。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" style="border-bottom:none">
+    <h2>一条命令换一座塔</h2>
+    <pre>python3 domains/angle-tower/scripts/init_domain.py ~/towers/my-tower --name my-tower
+#   放图纸进 dxf/ · 填 overlay.json（字段带纪律说明）· 放 BOM
+python3 domains/angle-tower/scripts/validate_workspace.py ~/towers/my-tower   # 预检
+for L in 1 2 3 4 5 6; do
+  python3 domains/angle-tower/scripts/run_layer.py $L --workspace ~/towers/my-tower
+done</pre>
+    <p class="footnote">多塔泛化纪律：换塔只改配置，不改代码。详见
+      <a href="product.html">产品能力</a>与<a href="opensource.html">开源快速开始</a>。</p>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="cols">
+      <div>
+        <div style="font-weight:700;margin-bottom:6px">Engineering Traceability</div>
+        从工程图纸到可信工程上下文。MIT 开源。
+      </div>
+      <div>
+        <div style="font-weight:600;margin-bottom:6px">导航</div>
+        <a href="product.html">产品能力</a><br/>
+        <a href="demo.html">在线演示</a><br/>
+        <a href="opensource.html">开源</a><br/>
+        <a href="about.html">关于</a>
+      </div>
+      <div>
+        <div style="font-weight:600;margin-bottom:6px">外部</div>
+        <a href="/">交互式 Demo</a><br/>
+        <a href="/demo/jc1.html">全屏 3D 查看器</a><br/>
+        <a href="https://github.com/ZSN12/engineering-trace">GitHub</a>
+      </div>
+    </div>
+    <p style="margin-top:26px">数字均为实测并钉 commit 出处；本站不展示任何不可复核的指标。</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>开源 — Engineering Traceability</title>
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <span class="brand">Engineering<span class="dot">·</span>Traceability</span>
+  <a href="index.html">首页</a>
+  <a href="product.html">产品能力</a>
+  <a href="demo.html">在线演示</a>
+  <a href="opensource.html" class="active">开源</a>
+  <a href="about.html">关于</a>
+  <a class="cta" href="/">进入 Demo →</a>
+</nav>
+
+<div class="wrap">
+
+  <section class="hero" style="padding-bottom:24px">
+    <div class="kicker">开源</div>
+    <h1>MIT · 领域包与引擎同仓发布</h1>
+    <p class="lead">
+      <a href="https://github.com/ZSN12/engineering-trace">github.com/ZSN12/engineering-trace</a>
+      — 领域包（domains/angle-tower）、引擎（traceability/）、测试（700+ 用例）、
+      CI（tests / gates / full-suite 三层）与交互式 Demo 全部开源。
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>5 分钟上手</h2>
+    <pre>git clone https://github.com/ZSN12/engineering-trace.git
+cd engineering-trace
+pip install -r requirements.txt -r requirements-tower.txt
+
+# ① 两道门禁
+python3 domains/angle-tower/scripts/self_test.py            # 门禁 1
+python3 domains/angle-tower/scripts/validate_public_ir.py \
+  examples/tower_110kv_model.json                            # 门禁 2
+
+# ② 建一座自己的塔（工作区 → 预检 → 六层）
+python3 domains/angle-tower/scripts/init_domain.py ~/towers/my-tower --name my-tower
+python3 domains/angle-tower/scripts/validate_workspace.py ~/towers/my-tower
+for L in 1 2 3 4 5 6; do
+  python3 domains/angle-tower/scripts/run_layer.py $L --workspace ~/towers/my-tower
+done</pre>
+    <p class="footnote">
+      overlay.json 模板每个字段带 <code>_doc</code> 纪律说明；
+      预检对未知 GT 注入面 fail-closed（先登记再使用，防未披露注入）。
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>仓库结构</h2>
+    <pre>domains/angle-tower/     领域包：六层契约 + 两道门禁 + 工作区入口
+traceability/            引擎：数据模型 / DAG / intake / solve / 评测 / 交付
+schema/                  公共 IR JSON Schema（含证据层）
+web/                     交互式 3D 追溯 Demo（零依赖后端 + 品牌站）
+scripts/                 单塔管线入口（run_*_full.py）+ 验收脚本
+examples/                内置示例（110kV 塔 + P&ID 管线）+ 各塔 GT
+tests/                   700+ 用例（快层默认 / 全量见 CI）
+.github/workflows/ci.yml CI：tests / gates / full-suite</pre>
+  </section>
+
+  <section class="block">
+    <h2>贡献约定（诚实性优先）</h2>
+    <div class="grid c2">
+      <div class="card">
+        <h3>动引擎前先过门禁</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          改 <code>traceability/</code> 任何代码前后各跑一次
+          <code>self_test.py</code>；评测指标只从
+          <code>scripts/eval_a2_profiles.py</code> 产出，不手算。
+        </p>
+      </div>
+      <div class="card">
+        <h3>提交带口径实测</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          提交信息带上口径变化（如「dual-union R 39.3%→75.8%」）；
+          无指标变化的改动需说明为什么不影响指标。
+        </p>
+      </div>
+      <div class="card">
+        <h3>新增 GT 注入面必须登记</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          只许 z-only（层表/跨度表），严禁 x/y/拓扑；新键先登记
+          versioning.py，否则预检与门禁 2 都会拦。
+        </p>
+      </div>
+      <div class="card">
+        <h3>拒绝静默失败</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          降级/跳过/清理必须落盘留痕（skipped_reason / 报告键），
+          不允许「无声消失」。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" style="border-bottom:none">
+    <h2>许可证</h2>
+    <p class="lead">
+      <a href="https://github.com/ZSN12/engineering-trace/blob/main/LICENSE">MIT</a>
+      — 主仓与领域包同许可证发布。示例图纸数据版权归原设计单位，
+      仅用于研究评测。
+    </p>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div style="color:var(--ink-dim)">
+      <a href="demo.html">← 在线演示</a> ·
+      <a href="about.html">关于 →</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

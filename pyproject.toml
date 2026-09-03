@@ -1,3 +1,25 @@
+[project]
+# 开源发布元数据（2026-09-03）：与 README.md / LICENSE（MIT）一致。
+name = "engineering-trace"
+version = "0.4.0"
+description = "从工程图纸（DXF/DWG/扫描图）到可追溯、可验证、可变更管理的三维工程模型——角钢塔领域包（六层契约）+ 证据链引擎 + 交付门禁。"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "engineering-trace contributors" }]
+keywords = [
+    "engineering", "traceability", "dxf", "tower", "3d-reconstruction",
+    "bom", "evidence-chain", "cad",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
 [tool.pytest.ini_options]
 # 阶段8.3 测试分层：默认只跑快层（unit/pipeline，秒级~分钟内）；
 # 全量（含 slow/integration）用 `pytest -o addopts="-q"` 或 `bash scripts/acceptance.sh`；

@@ -349,6 +349,17 @@ class Handler(BaseHTTPRequestHandler):
             if f.exists() and f.is_file():
                 return self._send(200, f.read_bytes(), "text/markdown; charset=utf-8")
             return self._send(404, {"error": "not found"})
+        if path.startswith("/site/"):
+            # 品牌站静态页（web/site/，2026-09-03）：与 /demo/ 同款的
+            # 白名单文件服务——只服务已存在文件，拒绝目录穿越由
+            # ROOT 前缀保证。
+            f = ROOT / path.lstrip("/")
+            if f.exists() and f.is_file():
+                ctype = mimetypes.guess_type(str(f))[0] or "application/octet-stream"
+                if f.suffix == ".html":
+                    ctype = "text/html; charset=utf-8"
+                return self._send(200, f.read_bytes(), ctype)
+            return self._send(404, {"error": "not found"})
         if path.startswith("/demo/"):
             f = ROOT / path.lstrip("/")
             if f.exists() and f.is_file():

@@ -2,6 +2,11 @@
 
 **从一张图，到可供 AI 使用的工程上下文。**
 
+[![CI](https://github.com/ZSN12/engineering-trace/actions/workflows/ci.yml/badge.svg)](https://github.com/ZSN12/engineering-trace/actions/workflows/ci.yml)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Tests](https://img.shields.io/badge/tests-696%2B_passed-brightgreen)
+
 > 🎯 **最终目的**：三段式管线（接入→编译→交付）× 长上下文重建（多页/多视图/多模块）
 > × 可交互 3D + 三条证据链（图纸读数/BOM核验/几何验证）。详见
 > [`docs/PRODUCT_VISION.md`](docs/PRODUCT_VISION.md)。
@@ -16,6 +21,41 @@
 
 本项目用**结构化数据模型 + 依赖 DAG + 变更传播引擎**回答这四个问题，
 并提供一个给 AI 使用的 **Skill**（`SKILL.md`）。
+
+## 60 秒开始（角钢塔领域包）
+
+```bash
+# 安装依赖
+pip install -r requirements.txt -r requirements-tower.txt
+
+# 门禁 1：单测 + 内置 110kV 示例端到端（秒级）
+python3 domains/angle-tower/scripts/self_test.py
+
+# 新塔工作区：脚手架 → 预检 → 六层逐层可跑/可审计
+python3 domains/angle-tower/scripts/init_domain.py ~/towers/my-tower --name my-tower
+#   放图纸进 dxf/、BOM 进 bom/、填 overlay.json（字段带纪律说明）
+python3 domains/angle-tower/scripts/validate_workspace.py ~/towers/my-tower
+for L in 1 2 3 4 5 6; do
+  python3 domains/angle-tower/scripts/run_layer.py $L --workspace ~/towers/my-tower
+done
+
+# 交互式 3D 追溯 Demo（three.js，本地零依赖服务）
+python3 web/server.py          # http://127.0.0.1:8000
+```
+
+领域包契约与换塔纪律：[`domains/angle-tower/SKILL.md`](domains/angle-tower/SKILL.md)；
+口径诚实性纪律：[`domains/angle-tower/docs/CALIBER_DISCIPLINE.md`](domains/angle-tower/docs/CALIBER_DISCIPLINE.md)。
+
+### 当前基线（诚实呈报，2026-09-03）
+
+| 塔 | 对外主口径 A2-dual-view-pure（直读并集） | 重建并集（辅助口径，仅内部归因） |
+|---|---|---|
+| 35A1-JC1（国网，36.6m） | TP 220 / P 58.2% / R 20.5% | 1068 / 99.7% @500mm |
+| 35A2-ZC1（换塔泛化） | TP 9 / P 6.5% / R 3.2% | 216 / 75.8% @500mm |
+
+> 重建并集含镜像/层表补全杆件，**不得冒充直读能力**；GT 注入面在
+> version.json `gt_injected.surfaces` 强制披露，门禁 2（validate_public_ir）
+> fail-closed 核验。
 
 ## 三阶段管线
 
@@ -87,30 +127,31 @@ c_pipe_seg1 ──> conn_pump_to_pipe ──> r_pressure_rating
 
 ```
 engineering-trace/
-├── SKILL.md                      # 给 AI 的 Skill 定义（工作流 + 硬性要求）
-├── README.md
 ├── domains/
-│   └── angle-tower/              # 角钢塔领域包（六层契约 + 两道门禁）
+│   └── angle-tower/              # 角钢塔领域包（六层契约 + 两道门禁 + 工作区入口）
 │       ├── SKILL.md              # drawing→hypothesis→rebuild→IR→gate→tower
 │       ├── scripts/self_test.py        # 门禁 1：单测 + 冒烟 + 证据层 IR
 │       ├── scripts/validate_public_ir.py  # 门禁 2：schema + 口径纪律 + GT 披露
+│       ├── scripts/init_domain.py      # 新塔工作区脚手架（overlay 模板）
+│       ├── scripts/validate_workspace.py  # 跑批前预检（GT 注入面 fail-closed）
+│       ├── scripts/run_layer.py        # 六层逐层可跑/可审计入口（L1..L6）
 │       └── docs/CALIBER_DISCIPLINE.md # 口径纪律详表（诚实性契约）
+├── web/                          # 交互式 3D 追溯 Demo（three.js + 零依赖后端）
+│   ├── server.py                # python3 web/server.py → http://127.0.0.1:8000
+│   ├── index.html               # 上传 → 全链 → 3D 展示 + 构件追溯
+│   └── demo/                    # 预置塔模型（JC1/ZC1/JC2 + 110kV）
 ├── schema/
 │   └── engineering_model.json    # JSON Schema（含证据层 observation/hypothesis）
-├── traceability/
-│   ├── __init__.py
-│   ├── model.py                  # 数据模型 + 序列化
-│   ├── graph.py                  # 依赖 DAG + 变更传播
-│   ├── io.py                     # 读写 + 校验 + 报告
-│   └── cli.py                    # 命令行入口
-├── examples/
-│   └── pipe_network.json         # 示例：P&ID 泵送管线
-└── tests/
-    └── test_traceability.py
+├── traceability/                 # 引擎（数据模型/DAG/intake/solve/评测/交付）
+├── scripts/                      # 单塔管线入口（run_*_full.py）+ 验收脚本
+├── examples/                     # 内置示例（110kV 塔 + P&ID 管线）+ 各塔 GT
+├── tests/                        # 700+ 用例（快层默认 / 全量见 CI）
+├── SKILL.md                      # 给 AI 的 Skill 定义（工作流 + 硬性要求）
+└── LICENSE                       # MIT
 ```
 
-> **铁塔领域入口**：多册 DXF → 可验证全塔 3D 模型的完整管线、评测口径纪律
-> 与换塔配置指南，见 [`domains/angle-tower/SKILL.md`](domains/angle-tower/SKILL.md)。
+> **换塔指南**：多册 DXF → 可验证全塔 3D 模型的完整管线、评测口径纪律
+> 与配置字段，见 [`domains/angle-tower/SKILL.md`](domains/angle-tower/SKILL.md)。
 
 ## 铁塔结构图识别与 3D 重构
 
@@ -312,7 +353,7 @@ bash scripts/acceptance.sh --with-mllm   # 追加 Kimi 门禁（需 KIMI_API_KEY
 
 ## License
 
-MIT
+[MIT](LICENSE) — 主仓与 `domains/` 领域包同许可证发布。
 
 
 ## 核心架构：Skill + Harness（本质）

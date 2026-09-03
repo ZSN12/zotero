@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>关于 — Engineering Traceability</title>
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <span class="brand">Engineering<span class="dot">·</span>Traceability</span>
+  <a href="index.html">首页</a>
+  <a href="product.html">产品能力</a>
+  <a href="demo.html">在线演示</a>
+  <a href="opensource.html">开源</a>
+  <a href="about.html" class="active">关于</a>
+  <a class="cta" href="/">进入 Demo →</a>
+</nav>
+
+<div class="wrap">
+
+  <section class="hero" style="padding-bottom:24px">
+    <div class="kicker">关于</div>
+    <h1>诚实性契约是第一设计原则</h1>
+    <p class="lead">
+      本项目面向的是施工、检修、改造场景——模型说错一句话的代价是真金白银。
+      所以我们宁可把「不确定」写进数据结构，也不把它藏进渲染里。
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>四条铁律（违反任何一条 = 交付无效）</h2>
+    <div class="layers">
+      <div class="layer-row"><span class="ln">一</span><div>
+        <b>GT 注入边界</b>：允许注入 z-only 设计常数（层表/跨度表，overlay 声明 +
+        version.json 登记）；<b>严禁注入 GT x/y 坐标或拓扑</b>。
+      </div></div>
+      <div class="layer-row"><span class="ln">二</span><div>
+        <b>口径诚实</b>：对外只报 A2-dual-view-pure（直读并集）；
+        reconstructed / level_assisted / parametric 分层呈报，不得冒充直读。
+      </div></div>
+      <div class="layer-row"><span class="ln">三</span><div>
+        <b>评测器不可改</b>：匹配语义与容差判定是门禁，不是可调参数。
+      </div></div>
+      <div class="layer-row"><span class="ln">四</span><div>
+        <b>每物必有源</b>：所有构件/尺寸带 SourceRef；改动沿依赖 DAG 传播 staleness。
+      </div></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>我们怎么报数字</h2>
+    <table>
+      <tr><th>口径</th><th>入池条件</th><th>呈报规则</th></tr>
+      <tr><td><b>A2-dual-view-pure</b></td><td>recognized 直读（front∪side 并集）</td><td>对外主口径，唯一可作能力声称</td></tr>
+      <tr><td>A2-dual-view-reconstructed</td><td>+ 确定性重建（镜像）</td><td>内部归因</td></tr>
+      <tr><td>level_assisted / parametric</td><td>+ z-only 层表补全 / 参数化外推</td><td>内部归因，分层披露</td></tr>
+    </table>
+    <p class="footnote">
+      每个公开数字可从交付产物复核：version.json 记录 model/overlay SHA、
+      GT 注入面与 a2_dual_view 评测块；门禁 2 对披露闭环 fail-closed。
+      GT 来源分级：.mod/.NODE 直出可并列呈报；GLB 反提取仅限内部回归（必带 caveats）。
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>状态与路线</h2>
+    <div class="grid c2">
+      <div class="card">
+        <h3>✅ 已落地（2026-09）</h3>
+        <ul style="color:var(--ink-dim);font-size:14.5px;margin-left:20px">
+          <li>六层契约 + 逐层可跑入口 + 两道交付门禁</li>
+          <li>多塔泛化：JC1 / ZC1 / JC2 / JC3（换塔只改配置）</li>
+          <li>证据层 IR（observation/hypothesis）+ 版本指纹链</li>
+          <li>CI 三层（tests / gates / full-suite）</li>
+          <li>交互式 3D 追溯 Demo + 品牌站</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>🧭 进行中</h3>
+        <ul style="color:var(--ink-dim);font-size:14.5px;margin-left:20px">
+          <li>直读召回提升（dual-view-pure TP 220 → 230 → 270 路线）</li>
+          <li>BOM 待复核规则清零 → deliver_status: verified</li>
+          <li>更多塔型领域包（管塔 / 门型塔）</li>
+          <li>扫描图（无 DXF）路径的 MLLM 编排打磨</li>
+        </ul>
+      </div>
+    </div>
+    <p class="footnote">
+      状态诚实声明：当前对外主口径召回 20.5%（JC1）——直读能力仍在爬坡，
+      重建并集 99.7% 是辅助口径不作能力声称。我们把这个差距放在首页而不是脚注。
+    </p>
+  </section>
+
+  <section class="block" style="border-bottom:none">
+    <h2>联系</h2>
+    <p class="lead">
+      仓库与 Issue：
+      <a href="https://github.com/ZSN12/engineering-trace">github.com/ZSN12/engineering-trace</a><br/>
+      领域包契约：<a href="https://github.com/ZSN12/engineering-trace/blob/main/domains/angle-tower/SKILL.md">domains/angle-tower/SKILL.md</a><br/>
+      口径纪律详表：<a href="https://github.com/ZSN12/engineering-trace/blob/main/domains/angle-tower/docs/CALIBER_DISCIPLINE.md">CALIBER_DISCIPLINE.md</a>
+    </p>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div style="color:var(--ink-dim)">
+      <a href="opensource.html">← 开源</a> ·
+      <a href="index.html">返回首页</a>
+    </div>
+    <p style="margin-top:26px">© 2026 engineering-trace contributors · MIT</p>
+  </div>
+</footer>
+
+</body>
+</html>

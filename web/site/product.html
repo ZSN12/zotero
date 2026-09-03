@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>产品能力 — Engineering Traceability</title>
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <span class="brand">Engineering<span class="dot">·</span>Traceability</span>
+  <a href="index.html">首页</a>
+  <a href="product.html" class="active">产品能力</a>
+  <a href="demo.html">在线演示</a>
+  <a href="opensource.html">开源</a>
+  <a href="about.html">关于</a>
+  <a class="cta" href="/">进入 Demo →</a>
+</nav>
+
+<div class="wrap">
+
+  <section class="hero" style="padding-bottom:24px">
+    <div class="kicker">产品能力</div>
+    <h1>三段式管线 × 六层契约 × 证据链</h1>
+    <p class="lead">
+      核心主张：交付的不是「一个 3D 模型」，而是「一组可审计的工程上下文」——
+      几何、来源、验证状态、变更影响，全部结构化。
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>三段式管线</h2>
+    <div class="layers">
+      <div class="layer-row"><span class="ln">01</span><div>
+        <b>多源图纸接入</b> — 扫描图 / PDF / DWG / DXF → SourceRef（文件、版本、原始位置）
+      </div></div>
+      <div class="layer-row"><span class="ln">02</span><div>
+        <b>工程信息编译</b> — 构件 / 尺寸 / 连接 + BOM 交叉核验；冲突记为待验证而非静默丢弃
+      </div></div>
+      <div class="layer-row"><span class="ln">03</span><div>
+        <b>可信结果交付</b> — Harness 编排验证流程；GLB + model.json + 评测报告 + version.json 指纹链
+      </div></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>角钢塔领域包：六层契约</h2>
+    <p class="lead" style="margin-bottom:20px">
+      每层只消费上一层产物；每层有独立可跑入口（run_layer）与审计契约，
+      层层可独立验证。
+    </p>
+    <table>
+      <tr><th>层</th><th>产物</th><th>审计契约（run_layer 核验项）</th></tr>
+      <tr><td><b>L1</b> drawing</td><td>区域化 2D 构件（杆/节点/件号/DIM）</td><td>每杆 SourceRef + geometry_class；label/dim 观测登记</td></tr>
+      <tr><td><b>L2</b> hypothesis</td><td>结构解释候选（fan/twist/kchain）</td><td>四态状态机（proposed/accepted/rejected/superseded）；观测普查</td></tr>
+      <tr><td><b>L3</b> rebuild</td><td>参数化补全（面板链/横隔/终止节间）</td><td>geometry_origin 全归因；节点三轴求解率</td></tr>
+      <tr><td><b>L4</b> semantic-IR</td><td>语义工程模型 + BOM 交叉核验</td><td>公共 IR schema；bom_tree 冲突披露</td></tr>
+      <tr><td><b>L5</b> validation-gate</td><td>规则裁决 + 变更传播</td><td>Rule.status 合法；failed/pending 逐条披露（不粉饰）</td></tr>
+      <tr><td><b>L6</b> complete-tower</td><td>GLB / model.json / version.json</td><td>指纹链闭合（model_sha ↔ 磁盘、overlay_sha）</td></tr>
+    </table>
+  </section>
+
+  <section class="block">
+    <h2>核心数据模型</h2>
+    <table>
+      <tr><th>对象</th><th>关键字段</th><th>回答的问题</th></tr>
+      <tr><td>Component</td><td>id, kind, source</td><td>这是什么？来自哪张图？</td></tr>
+      <tr><td>Dimension</td><td>value, unit, origin</td><td>数值多少？实测（measured）还是推断（derived/assumed）？</td></tr>
+      <tr><td>Connection</td><td>from, to, rule_ids</td><td>谁连谁？验证过吗？</td></tr>
+      <tr><td>Rule</td><td>status, message</td><td>这条规则过了没有？</td></tr>
+      <tr><td>dependencies</td><td>node → upstreams</td><td>改了它会作废谁？</td></tr>
+      <tr><td>staleness</td><td>current / stale</td><td>现在还有效吗？</td></tr>
+    </table>
+    <p class="footnote">
+      依赖 DAG + 变更传播：上游尺寸被改，下游派生值自动置 stale——
+      评测与门禁只认 current 状态。
+    </p>
+  </section>
+
+  <section class="block" style="border-bottom:none">
+    <h2>多塔泛化纪律</h2>
+    <div class="grid c2">
+      <div class="card">
+        <h3>换塔 = 改配置</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          view_regions（每册立面 z 域）/ z-only 层表覆写 / 终止节间跨度白名单 /
+          缝合容差——全部在 overlay.json。35A2-ZC1 换塔实测：引擎代码零改动。
+        </p>
+      </div>
+      <div class="card">
+        <h3>跑批前预检</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          validate_workspace 五类把关：结构 / 册-区域一致 / GT 注入面
+          fail-closed（未知注入键直接拒）/ BOM 必须有杆件行 / GT 必须带来源说明。
+        </p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div style="color:var(--ink-dim)">
+      <a href="index.html">← 返回首页</a> ·
+      <a href="demo.html">在线演示 →</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
