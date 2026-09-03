@@ -239,6 +239,10 @@ def expand_4_face_symmetry_model(
             "projection_refs": list(p.get("projection_refs") or []),
             # 阶段4.4：件号证据随展开透传（solve 层 nb=dict(b) 浅拷贝复制）
             "bar_id_evidence": list(p.get("bar_id_evidence") or []),
+            # 线1 verified delivery（2026-09-03）：同视图重复件号消歧标记
+            # 随展开透传——非 primary 实例不参与 BOM 数量核对。
+            "bar_id_dup": p.get("bar_id_dup"),
+            "bar_id_primary": p.get("bar_id_primary"),
             # 源组件的 SourceRef（若有），用于重建时保留原始来源
             "_source_ref": comp.source,
         })
@@ -1597,6 +1601,12 @@ def expand_4_face_symmetry_model(
             "from_node": f"4f_{b['from']}",
             "to_node": f"4f_{b['to']}",
             "section": b.get("section"),
+            # 线1 verified delivery（2026-09-03）：同视图重复件号消歧标记
+            # 透传——intake 阶段4.4 已打 bar_id_dup/bar_id_primary，白名单
+            # 漏列导致四面展开后丢失（bar 601/604 的 2>1/3>2 假超计正是
+            # 非 primary 杆混进 physical_bar_counts 造成的）。
+            "bar_id_dup": b.get("bar_id_dup"),
+            "bar_id_primary": b.get("bar_id_primary"),
             "layer": b.get("layer"),
             "face": face,
             "generated_face": generated_face,

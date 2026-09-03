@@ -252,27 +252,62 @@ def validate_scan_reviewed(model: EngineeringModel, rule_id: str) -> Optional[Va
 
 
 def validate_no_duplicate_bar_id(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:
-    """杆件编号唯一（同视图内）。"""
+    """杆件编号唯一（物理杆语义）。
+
+    线1 verified delivery（2026-09-03）：与 r_bom_length_match 的
+    2026-08-31 物理杆口径修正同纪律——四面镜像（F/B/L/R）、split 细分段、
+    sidegen l/r 孪生都是同一物理杆的实例，不计重复；只有**不同物理杆**
+    （root stem 不同）共享同一 bar_id 才是重复。此前实例级计数把
+    「bar 2 → 25 实例（10 物理杆）」报成 25 组重复——其中 15 组是
+    四面镜像伪影。
+    """
     from collections import defaultdict
-    by_id = defaultdict(list)
+    from ..project.module_build import _root_stem
+    # bar_id -> {root_stem: (view, cid, is_intake_dup)}
+    by_id: dict = defaultdict(lambda: defaultdict(list))
     for cid, bar in _iter_bars(model):
         bid = bar.properties.get("bar_id")
+        if not bid or str(bid).startswith("UNLABELED"):
+            continue
         view = bar.properties.get("view_type", "?")
-        by_id[(bid, view)].append(cid)
-    dups = {k: v for k, v in by_id.items() if len(v) > 1}
+        # intake 同视图消歧标记：bar_id_dup=True 且非 primary = 该 bar_id
+        # 的多余文字（材料表行/远距离错挂），intake 已裁决 primary。
+        intake_dup = bool(bar.properties.get("bar_id_dup")
+                          and bar.properties.get("bar_id_primary") is False)
+        by_id[str(bid)][_root_stem(cid)].append((view, cid, intake_dup))
+    # 只保留「不同物理杆共享 bar_id」的组；组内全部实例都是 intake
+    # 消歧过的非 primary → 已裁决（透明披露，不进 review 队列）
+    dups: dict = {}
+    resolved: dict = {}
+    for bid, stems in by_id.items():
+        if len(stems) <= 1:
+            continue
+        instances = [inst for lst in stems.values() for inst in lst]
+        if all(inst[2] for inst in instances):
+            resolved[bid] = stems
+        else:
+            dups[bid] = stems
+    n_resolved = len(resolved)
     if not dups:
+        msg = ("杆件编号物理杆级唯一（镜像/细分/孪生合并；"
+               + (f"{n_resolved} 组同视图多文字已由 intake 消歧标记非 primary，"
+                  "BOM 计数排除、几何保留" if n_resolved else "无重复") + ")")
         return ValidationResult(rule_id, ValidationStatus.PASSED,
-                                "杆件编号在视图内唯一", "no-dup-bar-id")
+                                msg, "no-dup-bar-id")
     df = model.components.get("drawing_file")
     is_cross_file = bool(df and df.properties.get("view_mode") == "cross_file_multi_view")
+    detail = ", ".join(
+        f"{bid}×{len(stems)}杆" for bid, stems in sorted(dups.items())[:6])
     if is_cross_file:
         return ValidationResult(
             rule_id, ValidationStatus.PENDING,
-            f"cross_file 合并后 {len(dups)} 组重复件号，待人工核对",
+            f"cross_file 合并后 {len(dups)} 组件号跨物理杆复用，待人工核对"
+            f"（同杆镜像/细分已合并；{n_resolved} 组同视图多文字已由 intake 消歧）：{detail}",
             "no-dup-bar-id",
         )
     return ValidationResult(rule_id, ValidationStatus.FAILED,
-                            f"{len(dups)} 组重复编号：{list(dups)[:3]}", "no-dup-bar-id")
+                            f"{len(dups)} 组物理杆级重复编号：{detail}",
+                            "no-dup-bar-id")
 
 
 def validate_gusset_plate(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:

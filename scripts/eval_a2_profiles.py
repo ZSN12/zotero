@@ -150,6 +150,21 @@ def main() -> int:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"\nWrote {args.json_out}", file=sys.stderr)
+    # Bug E（2026-09-03，P2）：双视口径默认落盘到 model 同目录
+    # a2_dual_view.json——version.json 的 a2_dual_view 块从这里并入，
+    # 对外主口径（A2-dual-view-pure）与辅助口径（A2-dual-view-
+    # reconstructed）从此可从交付产物复核，不再只在 stdout。
+    dual_artifact = model_path.parent / "a2_dual_view.json"
+    try:
+        dual_artifact.write_text(
+            json.dumps({
+                "eval_binding": binding,
+                "profiles": profiles,
+                "observability": observability,
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"Wrote {dual_artifact}", file=sys.stderr)
+    except OSError as exc:
+        print(f"warn: a2_dual_view.json 落盘失败（{exc}）", file=sys.stderr)
     return 0
 
 

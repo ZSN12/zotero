@@ -7,7 +7,8 @@ description: >
   每一层都能独立审计。适用于国网 35kV~500kV 单回路/双回路角钢塔
   图册（立面分段册 + 节点详图 + 杆件加工图 + BOM）的重建与追溯。
 version: 0.1.0
-license: 与主仓一致
+license: MIT
+license_note: 与主仓 README License 一致（MIT）；本领域包随主仓同许可证发布。
 ---
 
 # Angle-Tower 领域包（六层契约）

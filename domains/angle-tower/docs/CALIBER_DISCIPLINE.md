@@ -20,7 +20,7 @@ front 投影退化的杆（y_member）由 side 补、side 退化的（x 向）�
 呈报格式（示例）：
 
 ```
-A2-dual-view-pure: TP 214 / P 57.2% / R 20.0%（35A1-JC1，2026-09-03）
+A2-dual-view-pure: TP 220 / P 58.2% / R 20.5%（35A1-JC1，2026-09-03，commit 48b0696 实测）
 ```
 
 **禁止事项**：

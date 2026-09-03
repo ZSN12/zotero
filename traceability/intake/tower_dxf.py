@@ -82,6 +82,11 @@ _BAR_ID_EXCLUDE_RES = [
     re.compile(r"L\s?\d{1,3}\s*[Xx×*]\s*\d+", re.IGNORECASE),  # 截面
     re.compile(r"(?:\d+)?M\s?\d{1,3}\s*[Xx×*]\s*\d+", re.IGNORECASE),  # 螺栓
     re.compile(r"^[-+]\d+$"),                                   # 加工切角/下料长度偏移 (-40, -55 等)
+    # 线1 verified delivery（2026-09-03）：标高/带单位长度文字。实测 JC1-07
+    # 「+4.5m」被 \d{1,5} 搜出「4」贴成件号——52 根杆挂假件号「4」、
+    # 「1」「2」「3」同类（标高 +1.5m/+2m 片段），直接污染
+    # r_no_duplicate_bar_id（181 组重复里的大头）与 A1 件号证据。
+    re.compile(r"^[+-]?\d+(?:\.\d+)?\s*[mM]$"),                # 标高 +4.5m / 4.5m / -3.1m
 ]
 
 # P2：截面型号提取正则（Phase 2 填充杆件 section）。
@@ -1280,11 +1285,28 @@ def extract_tower_from_dxf(
         )
     except Exception:
         _disable_calib = False
+    # Bug B 修复（2026-09-03，P1）：DIM 观测与 scale 标定解耦。
+    # disable_scale_calibration（P3.15 为 JC2 噪声引入）该关的只是
+    # 「用 DIM 覆盖 scale」，不该连「把 DIM 记成观测」一起关——此前
+    # 两件事绑在一个开关上，ZC1（overlay 声明 true）整层 dim_sample
+    # 观测静默消失（01-1 册 106 条 DIM 实体一条不进 evidence layer，
+    # 上游 stale 链全断）。观测永远提取；只有 calibrate_region_scales
+    # 留在门内，关闭时留 skipped_reason 供 evidence 普查披露。
     _dim_samples = []
-    if not _disable_calib:
+    _dim_calib_skipped_reason = None
+    try:
+        from .scale_calibration import extract_dim_samples
+        _dim_samples = extract_dim_samples(msp)
+    except Exception:
+        # 观测提取异常时安全降级，不阻断 DXF 解析
+        pass
+    if _disable_calib:
+        _dim_calib_skipped_reason = (
+            "overlay disable_scale_calibration=true（JC2 系噪声防护）："
+            "DIM 样本照常登记为观测，但不参与 region scale 覆盖")
+    else:
         try:
-            from .scale_calibration import extract_dim_samples, calibrate_region_scales
-            _dim_samples = extract_dim_samples(msp)
+            from .scale_calibration import calibrate_region_scales
             if _dim_samples and regions:
                 regions = calibrate_region_scales(_dim_samples, regions)
         except Exception:
@@ -2117,6 +2139,14 @@ def extract_tower_from_dxf(
             _df_ev.properties.setdefault("evidence_layer", {}).update(
                 {"observations": observation_census(model)}
             )
+            # Bug B（2026-09-03）：scale 标定被 overlay 关闭时留痕——
+            # 观测照常登记，但「DIM 不参与 scale 覆盖」这个事实必须在
+            # 普查里可见，不许静默消失。
+            if _dim_calib_skipped_reason:
+                _df_ev.properties.setdefault("evidence_layer", {}).update(
+                    {"dim_scale_calibration_skipped_reason":
+                     _dim_calib_skipped_reason}
+                )
 
     return model
 

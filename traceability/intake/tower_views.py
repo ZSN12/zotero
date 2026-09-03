@@ -2060,6 +2060,16 @@ def apply_side_reads(model: "EngineeringModel") -> int:
     def _mknode_key(p):
         return (round(float(p[0]), 1), round(float(p[1]), 1), round(float(p[2]), 1))
 
+    # 线1 verified delivery（2026-09-03）：front 视图已有件号集合（一次
+    # 预计算，供 front-collision 消歧查表）。
+    _front_bar_ids = {
+        str((c.properties or {}).get("bar_id"))
+        for c in model.components.values()
+        if c.kind == "tower_bar"
+        and (c.properties or {}).get("view_type") == "front"
+        and (c.properties or {}).get("bar_id")
+    }
+
     node_map: Dict[Tuple[float, float, float], str] = {}
     made = 0
     made_quarantined = 0
@@ -2111,6 +2121,16 @@ def apply_side_reads(model: "EngineeringModel") -> int:
             bid = r.get("bar_id")
             if not bid or str(bid).startswith("UNLABELED"):
                 bid = f"UNLABELED_SIDE{i:04d}"
+            # 线1 verified delivery（2026-09-03）：front 视图同件号冲突消歧。
+            # 同一件号已在 front 视图读出（4f 展开杆 view_type=front）时，
+            # side 读是**第二证据源**而非第二物理杆——front 为主视图
+            # （primary），sidegen 实例打 bar_id_dup + bar_id_primary=False
+            # （BOM 数量核对排除，几何保留，r_no_duplicate_bar_id 披露）。
+            # 实测 JC1：109/110/112/133 四件号 front+side 各出一根杆，
+            # r_no_duplicate_bar_id 悬 4 组假复用。
+            _front_collision = bool(
+                bid and not str(bid).startswith("UNLABELED")
+                and str(bid) in _front_bar_ids)
             # P5 约束残差（2026-09-03）：sidegen BOM 长度交叉核验门。
             # 实测（JC1 02 册）：件号 154 挂到节点详图短线（B6C，含
             # 1M16X50 螺栓标注上下文），40mm BOM 杆被注入成 441.68mm
@@ -2158,6 +2178,12 @@ def apply_side_reads(model: "EngineeringModel") -> int:
                     "confidence": r.get("confidence") or 0.5,
                     "length_mm_3d": round(_sg_len, 2),
             }
+            if _front_collision:
+                _sg_props.update({
+                    "bar_id_dup": True,
+                    "bar_id_primary": False,
+                    "dup_source": "front_view_priority",
+                })
             if _quarantined:
                 _sg_props.update({
                     "bar_id_length_suspect": True,

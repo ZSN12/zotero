@@ -177,6 +177,15 @@ def collect_version_info(out_dir: Path, repo_root: Path,
         info["git_error"] = git["error"]
     if overlay_path.exists():
         info["overlay_sha"] = sha256_file(overlay_path)
+        # Bug C（2026-09-03，P1）：overlay 路径随指纹一起落盘——
+        # validate_public_ir 的 GT 披露检查据此重读 overlay 复核
+        # gt_injected.surfaces 的完整性（此前门禁只查 model.json 里
+        # 不存在的键，恒走空分支：注入越多的塔越报「无注入面」）。
+        try:
+            info["overlay_path"] = str(
+                overlay_path.resolve().relative_to(repo_root))
+        except ValueError:
+            info["overlay_path"] = str(overlay_path.resolve())
         # P0 审计（2026-09-03）：GT z-only 注入面在 version.json 里显式标注，
         # 「默认开着且不标注」的状态结束。列出的键 = 该跑批实际启用的
         # GT 注入面（overlay 声明为准），对应评测口径需带 level-assisted
@@ -238,7 +247,28 @@ def collect_version_info(out_dir: Path, repo_root: Path,
     if skeleton.exists():
         info["skeleton_sha"] = sha256_file(skeleton)
 
-    info["a2"] = a2_summary(out_dir / "metrics_multi_caliber.json")
+    # Bug E（2026-09-03，P2）：口径命名消歧 + 双视口径入档。
+    # 此前 a2.reconstructed 是 front 单视池（ZC1 实测 30 TP / 10.5%），
+    # 与对外呈报的 A2-dual-view-reconstructed（216 / 75.8%）撞名，读者
+    # 拿 SKILL.md 的 75.8% 到 version.json 里核会看到 7 倍矛盾。
+    # 处理：a2 块整体改名 a2_front（单视池，front 投影），并注明口径；
+    # 双视口径由 eval_a2_profiles.py 落盘 a2_dual_view.json（同目录），
+    # 这里原样并入，两个口径从此各归各的名。
+    front = a2_summary(out_dir / "metrics_multi_caliber.json")
+    if front:
+        info["a2_front"] = front
+        info["a2_front_note"] = (
+            "front 单视投影池（pure/reconstructed/level_assisted/"
+            "parametric/full 五层）；对外主口径 A2-dual-view-pure 与辅助口径"
+            " A2-dual-view-reconstructed 见 a2_dual_view 块（由 "
+            "scripts/eval_a2_profiles.py 落盘）。")
+    dual_path = out_dir / "a2_dual_view.json"
+    if dual_path.exists():
+        try:
+            info["a2_dual_view"] = json.loads(
+                dual_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            pass
     return info
 
 

@@ -134,8 +134,33 @@ def run_postprocess(out_dir: Path, repo: Path, overlay_path: Path,
                  f"清理旧文件 {len(result.get('pruned', []))} 个"]
         return "，".join(parts)
 
+    def run_dual_eval() -> str:
+        # Bug E（2026-09-03，P2）：双视口径入交付产物。对外主口径
+        # A2-dual-view-pure 与辅助 A2-dual-view-reconstructed 落盘
+        # a2_dual_view.json（version.json 的 a2_dual_view 块从这里并入），
+        # 75.8% 这类数字从此可从交付目录复核，不再只在 stdout。
+        if not GT_PATH.exists():
+            return "无 GT，跳过"
+        r = subprocess.run(
+            [sys.executable, str(REPO / "scripts/eval_a2_profiles.py"),
+             str(GT_PATH), str(out_dir / "model.json")],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(
+                f"eval_a2_profiles 退出码 {r.returncode}: {r.stderr[-300:]}")
+        artifact = out_dir / "a2_dual_view.json"
+        if not artifact.exists():
+            raise RuntimeError("eval_a2_profiles 退出码 0 但未产出 a2_dual_view.json")
+        import json as _json
+        prof = _json.loads(artifact.read_text(encoding="utf-8"))["profiles"]
+        p = prof["A2-dual-view-pure"]
+        return (f"a2_dual_view.json 落盘（pure TP={p['TP']} P={p['P_pct']}% "
+                f"R={p['R_pct']}%）")
+
     pp_step("review_queue", run_review_queue)
     pp_step("diff", run_diff)
+    pp_step("dual_eval", run_dual_eval)
     pp_step("version", run_version)
     pp_step("sync", run_sync)
     return postprocess

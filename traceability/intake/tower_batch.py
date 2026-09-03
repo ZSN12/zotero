@@ -259,6 +259,13 @@ def merge_cross_file_views(
             if isinstance(_el, dict):
                 for _k, _sub in _el.items():
                     if not isinstance(_sub, dict):
+                        # Bug B（2026-09-03）：字符串型留痕键
+                        # （dim_scale_calibration_skipped_reason）透传到
+                        # 合并模型——静默消失违背「未声明则跳过并留痕」。
+                        if (isinstance(_sub, str)
+                                and _k.endswith("_skipped_reason")):
+                            _reasons = _ev_census.setdefault(_k, {})
+                            _reasons[stem] = _sub
                         continue
                     _bucket = _ev_census.setdefault(str(_k), {})
                     for _kk, _vv in _sub.items():

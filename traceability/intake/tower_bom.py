@@ -36,7 +36,7 @@ from ..model import (
 # （拿 5M16X40 螺栓行核 tower_bar 截面必然 FAILED，实测 r_bom_section_match
 # 的 10 根「截面不符」全部源于此）。分类不丢数据：所有行照常进 bom_row
 # 组件；只有 member 行才建交叉核验维度。
-_BAR_ID_RE = re.compile(r"^\d{1,4}[A-Za-z]?$")
+_BAR_ID_RE = re.compile(r"^[A-Za-z]?\d{1,4}[A-Za-z]?$")
 _STEEL_PREFIX_RE = re.compile(r"^(Q345|Q355|Q235|Q420|16MN)", re.IGNORECASE)
 
 
@@ -47,6 +47,14 @@ def classify_bom_row(bar_id: str, section: str) -> str:
     plate  —— 垫板/节点板行（'-6X40'、'Q345-14X260'）；
     bolt   —— 螺栓行（'5M16X40'）；
     mangled —— CAD 转义/列错位碎片（'\\\\M+5B9E6…'、bar_id 非件号形态）。
+
+    Bug A 修复（2026-09-03，P0）：_BAR_ID_RE 原为 ^\\d{1,4}[A-Za-z]?$
+    （只认国网纯数字件号），内置示例 examples/tower_110kv_bom.csv 的
+    M0001 形态被判 mangled → member 维度全跳过 → r_bom_length/section_
+    match 无数据降 PENDING，门禁 1（self_test 冒烟）3/5 FAIL。放宽为
+    ^[A-Za-z]?\\d{1,4}[A-Za-z]?$：M0001→member、101→member、
+    Q345L63X5（截面整串误入件号列）仍 mangled、\\\\M+5B9E6 仍
+    mangled、5M16X40（螺栓）不匹配——P5 的隔离语义不丢。
     """
     sid = (bar_id or "").strip()
     sec = (section or "").strip()

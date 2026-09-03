@@ -44,6 +44,14 @@ def physical_bar_counts(model: EngineeringModel, *, labeled_only: bool = True) -
     V1（2026-09-02）：按 root stem 计数——同一物理杆的四面镜像（F/B/L/R）
     与 split/panel 细分段只计 1 根。此前逐实例计数把 112 计成 30、402 计成
     16，全是四面×细分的乘法伪影，不是真实数量差。
+
+    V2（2026-09-03，线1 verified delivery）：同视图重复件号的非 primary
+    实例不计——同一 bar_id 的多条文字（材料表行/重复标注）贪心贴到多条
+    线上时，intake 已按距离标出唯一 primary（bar_id_dup=True +
+    bar_id_primary=False 的实例是远距离错挂）。此前 bar 601 报 2>1、
+    604 报 3>2 假超计引爆 r_project_bom_master。非 primary 杆件本身
+    保留（几何不删、r_no_duplicate_bar_id 仍可见），仅不参与 BOM
+    数量核对。
     """
     from ..eval.metrics import is_physical_bar
     stems: Dict[str, Dict[str, set]] = {}  # bar_id -> {root_stem: faces}
@@ -58,6 +66,9 @@ def physical_bar_counts(model: EngineeringModel, *, labeled_only: bool = True) -
         if not bid or bid == "None":
             continue
         if labeled_only and bid.startswith("UNLABELED"):
+            continue
+        # V2：同视图重复件号的非 primary 实例不参与计数
+        if props.get("bar_id_dup") and props.get("bar_id_primary") is False:
             continue
         stems.setdefault(bid, {}).setdefault(_root_stem(cid), set()).add(
             str(props.get("face") or ""))

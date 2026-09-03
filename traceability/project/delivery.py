@@ -108,6 +108,104 @@ def export_detail_qa_atlas(
         return {"present": False, "error": str(exc), "non_structural": True}
 
 
+def _load_review_exemptions(ov: Dict[str, Any],
+                            layer_map_path: Optional[str | Path] = None) -> Optional[Path]:
+    """线1 verified delivery（2026-09-03）：加载人工复核豁免文件。
+
+    人工复核豁免 = 明确、可审计、带指纹的 review 结论（对标
+    confirm_tower_scan → verified 的既有纪律）。文件从 overlay 的
+    review_exemptions_file 键解析（相对路径优先按 overlay 目录，其次
+    CWD）。豁免不是静默通过：每个豁免规则在交付报告里显式列为
+    review_exempted（带 reason / reviewed_by / reviewed_at），且 pending
+    内容指纹不匹配时豁免自动失效（防止过期橡皮章）。
+    """
+    rel = ov.get("review_exemptions_file")
+    if not rel:
+        return None
+    candidates = [Path(rel)]
+    if layer_map_path and not Path(rel).is_absolute():
+        try:
+            candidates.insert(0, Path(layer_map_path).parent / rel)
+        except (TypeError, ValueError):
+            pass
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
+def _apply_review_exemptions(
+    harness: Dict[str, Any],
+    exemption_path: Optional[Path],
+) -> Dict[str, Any]:
+    """把有效的人工豁免应用到 harness 摘要（in-place 修改 + 返回披露）。
+
+    有效性三条件：规则当前 pending；豁免未过期；消息指纹匹配
+    （sha256 前 16 位 == 豁免文件的 message_fingerprint）。三者任一
+    不满足则豁免不生效，规则保持 pending。
+
+    应用后：rule 从 pending 列表移入 review_exempted 列表（不是
+    passed——报告中永远可见）；counts 里 pending-1、新增
+    review_exempted 计数。
+    """
+    disclosure: Dict[str, Any] = {
+        "exemption_file": str(exemption_path) if exemption_path else None,
+        "applied": [],
+        "rejected": [],
+    }
+    if exemption_path is None or not Path(exemption_path).exists():
+        return disclosure
+    try:
+        import hashlib
+        from datetime import date as _date
+        doc = json.loads(Path(exemption_path).read_text(encoding="utf-8"))
+        expires = doc.get("expires")
+        if expires and str(expires) < _date.today().isoformat():
+            disclosure["rejected"].append({
+                "rule": "*", "reason": f"豁免已过期（expires={expires}）"})
+            return disclosure
+        exemptions = doc.get("exemptions") or {}
+        for ex_rule, ex in exemptions.items():
+            msg = next((r["message"] for r in harness.get("results", [])
+                        if r.get("rule") == ex_rule
+                        and r.get("status") == "pending"), None)
+            if msg is None:
+                disclosure["rejected"].append({
+                    "rule": ex_rule, "reason": "规则当前非 pending（豁免无对象）"})
+                continue
+            fp = hashlib.sha256(str(msg).encode("utf-8")).hexdigest()[:16]
+            if ex.get("message_fingerprint") != fp:
+                disclosure["rejected"].append({
+                    "rule": ex_rule,
+                    "reason": "消息指纹不匹配（pending 内容已变化，豁免失效）"})
+                continue
+            # 生效：pending → review_exempted（显式，非 passed）
+            for r in harness.get("results", []):
+                if r.get("rule") == ex_rule and r.get("status") == "pending":
+                    r["status"] = "review_exempted"
+                    r["message"] = (f"[人工复核豁免] {ex.get('reason', '')}"
+                                    f"（reviewed_by={doc.get('reviewed_by')}, "
+                                    f"at={doc.get('reviewed_at')}）")
+            harness["pending"] = [p for p in harness.get("pending", [])
+                                  if p != ex_rule]
+            harness.setdefault("review_exempted", []).append(ex_rule)
+            counts = harness.setdefault("counts", {})
+            if counts.get("pending"):
+                counts["pending"] -= 1
+            counts["review_exempted"] = counts.get("review_exempted", 0) + 1
+            disclosure["applied"].append({
+                "rule": ex_rule,
+                "reason": ex.get("reason", ""),
+                "reviewed_by": doc.get("reviewed_by"),
+                "reviewed_at": doc.get("reviewed_at"),
+            })
+        return disclosure
+    except (json.JSONDecodeError, OSError) as exc:
+        disclosure["rejected"].append({"rule": "*",
+                                       "reason": f"豁免文件不可读：{exc}"})
+        return disclosure
+
+
 def _harness_summary(model: EngineeringModel) -> Dict[str, Any]:
     results = run_harness(model)
     counts: Dict[str, int] = {}
@@ -762,6 +860,12 @@ def deliver_project(
 
     if merged_model is not None:
         harness = _harness_summary(merged_model)
+        # 线1 verified delivery（2026-09-03）：人工复核豁免（显式、带指纹、
+        # 有时效）。豁免的 pending 规则 → review_exempted（非 passed，
+        # 报告可见），pending 清零后 deliver_status 才可能 verified。
+        exemption_path = _load_review_exemptions(ov, layer_map_path)
+        exemption_disclosure = _apply_review_exemptions(harness, exemption_path)
+        harness["review_exemptions"] = exemption_disclosure
         save_model(merged_model, out_dir / "model.json")
         model_path = out_dir / "model.json"
 

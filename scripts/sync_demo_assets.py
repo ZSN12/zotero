@@ -55,6 +55,10 @@ ASSET_MANIFEST: List[Tuple[str, str, bool]] = [
     ("skeleton.bar_map.json", "bar_map.json", True),
     ("model.json", "model.json", True),
     ("metrics_multi_caliber.json", "metrics_multi_caliber.json", True),
+    # Bug E（2026-09-03）：双视口径工件（A2-dual-view-pure 主口径 +
+    # A2-dual-view-reconstructed 辅助口径）进同步链——可选，旧交付无此
+    # 文件不阻断同步（required=False），新交付自动带上。
+    ("a2_dual_view.json", "a2_dual_view.json", False),
     ("metrics_by_role.json", "metrics_by_role.json", True),
     ("metrics_by_origin.json", "metrics_by_origin.json", True),
     ("evidence_report.json", "evidence_report.json", True),

@@ -85,10 +85,10 @@ class TestVersionManifest(unittest.TestCase):
             self.assertEqual(info["base_segment"]["bars"], 1)
             self.assertEqual(info["base_segment"]["z_range_mm"], [0.0, 6500.0])
             # A2 摘要：TP@500 提取（其它 tol 不混入）
-            self.assertEqual(info["a2"]["pure"]["tp500"], 55)
-            self.assertEqual(info["a2"]["full"]["tp500"], 221)
-            self.assertEqual(info["a2"]["effective"]["z_min_mm"], 6500.0)
-            self.assertNotIn("reconstructed", info["a2"])
+            self.assertEqual(info["a2_front"]["pure"]["tp500"], 55)
+            self.assertEqual(info["a2_front"]["full"]["tp500"], 221)
+            self.assertEqual(info["a2_front"]["effective"]["z_min_mm"], 6500.0)
+            self.assertNotIn("reconstructed", info["a2_front"])
 
     def test_write_version_manifest(self):
         with tempfile.TemporaryDirectory() as td:
