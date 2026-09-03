@@ -834,6 +834,7 @@ def x_to_k_braces(
     fine_levels: Optional[Sequence[float]] = None,
     geometry_origin: str = "diag_synth",
     max_copies_per_panel: int = 2,
+    split_cross: bool = False,
 ) -> List[Any]:
     """把跨中心全跨 X 撑重写为层位 K 撑（人字撑）。
 
@@ -855,6 +856,16 @@ def x_to_k_braces(
       5. 腿位拟合：腿位由图纸 vert 长线拟合（x = al*z + bl, ar*z + br），
          严禁注入 GT 坐标；
       6. 重写输出：(0, z_high) -> (x_left, z_low) 与 (0, z_high) -> (x_right, z_low)。
+
+    split_cross（P3-3，2026-09-03）：中心交点层位分支的「劈开」形态——
+    05 册实测发现 X 画的其实是**两个相邻 K 面板的斜撑**（下例 raw
+    (1253,21682)->(-1098,24008)，中心交点 z≈22921→层位 22800；GT =
+    (0,22800)->(1257,21500) 与 (0,22800)->(-1082,24000) 两根）。此时
+    端点跨度分支（apex=z_top 层位）会产出错误面板，正确变换是把 X
+    沿中心劈成上下两半：每半从 (0, cross_level) 到原端点（z 吸附到
+    最近层位、x 吸附到该层位腿位）。仅当 split_cross=True 且中心交点
+    命中层位（err_cross <= center_cross_tol）时启用；两端 z 也须能
+    吸附层位（<= snap_tol），否则原样保留。
 
     纪律（硬约束）：
       * 只用图纸证据（画线几何/方向）+ z-only 设计层位常数 + 图纸腿线拟合；
@@ -921,6 +932,49 @@ def x_to_k_braces(
         matched = False
         apex_z, base_z = 0.0, 0.0
 
+        # P3-3 split_cross：中心交点先命中层位且两端也可吸附 → 沿中心劈开
+        # 为两半（05 册形态：X = 两个相邻 K 面板的斜撑，交点即公共顶点，
+        # 如 raw (1253,21682)->(-1098,24008) → GT (0,22800)->(1257,21500) 与
+        # (0,22800)->(-1082,24000)）。优先于端点跨度分支——后者把 apex 钉到
+        # z_top 层位，在「上端过冲一个层位」的画法下产出错误面板。
+        if split_cross and err_cross <= center_cross_tol:
+            z_e1 = min(active_levels, key=lambda lv: abs(lv - z1))
+            z_e2 = min(active_levels, key=lambda lv: abs(lv - z2))
+            if (abs(z1 - z_e1) <= snap_tol and abs(z2 - z_e2) <= snap_tol
+                    and z_e1 != z_cross_near and z_e2 != z_cross_near):
+                apex_z = z_cross_near
+                # 两半：交点 → 各自端点（z 吸附层位、x 吸附该层位腿位）。
+                # 端点 z 恰在交点层位（z_e == apex）时该半退化，跳过。
+                halves = []
+                for (xe, ze_snap) in ((x1, z_e1), (x2, z_e2)):
+                    if ze_snap == apex_z:
+                        continue
+                    xl = (al if xe < 0 else ar) * ze_snap + (bl if xe < 0 else br)
+                    halves.append((0.0, apex_z, xl, ze_snap))
+                if halves:
+                    panel_key_s = (round(apex_z),
+                                   round(min(h[3] for h in halves)))
+                    c = panel_counts.get(panel_key_s, 0)
+                    if c < max_copies_per_panel:
+                        panel_counts[panel_key_s] = c + 1
+                        for kp in halves:
+                            if isinstance(seg, dict):
+                                child = dict(seg)
+                                child["start"] = (float(kp[0]), float(kp[1]))
+                                child["end"] = (float(kp[2]), float(kp[3]))
+                                child["geometry_origin"] = geometry_origin
+                                child["geometry_class"] = "recognized"
+                                child["evidence_status"] = "recognized"
+                                child["source_extractor"] = "centerline_extract"
+                                child["layer"] = "diag_synth"
+                                child["reanchored"] = True
+                                child["diag_x2k"] = True
+                                child["diag_x2k_split"] = True
+                                out.append(child)
+                            else:
+                                out.append((float(kp[0]), float(kp[1]),
+                                            float(kp[2]), float(kp[3])))
+                        continue  # 已劈开，跳过普通重写
         if err_top <= snap_tol and err_bot <= snap_tol and z_high > z_low:
             apex_z = z_high
             base_z = z_low
@@ -1527,6 +1581,7 @@ def extract_centerline_drawing_segments(
                         min_span_z=float(_re_cfg.get("diag_x2k_min_span_z_mm", 800.0)),
                         center_cross_tol=float(_re_cfg.get("diag_x2k_center_cross_tol_mm", 300.0)),
                         max_copies_per_panel=int(_re_cfg.get("diag_x2k_max_copies_per_panel", 2)),
+                        split_cross=bool(_re_cfg.get("diag_x2k_split_cross", False)),
                     )
                     if _x2k and _x2k != _work:
                         n_x2k_out = len(_x2k)
