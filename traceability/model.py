@@ -192,11 +192,22 @@ class EngineeringModel:
 
 
 def to_dict(model: EngineeringModel) -> dict[str, Any]:
-    """序列化为 JSON 友好结构。"""
+    """序列化为 JSON 友好结构。
+
+    P2 门禁对齐（2026-09-03）：source=None 的组件（生成器输出节点等）
+    序列化时省略 source 键而非写 null——schema 的 sourceRef 是对象类型，
+    "source": null 违反 schema（validate_public_ir 门禁会拦）。
+    """
+    def _comp_dict(v) -> dict[str, Any]:
+        d = asdict(v)
+        if d.get("source") is None:
+            d.pop("source", None)
+        return d
+
     return {
         "name": model.name,
         "version": model.version,
-        "components": {k: asdict(v) for k, v in model.components.items()},
+        "components": {k: _comp_dict(v) for k, v in model.components.items()},
         "dimensions": {k: asdict(v) for k, v in model.dimensions.items()},
         "connections": {k: asdict(v) for k, v in model.connections.items()},
         "rules": {k: asdict(v) for k, v in model.rules.items()},

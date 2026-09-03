@@ -1417,6 +1417,17 @@ def expand_4_face_symmetry_model(
     bar_id_count: Dict[str, int] = defaultdict(int)
     src_ref = model.components.get("drawing_file")
     src_ref = src_ref.source if src_ref is not None else None
+    if src_ref is None:
+        # P2 门禁对齐（2026-09-03）：跨册合并模型的 drawing_file 无 source
+        # （合并组件只带 properties）。front/mirror 分支的兜底来源会拿到
+        # None → 4f 杆 source=null 违反 schema。合成一个合并来源引用。
+        _df_src = model.components.get("drawing_file")
+        src_ref = SourceRef(
+            source_type=SourceType.DRAWING,
+            reference=str((_df_src.properties or {}).get("drawing_view")
+                          if _df_src is not None else "") or model.name or "merged",
+            detail="cross-file merged elevation set",
+            confidence=1.0)
     # 节点溯源：展开后的新节点 ID -> 原始节点 ID（solve 层未保留时回退为空）。
     # 我们通过「坐标回查 src_nodes」重建原始节点身份，用于保留原始节点 ID。
     coord_to_orig: Dict[Tuple[float, float, float], str] = {}
@@ -1556,7 +1567,13 @@ def expand_4_face_symmetry_model(
             bar_source = b["_source_ref"]
             evidence_status = "mirrored"
         else:
-            bar_source = src_ref
+            # P2 门禁对齐（2026-09-03）：兜底来源不再透传 drawing_file 的
+            # source（跨册合并模型里它是 None，导致 4f_pbase/panel_cross
+            # 等生成杆 source=null 违反 schema sourceRef 契约）。
+            bar_source = src_ref if src_ref is not None else SourceRef(
+                source_type=SourceType.DERIVED,
+                reference=str(source_file or "4face_expansion"),
+                confidence=1.0)
             evidence_status = "derived"
 
         # geometry_class（阶段 2 语义冻结）：

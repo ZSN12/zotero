@@ -25,7 +25,8 @@
             "properties": {
               "geometry_class": {
                 "description": "阶段0 四类几何语义：recognized=直接识别 / reconstructed=确定性重建(含镜像) / derived=派生展示几何(corner_leg/diaphragm) / canonical=GT权威(仅评测)",
-                "enum": ["recognized", "reconstructed", "derived", "canonical"]
+                "enum": ["recognized", "reconstructed", "derived", "derived_parametric", "canonical"],
+                "description": "阶段0 几何语义：recognized=直接识别 / reconstructed=确定性重建(含镜像) / derived=派生展示几何(corner_leg/diaphragm) / derived_parametric=参数化外推(底段裙部等，只进 parametric 口径) / canonical=GT权威(仅评测)"
               },
               "geometry_origin": {
                 "description": "几何来源。仓库名：dxf_geom/hough_fallback/mllm_geom/mllm_inject/derived_4face；计划枚举名：hough/dxf_vector/multiview_solve/symmetry_rule/derived_diaphragm；gim=GT权威(仅评测/debug)",
@@ -60,7 +61,8 @@
           "unit": { "type": "string" },
           "origin": { "enum": ["measured", "assumed", "derived", "placeholder"] },
           "source": { "$ref": "#/$defs/sourceRef" },
-          "applies_to": { "type": "string" },
+          "applies_to": { "type": ["string", "null"],
+                        "description": "目标组件 ID；目标被合并/重指后不存在时为 null（下游消歧，非错误）" },
           "status": { "enum": ["pending", "passed", "failed", "not_applicable"] }
         }
       }

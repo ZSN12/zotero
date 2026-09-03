@@ -89,8 +89,14 @@ c_pipe_seg1 ──> conn_pump_to_pipe ──> r_pressure_rating
 engineering-trace/
 ├── SKILL.md                      # 给 AI 的 Skill 定义（工作流 + 硬性要求）
 ├── README.md
+├── domains/
+│   └── angle-tower/              # 角钢塔领域包（六层契约 + 两道门禁）
+│       ├── SKILL.md              # drawing→hypothesis→rebuild→IR→gate→tower
+│       ├── scripts/self_test.py        # 门禁 1：单测 + 冒烟 + 证据层 IR
+│       ├── scripts/validate_public_ir.py  # 门禁 2：schema + 口径纪律 + GT 披露
+│       └── docs/CALIBER_DISCIPLINE.md # 口径纪律详表（诚实性契约）
 ├── schema/
-│   └── engineering_model.json    # JSON Schema
+│   └── engineering_model.json    # JSON Schema（含证据层 observation/hypothesis）
 ├── traceability/
 │   ├── __init__.py
 │   ├── model.py                  # 数据模型 + 序列化
@@ -102,6 +108,9 @@ engineering-trace/
 └── tests/
     └── test_traceability.py
 ```
+
+> **铁塔领域入口**：多册 DXF → 可验证全塔 3D 模型的完整管线、评测口径纪律
+> 与换塔配置指南，见 [`domains/angle-tower/SKILL.md`](domains/angle-tower/SKILL.md)。
 
 ## 铁塔结构图识别与 3D 重构
 

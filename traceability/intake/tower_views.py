@@ -2055,7 +2055,7 @@ def apply_side_reads(model: "EngineeringModel") -> int:
     reads = df.properties.get("side_reads") or []
     if not reads:
         return 0
-    from ..model import Component
+    from ..model import Component, SourceRef, SourceType
 
     def _mknode_key(p):
         return (round(float(p[0]), 1), round(float(p[1]), 1), round(float(p[2]), 1))
@@ -2110,11 +2110,21 @@ def apply_side_reads(model: "EngineeringModel") -> int:
             bid = r.get("bar_id")
             if not bid or str(bid).startswith("UNLABELED"):
                 bid = f"UNLABELED_SIDE{i:04d}"
+            # P2 门禁对齐（2026-09-03）：sidegen 杆带合成 SourceRef
+            # （validate_public_ir 门禁要求 tower_bar 必有来源可追溯；
+            # 来源 = 侧视读取 + 具体册/handle，conf 如实降档）。
+            _sg_src_file = r.get("source_file") or "side_view"
+            _sg_src = SourceRef(
+                SourceType.DRAWING, str(_sg_src_file),
+                detail=(f"side_read inject, handle={r.get('handle')}"
+                        if r.get("handle") else "side_read inject"),
+                confidence=float(r.get("confidence") or 0.5),
+            )
             model.add_component(Component(
                 id=f"sidegen__b{i:04d}_{face}",
                 name=f"[sidegen] {face} bar {i}",
                 kind="tower_bar",
-                source=None,
+                source=_sg_src,
                 properties={
                     "bar_id": bid,
                     "section": r.get("section"),
