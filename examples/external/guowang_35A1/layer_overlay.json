@@ -1888,5 +1888,9 @@
       31800.0
     ]
   ],
-  "marker_synth_head_z_min_mm": 24700.0
+  "marker_synth_head_z_min_mm": 24700.0,
+  "dxf_horiz_level_corroboration": {
+    "enabled": true,
+    "tol_mm": 300.0
+  }
 }

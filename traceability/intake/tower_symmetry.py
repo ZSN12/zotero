@@ -1252,6 +1252,61 @@ def expand_4_face_symmetry_model(
                 "corroboration_tol_mm": _ms_corr_tol,
             }
 
+    # P3-5（2026-09-03）：水平直读杆层位佐证过滤（07 册 FP 治理）。
+    # 实测（canonical 275）：07 窗 dxf_geom FP 42 根中 16 根是「水平直读杆
+    # 的 z 不在本册 beam_marker 层位表 ±300mm 内」——图纸把塔身爬梯/栓排/
+    # 节点板排线画成等距水平短线（07 册实测 160mm 间距排线族 z=7740/7900/
+    # 8061/8221 + 近腿 stub 381-418mm），直读通道全数吞入。真实平台横杆
+    # （GT z=6500/8500/11500）已由 marker_synth 按层位表合成（TP 通道），
+    # off-level 的水平直读杆无 GT 对应（全量 dual 匹配实测 16/16 均非 TP）。
+    # 处理：打 pure_excluded（同 marker head 纪律——pure 除名、full 池不变、
+    # dual 红线零风险）。佐证源 = 全塔所有册 beam_marker_levels_mm 的并集
+    # （z-only 设计常数，已在 overlay 披露）——杆件的 z 窗可能由相邻册
+    # 表覆盖（实测 07 窗 z=6500 平台横杆由 06 册直读而 06 册自身表无
+    # 6500，仅用来源册表的全量 A/B 误杀跨册 TP −5 reshuffle）。
+    _hlm_cfg = spec.get("dxf_horiz_level_corroboration")
+    _hlm_enabled = bool(_hlm_cfg.get("enabled")) if isinstance(_hlm_cfg, dict) else False
+    _hlm_tol = float(_hlm_cfg.get("tol_mm", 300.0)) if isinstance(_hlm_cfg, dict) else 300.0
+    _n_hlm = 0
+    if _hlm_enabled:
+        try:
+            from .centerline_extract import _overlay_cfg, stems_with_centerline_extract
+            _all_levels: List[float] = []
+            for _st in stems_with_centerline_extract(overlay):
+                _ce2 = _overlay_cfg(_st, overlay) or {}
+                _all_levels += [float(v) for v in (_ce2.get("beam_marker_levels_mm") or [])]
+            _all_levels = sorted(set(_all_levels))
+            if _all_levels:
+                for _b in face_bars:
+                    if str(_b.get("geometry_origin") or "") != "dxf_geom":
+                        continue
+                    _f2, _t2 = face_nodes.get(_b.get("from")), face_nodes.get(_b.get("to"))
+                    if _f2 is None or _t2 is None:
+                        continue
+                    _dz = abs(float(_t2[2]) - float(_f2[2]))
+                    _dx = abs(float(_t2[0]) - float(_f2[0]))
+                    if _dz >= 100.0:  # 非近水平
+                        continue
+                    _L = (_dz * _dz + _dx * _dx) ** 0.5
+                    if _L < 200.0:
+                        continue
+                    _zm2 = (float(_f2[2]) + float(_t2[2])) / 2.0
+                    if any(abs(_zm2 - _v2) <= _hlm_tol for _v2 in _all_levels):
+                        continue
+                    _b["pure_excluded"] = "dxf_horiz_off_level"
+                    _n_hlm += 1
+        except Exception as _exc_hlm:
+            print(f"[dxf_horiz_level_corroboration] 过滤异常（跳过）: {_exc_hlm!r}",
+                  file=sys.stderr)
+        if _n_hlm:
+            _df_hlm = model.components.get("drawing_file")
+            if _df_hlm is not None:
+                _df_hlm.properties["dxf_horiz_level_filter"] = {
+                    "n_reclassified": _n_hlm,
+                    "tol_mm": _hlm_tol,
+                    "levels_union": len(_all_levels),
+                }
+
     # S4 贪心共线拼接（Phase 2）：把断裂碎片杆拼回整杆。
     # 关键教训（2026-08-31 实测，三轮复核）：
     #   1. 必须在 classify_members 之后挂——否则 face_bars 无 role，
