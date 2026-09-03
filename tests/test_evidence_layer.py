@@ -200,6 +200,31 @@ class HypothesisTest(unittest.TestCase):
         self.assertEqual(made2, [])
         self.assertEqual(hypothesis_census(m), {"proposed": 1})
 
+    def test_superseded_upgrades_inplace(self):
+        """P1-3 数据证明：accepted 候选被模板杆替代 → 原地 superseded。
+
+        四态状态机此前只有代码证明（生产管线 superseded 从未触发，
+        JC1 实测 census 只有 accepted/rejected 两态）。契约：已存在的
+        假设被 superseded 记录命中时不建新组件，原地改状态。
+        """
+        m = _model()
+        interp = {"kind": "fan", "z_lo": 12000.0, "z_hi": 16000.0,
+                  "score": 180.0, "n": 3, "evidence": []}
+        made = register_hypotheses(m, "S1", [interp])
+        hid = made[0]
+        mark_hypotheses_accepted(m, [hid])
+        self.assertEqual(hypothesis_census(m), {"accepted": 1})
+        # 同一候选再次登记，但以 superseded 身份（模板杆替换场景）
+        made2 = register_hypotheses(
+            m, "S1", [],
+            superseded=[{"kind": "fan", "z_lo": 12000.0, "z_hi": 16000.0}])
+        self.assertEqual(made2, [], "已存在组件不重复创建")
+        self.assertEqual(m.components[hid].properties["status"], "superseded")
+        self.assertEqual(hypothesis_census(m), {"superseded": 1})
+        # 全程只有一个假设组件（原地升级，不产生双份）
+        self.assertEqual(
+            sum(1 for c in m.components.values() if c.kind == "hypothesis"), 1)
+
 
 class ExpansionSurvivalTest(unittest.TestCase):
     def test_evidence_layer_survives_expand(self):
