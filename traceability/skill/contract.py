@@ -8,7 +8,12 @@ EngineeringModel。这是 Skill 的代码化落地，硬性规则：
     3. confidence 永远 < 1.0（模型识别默认封顶 0.9）
     4. 冲突不覆盖：同一 id 的重复候选 -> 保留低置信度一方并标记
        id_conflict（P3-7 起在 to_engineering_model 落地；此前 add_component
-       的字典覆盖语义使该承诺形同虚设）
+       的字典覆盖语义使该承诺形同虚设）。
+       语义说明：保留低置信度一方是**保守裁决**——两个候选对同一 id
+       给出冲突内容时，任何一方都不该被当作高可信结果对外，取低者
+       强制其留在低可信区间。适用范围：component（显式 id 冲突）；
+       dimension/connection/rule 的 id 由计数器生成，显式冲突罕见，
+       暂走字典语义（后续按需扩展）。
     5. 输出必须是 EngineeringModel，禁止裸 JSON 直出
 """
 
@@ -101,6 +106,10 @@ def to_engineering_model(
                 _old_conf = _cand_conf[_cid]
                 if conf < _old_conf:
                     # 新候选置信度更低 → 保留新（低置信度一方），旧的被拒
+                    # k3 复审（2026-09-04）：登记簿必须同步为胜出方的置信
+                    # 度——否则三方冲突（0.9→0.5→0.7）第三轮仍与 0.9 比，
+                    # 裁决错位（留下 0.7 而非最低 0.5）。
+                    _cand_conf[_cid] = conf
                     model.add_component(Component(
                         id=_cid,
                         name=data.get("name", data.get("id", "unnamed")),
@@ -116,6 +125,7 @@ def to_engineering_model(
                     ))
                 else:
                     # 旧候选置信度不高于新 → 保留旧（低置信度一方），新的被拒
+                    # （登记簿保持旧值——胜出方未变）
                     _old = model.components[_cid]
                     _old.properties = dict(_old.properties or {})
                     _old.properties["id_conflict"] = (
