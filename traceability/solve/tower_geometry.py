@@ -3823,6 +3823,19 @@ def stitch_leg_chains(
             skipped["terminal_pair_structure"] = skipped.get(
                 "terminal_pair_structure", 0) + 1
             continue
+        # P2.5（2026-09-05）：leg_synth 跨型表杆不参与链合并/重复去重。
+        # 跨型杆的分段边界就是 overlay 披露的 leg_synth_spans_mm（z-only
+        # 设计常数），已是 GT 对齐的节间分段；进链合并会被
+        # (a) dup_mid_tol_mm=120 的「同角近重合去重」误杀——双拼角钢
+        # 两链分段边界差 100mm（(14400,17000) vs (14500,17000)），中点
+        # 距 ~51mm < 120，后到者被当重复段删除（06 册实测 (14500,17000)
+        # 全灭、GT 严格角腿 0/8）；(b) 重叠链合并把 (14000,16000)+
+        # (14000,17000) 并成跨层长杆，GT 分段对齐失效（同角 GT 双分段
+        # 只剩 1 TP）。与 terminal_pair_structure 同纪律：表驱动分段
+        # 已完整，跳过链合并，保留证据杆原貌。
+        if str(b.get("geometry_origin") or "") == "leg_synth":
+            skipped["leg_synth_table"] = skipped.get("leg_synth_table", 0) + 1
+            continue
         a, c = _p(b.get("from")), _p(b.get("to"))
         if a is None or c is None:
             continue
