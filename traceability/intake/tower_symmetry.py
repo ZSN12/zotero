@@ -1229,6 +1229,43 @@ def expand_4_face_symmetry_model(
                 "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
             }
 
+    # S11d：主腿跨段大角钢补全（ZC1 阶段 4 批次二，2026-09-05）。
+    # 图纸画线在册界截断（05 册上界 ~26863，模型端点 max z 26900），
+    # GT 27400→19400 主腿段 L=8024 无画线覆盖。诚实证据：
+    #   * 层位 27400/19400 均在 48 层网格（投票层）；
+    #   * BOM 401-403 L=8014 qty=4 ↔ GT L=8024（Δ10mm）交叉验证；
+    #   * 站宽 hw(19400)=1231（GT 1250 Δ19）/ hw(27400)=779（GT 810
+    #     Δ31）锥线外推，端点和偏差 50mm << TOL 500。
+    # 与 lrod 同构（直线杆族），复用 complete_lightning_rod_headless
+    # （id_prefix=legspan 区分溯源）。
+    _legspan_layers = spec.get("leg_span_layers") or []
+    if _legspan_layers and half_width_fn is not None:
+        from ..solve.tower_geometry import complete_lightning_rod_headless
+        _ls_norm: List[tuple] = []
+        for _l in _legspan_layers:
+            try:
+                _ls_norm.append((float(_l[0]), float(_l[1])))
+            except (TypeError, ValueError, IndexError):
+                continue
+        face_nodes, face_bars, _ls_rep = complete_lightning_rod_headless(
+            face_nodes, face_bars, half_width_fn, _ls_norm,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+            id_prefix="legspan",
+            origin_label="leg_span_completion",
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_ls = model.components.get("drawing_file")
+        if _df_ls is not None:
+            _df_ls.properties["leg_span_completion"] = {
+                "generated": _ls_rep.get("generated", 0),
+                "layers": _ls_rep.get("layers", []),
+                "reason": _ls_rep.get("reason"),
+                "n_layers": len(_ls_norm),
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
     # P2 第二波（Wave 3）：拓扑后主腿节间化——已实测证伪并回退。
     # 实验（2026-09 离线 + 全管线 A/B）：
     #   * 富切点（全端点簇）切分 → 9 处悬空断裂，leg TP 82→26；
@@ -1762,6 +1799,13 @@ def expand_4_face_symmetry_model(
             # 杆，与 S11 同口径直通 2D（无 face 归属）。
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "lightning_rod_headless"
+            evidence_status = "reconstructed"
+        elif b.get("leg_span_completion"):
+            # S11d 主腿跨段大角钢（ZC1 阶段 4 批次二）：段界层由
+            # overlay 声明（网格投票层），站宽由体锥线 hw 外推，
+            # BOM 长度交叉验证（Δ10mm）。与 S11c 同口径直通 2D。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "leg_span_completion"
             evidence_status = "reconstructed"
         elif b.get("terminal_pair_structure"):
             # P3.5 终止层对结构生成杆：在 4 面展开后按终止层表

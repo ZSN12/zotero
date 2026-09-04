@@ -676,6 +676,10 @@ def bars_from_model_2d(
                 # S11c（2026-09）：塔头避雷针主杆（lightning_rod_headless）
                 # ——锚层/顶层位 + 体锥线 hw 外推的 3D 实体杆，同上口径。
                 "lightning_rod_headless",
+                # S11d（2026-09）：主腿跨段大角钢（leg_span_completion）
+                # ——段界网格层 + 体锥线 hw 外推 + BOM 长度交叉验证
+                # 的 3D 实体杆，同上口径。
+                "leg_span_completion",
             )
             if resolved is None and not (is_dia or is_3d_recon):
                 continue

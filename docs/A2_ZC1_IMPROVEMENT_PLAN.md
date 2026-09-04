@@ -397,3 +397,29 @@ level_source 标注遵循既有管线约定（与 panel_template_completion
 production=dxf_derived）。诚实性备注：crossarm_headless_layers
 层对本身是 overlay 人工声明（两口径下同源），几何推导（BOM 弦长/
 锥线）是图纸内证据。
+
+### 十二.3 主腿跨段大角钢 S11d（2026-09-05 第四批）
+
+**发现**：主腿三段（27400→19400→11900→5500，14 根 GT FN）中，
+27400→19400 段可诚实拯救——
+- 层位 27400/19400 均在 48 层网格（投票层 ✓）；11900 不在网格
+  （网格 11400/12200 把 GT 层拆错）——诚实纪律下只生成 27400→19400
+- BOM 401-403 L=8014 qty=4 ↔ GT L=8024（Δ10mm 交叉验证 ✓）
+- 站宽 hw(19400)=1231（GT 1250 Δ19）/ hw(27400)=779（GT 810 Δ31）
+- 图源实况：05 册画线到 ~26863 截止（模型端点 max z 26900，
+  铁证无 27000+ 画线）——dxf_geom L=7262 杆上端 26464 vs GT
+  27400 差 936mm 超 TOL，提取不可达
+
+**实现**：`leg_span_layers: [[19400,27400]]` overlay 声明 → 复用
+`complete_lightning_rod_headless`（origin_label=leg_span_completion
+参数化）。**坑**：stitch_leg_chains 链合并把 legspan 杆吞了
+（derived_parametric 证据优先级低于 dxf_geom，重复段裁决被删，
+4→0）——按 terminal_pair_structure/leg_synth 先例加跳过分支
+（表驱动分段已完整纪律）。
+
+**实测**：legspan 4/4 全 TP 零 FP，dual-recon 250→**254（R 89.1%）**，
+P 9.2%。pytest 730，JC1 重跑双红线不动（pure 304 / recon 99.6%）。
+
+累计战绩：216 → **254（+38 TP）**，R 75.8% → 89.1%（+13.3pp）。
+剩余腿段 FN（19400→11900→5500 共 10 根）：11900 段界不在网格层，
+诚实生成不可达——收口。

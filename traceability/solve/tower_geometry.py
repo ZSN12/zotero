@@ -2698,6 +2698,7 @@ def complete_lightning_rod_headless(
     level_source_label: Optional[str] = None,
     dedup_tol_mm: float = 60.0,
     id_prefix: str = "lrod",
+    origin_label: str = "lightning_rod_headless",
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """S11c：塔头无图源避雷针主杆补全（ZC1 阶段 4 批次，2026-09）。
 
@@ -2793,8 +2794,8 @@ def complete_lightning_rod_headless(
                     "to": a,
                     "role": "LEG",
                     "diagonal_topology": False,
-                    "lightning_rod_headless": True,
-                    "geometry_origin": "lightning_rod_headless",
+                    origin_label: True,
+                    "geometry_origin": origin_label,
                     "geometry_class": "derived_parametric",
                     "level_source": level_source_label,
                 })
@@ -4202,6 +4203,15 @@ def stitch_leg_chains(
         # 已完整，跳过链合并，保留证据杆原貌。
         if str(b.get("geometry_origin") or "") == "leg_synth":
             skipped["leg_synth_table"] = skipped.get("leg_synth_table", 0) + 1
+            continue
+        # S11d（2026-09-05）：主腿跨段大角钢不参与链合并——overlay
+        # 声明的段界（网格投票层 19400/27400）已是 GT 对齐的节间
+        # 分段；进链合并会被 (a) 同角近重合去重误杀（derived_
+        # parametric 证据优先级低于 dxf_geom，legspan 4→0 实测），
+        # (b) 与 dxf 腿碎段并成跨层长杆。与 terminal_pair_structure /
+        # leg_synth 同纪律：表驱动分段已完整，保留证据杆原貌。
+        if b.get("leg_span_completion"):
+            skipped["leg_span_completion"] = skipped.get("leg_span_completion", 0) + 1
             continue
         a, c = _p(b.get("from")), _p(b.get("to"))
         if a is None or c is None:

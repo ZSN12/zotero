@@ -161,3 +161,46 @@ def test_lightning_rod_headless():
         assert f[2] == 34000.0 and t[2] == 39400.0
         # 锚站宽 > 顶站宽（锥形收顶）
         assert abs(f[0]) > abs(t[0])
+
+
+def test_leg_span_completion():
+    """S11d 主腿跨段大角钢：段界声明 → 4 根同号直线杆族。"""
+    from traceability.solve.tower_geometry import complete_lightning_rod_headless
+    nodes = {"n1": (1231.0, 1231.0, 19400.0)}
+    nn, nb, rep = complete_lightning_rod_headless(
+        nodes, [], _hw_linear, [(19400.0, 27400.0)],
+        level_source_label="gt_canonical",
+        id_prefix="legspan",
+        origin_label="leg_span_completion",
+    )
+    assert rep["generated"] == 4
+    for b in nb:
+        if b.get("geometry_origin") != "leg_span_completion":
+            continue
+        assert b["geometry_class"] == "derived_parametric"
+        assert b["id"].startswith("legspan_bar_")
+        assert b["leg_span_completion"] is True
+        f, t = nn[b["from"]], nn[b["to"]]
+        assert f[0] * t[0] > 0 and f[1] * t[1] > 0  # 同象限
+        assert f[2] == 19400.0 and t[2] == 27400.0
+        assert abs(f[0]) > abs(t[0])  # 下宽上窄（锥形塔，锚站 z_a 更低更宽）
+
+
+def test_leg_span_survives_stitch():
+    """S11d 杆不被 stitch_leg_chains 吸收（表驱动分段完整性纪律）。"""
+    from traceability.solve.tower_geometry import stitch_leg_chains
+    nodes = {
+        "n1": (1231.0, 1231.0, 19400.0),
+        "n2": (779.0, 779.0, 27400.0),
+        "n3": (779.0, 779.0, 27400.0),
+    }
+    bars = [
+        {"id": "legspan_bar_1", "from": "n1", "to": "n2", "role": "LEG",
+         "leg_span_completion": True, "geometry_origin": "leg_span_completion"},
+        {"id": "dxf_leg_frag", "from": "n2", "to": "n3", "role": "LEG",
+         "geometry_origin": "dxf_geom"},
+    ]
+    out, rep = stitch_leg_chains(nodes, bars, panel_levels=[19000.0, 28000.0])
+    kept = [b for b in out if b.get("geometry_origin") == "leg_span_completion"]
+    assert len(kept) == 1, "legspan 杆必须原样保留"
+    assert rep.get("skipped", {}).get("leg_span_completion") == 1
