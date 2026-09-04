@@ -48,8 +48,8 @@
   P4 模式：失败记录到 graph，不炸主链）。
 
 ## 红线（不变）
-- JC1 dual-pure TP ≥ 304（P2.5 后新基线，6b7831b；Phase 2 M2 目标 290+ 已达成）
-- JC1 dual-recon R ≥ 99.6%
+- JC1 dual-pure TP ≥ 330（P2.6 后新基线，1e1c8e0）
+- JC1 dual-recon R ≥ 99.6%（现 99.6%）
 - ZC1 dual-union R ≥ 75.8%
 - 任何改动全量 A/B + pytest（k3 审查按用户 2026-09-05 指示停用）
 
