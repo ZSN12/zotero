@@ -109,3 +109,31 @@ def test_headless_dedup_against_existing():
             if {b["from"], b["to"]} == {f, t}
         ]
         assert not chord_like, "下弦整杆必须被既有杆去重"
+
+
+def test_headless_single_side_declaration():
+    """层对第 3 元 ±1 → 只生成一侧（地线支架单侧结构，镜像侧 FP=0）。"""
+    nodes = {"n1": (340.0, 340.0, 35800.0)}
+    bom = [{"bar_id": "607", "section": "L40X3", "length_mm": 1747.0, "qty": 4}]
+    nn, nb, rep = complete_crossarm_truss_headless(
+        nodes, [], _hw_linear, [(35800.0, 36200.0, 1.0)],
+        bom_rows=bom, level_source_label="dxf_derived",
+    )
+    assert rep["generated"] > 0
+    layer = rep["layers"][0] if isinstance(rep["layers"], list) else rep["layers"]
+    assert layer["side"] == 1.0
+    # 单侧：全部新节点 x>0
+    new_nids = {
+        b[k] for b in nb
+        if b.get("geometry_origin") == "crossarm_truss_headless"
+        for k in ("from", "to")
+    }
+    for nid in new_nids:
+        x, _y, _z = nn[nid]
+        assert x > 0, f"单侧声明后不应有 x<0 节点: {nid}={nn[nid]}"
+    # 双侧对照：节点数应更多
+    nn2, nb2, rep2 = complete_crossarm_truss_headless(
+        nodes, [], _hw_linear, [(35800.0, 36200.0)],
+        bom_rows=bom, level_source_label="dxf_derived",
+    )
+    assert rep2["generated"] > rep["generated"]

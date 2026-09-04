@@ -2592,6 +2592,14 @@ def complete_crossarm_truss_headless(
     layers_report: List[dict] = []
     for pair in layer_pairs:
         z_lo, z_hi = float(pair[0]), float(pair[1])
+        # 单侧声明（可选第 3 元）：side ∈ {+1,-1} 只生成一侧（地线
+        # 支架单侧结构）；缺省双侧（横担对称）。
+        side_sel: Optional[float] = None
+        if len(pair) >= 3:
+            try:
+                side_sel = float(pair[2])
+            except (TypeError, ValueError):
+                side_sel = None
         if z_hi <= z_lo:
             continue
         w_lo = _hw(z_lo)
@@ -2631,7 +2639,9 @@ def complete_crossarm_truss_headless(
             station_cache[key] = nid
             return nid
 
-        for sx in (1.0, -1.0):
+        sx_iter = (1.0,) if side_sel == 1.0 else \
+                  (-1.0,) if side_sel == -1.0 else (1.0, -1.0)
+        for sx in sx_iter:
             for sy in (1.0, -1.0):
                 D = _mk_station("D", sx, sy)
                 C = _mk_station("C", sx, sy)
@@ -2661,7 +2671,7 @@ def complete_crossarm_truss_headless(
             _emit(D_m, E_p, "DIAG")
         layers_report.append({
             "z_lo": round(z_lo, 1), "z_hi": round(z_hi, 1),
-            "z_g": round(z_g, 1),
+            "z_g": round(z_g, 1), "side": side_sel,
             "x_tip": round(x_tip, 1), "x_mid": round(x_mid, 1),
             "w_lo": round(w_lo, 1), "y_tip": y_tip,
             "L_chord": round(L_chord, 1),

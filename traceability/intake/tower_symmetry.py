@@ -1174,7 +1174,10 @@ def expand_4_face_symmetry_model(
         _pairs_norm: List[tuple] = []
         for _p in _xarmh_pairs:
             try:
-                _pairs_norm.append((float(_p[0]), float(_p[1])))
+                _pair = [float(_p[0]), float(_p[1])]
+                if len(_p) >= 3:
+                    _pair.append(float(_p[2]))  # 单侧声明 ±1
+                _pairs_norm.append(tuple(_pair))
             except (TypeError, ValueError, IndexError):
                 continue
         face_nodes, face_bars, _xarmh_rep = complete_crossarm_truss_headless(
