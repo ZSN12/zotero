@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: >-
+  如果本项目对你的工作有帮助，请引用。
+type: software
+title: engineering-trace
+authors:
+  - name: engineering-trace contributors
+repository-code: "https://github.com/ZSN12/engineering-trace"
+abstract: >-
+  工程图纸（DXF）到结构化杆件模型的追踪管线：视图解耦、逐杆证据链、
+  多口径评测（直读 / 重建 / 层表辅助），面向输电角钢塔图纸的结构化
+  交付与门禁审计（六层 L1-L6）。
+keywords:
+  - dxf
+  - cad
+  - transmission-tower
+  - engineering-drawing
+  - structural-model
+  - traceability
+license: MIT
+version: 0.4.0
+date-released: "2026-09-05"

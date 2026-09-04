@@ -46,12 +46,12 @@ python3 web/server.py          # http://127.0.0.1:8000
 领域包契约与换塔纪律：[`domains/angle-tower/SKILL.md`](domains/angle-tower/SKILL.md)；
 口径诚实性纪律：[`domains/angle-tower/docs/CALIBER_DISCIPLINE.md`](domains/angle-tower/docs/CALIBER_DISCIPLINE.md)。
 
-### 当前基线（诚实呈报，2026-09-03）
+### 当前基线（诚实呈报，2026-09-05，P2.6 注入撤回后）
 
 | 塔 | 对外主口径 A2-dual-view-pure（直读并集） | 重建并集（辅助口径，仅内部归因） |
 |---|---|---|
 | 35A1-JC1（国网，36.6m） | TP 304 / P 63.5% / R 28.4% | 1067 / 99.6% @500mm |
-| 35A2-ZC1（换塔泛化） | TP 9 / P 6.5% / R 3.2% | 216 / 75.8% @500mm |
+| 35A2-ZC1（换塔泛化） | TP 9 / P 6.2% / R 3.2% | 216 / 75.8% @500mm |
 
 > 重建并集含镜像/层表补全杆件，**不得冒充直读能力**；GT 注入面在
 > version.json `gt_injected.surfaces` 强制披露，门禁 2（validate_public_ir）
@@ -147,11 +147,17 @@ engineering-trace/
 ├── examples/                     # 内置示例（110kV 塔 + P&ID 管线）+ 各塔 GT
 ├── tests/                        # 700+ 用例（快层默认 / 全量见 CI）
 ├── SKILL.md                      # 给 AI 的 Skill 定义（工作流 + 硬性要求）
-└── LICENSE                       # MIT
+└── LICENSE / NOTICE              # MIT + 第三方归因
 ```
 
 > **换塔指南**：多册 DXF → 可验证全塔 3D 模型的完整管线、评测口径纪律
 > 与配置字段，见 [`domains/angle-tower/SKILL.md`](domains/angle-tower/SKILL.md)。
+>
+> **贡献 / 引用 / 安全**：提分纪律与门禁流程见
+> [`CONTRIBUTING.md`](CONTRIBUTING.md)；版本历史见
+> [`CHANGELOG.md`](CHANGELOG.md)；引用条目见
+> [`CITATION.cff`](CITATION.cff)；漏洞披露渠道见
+> [`SECURITY.md`](SECURITY.md)。
 
 ## 铁塔结构图识别与 3D 重构
 

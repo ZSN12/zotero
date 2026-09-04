@@ -1,0 +1,25 @@
+engineering-trace
+================
+
+Copyright (c) 2026 engineering-trace contributors
+
+本项目以 MIT License 发布（见 LICENSE）。
+
+第三方组件
+---------
+运行时依赖（详见 requirements.txt / requirements-tower.txt），
+各自以其作者原许可证发布：
+
+- ezdxf — MIT License（DXF 读写）
+- numpy — BSD 3-Clause License
+- scipy — BSD 3-Clause License（含 Hungarian 指派算法）
+- jsonschema — MIT License
+- matplotlib — Matplotlib License (BSD-compatible)
+- opencv-python-headless — Apache License 2.0
+- openai — Apache License 2.0
+- trimesh — MIT License（GLB 导出）
+
+数据与示例
+---------
+examples/ 下的示例图纸、BOM、地面真值（ground truth）为工程演示数据，
+随项目以 MIT License 一并提供；引用时请注明出处。
