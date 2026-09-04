@@ -174,3 +174,24 @@ class MirrorSyncCheckTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CanonicalNotMutatedByTestsTest(unittest.TestCase):
+    """评测 CLI 测试不得改写 canonical 交付（2026-09-05 实测事故）。
+
+    test_evaluate_cli_runs_cleanly 曾对 out/35A1-JC1-full-deliver 直跑
+    evaluate_ground_truth.py——该 CLI 把 metrics/evidence 文件写进
+    model.json 所在目录，导致 canonical 指纹链随任意一次 pytest 漂移
+    （evidence_report.eval_binding.commit 被改写成测试时点 HEAD），
+    web/demo 镜像 sha 链断裂。已改为临时目录评测；本测试锁住该不变量：
+    快层跑完后 canonical 的 evidence_report.json 必须仍与镜像一致。
+    """
+
+    def test_canonical_evidence_matches_mirror_after_suite(self):
+        src = REPO_ROOT / "out/35A1-JC1-full-deliver/evidence_report.json"
+        dst = REPO_ROOT / "web/demo/35A1-JC1/latest_deliver/evidence_report.json"
+        if not (src.exists() and dst.exists()):
+            self.skipTest("canonical/镜像产物不存在（CI 环境）")
+        self.assertEqual(_sha_bytes(src.read_bytes()), _sha_bytes(dst.read_bytes()),
+                         "canonical evidence_report.json 与镜像不一致——"
+                         "有测试改写了交付产物（检查 evaluate_ground_truth 调用方）")

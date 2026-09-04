@@ -631,17 +631,26 @@ class EvaluateCliTest(unittest.TestCase):
     """阶段1.1：评测 CLI 完整执行（exit 0、输出 A1/A2/A3、无 NameError）。"""
 
     def test_evaluate_cli_runs_cleanly(self):
+        import shutil
         import subprocess
+        import tempfile
         repo = Path(__file__).resolve().parent.parent
         gt = repo / "examples" / "gt" / "35A1-JC1_ground_truth.json"
         model = repo / "out" / "35A1-JC1-full-deliver" / "model.json"
         if not gt.exists() or not model.exists():
             self.skipTest("GT 或 model.json 不存在")
-        proc = subprocess.run(
-            [sys.executable, str(repo / "scripts" / "evaluate_ground_truth.py"),
-             str(gt), str(model), "--view", "front"],
-            capture_output=True, text=True, timeout=120,
-        )
+        # 评测 CLI 会把 metrics/evidence 文件写进 model.json 所在目录
+        # （out_dir = model 的父目录）——绝不能直写 canonical 交付
+        # （2026-09-05 实测：直跑曾把 full-deliver 的 evidence_report.json
+        #  改写成测试时点的 HEAD，镜像 sha 链断裂）。复制到临时目录评测。
+        with tempfile.TemporaryDirectory() as td:
+            model_copy = Path(td) / "model.json"
+            shutil.copy2(model, model_copy)
+            proc = subprocess.run(
+                [sys.executable, str(repo / "scripts" / "evaluate_ground_truth.py"),
+                 str(gt), str(model_copy), "--view", "front"],
+                capture_output=True, text=True, timeout=120,
+            )
         self.assertEqual(proc.returncode, 0, f"评测 CLI 应正常退出，stderr={proc.stderr[:500]}")
         self.assertNotIn("NameError", proc.stderr + proc.stdout)
         self.assertNotIn("Traceback", proc.stderr + proc.stdout)
