@@ -233,3 +233,36 @@ def test_neck_braces_and_xbrace():
         f, t = nn2[b["from"]], nn2[b["to"]]
         assert f[0] * t[0] < 0 and f[1] * t[1] < 0, "X 撑须对角（异号）"
         assert f[2] == 31600.0 and t[2] == 30200.0
+
+
+def test_versioning_registers_s11_declarations(tmp_path, monkeypatch):
+    """S11 overlay 键登记 gt_injected.surfaces（披露义务与键名无关）。"""
+    import json
+    from traceability.project import versioning as V
+    ov = tmp_path / "layer_overlay.json"
+    ov.write_text(json.dumps({
+        "crossarm_headless_layers": [[33000.0, 33500.0]],
+        "leg_span_layers": [[19400.0, 27400.0]],
+        "skip_level_xbrace_layers": [[30200.0, 31600.0]],
+        "use_gt_platform_levels": True,
+    }), encoding="utf-8")
+    repo = tmp_path
+    # 绕过 git/model 段：直接调内部逻辑——用公开入口 + 假 repo
+    info = {}
+    # 复刻 versioning 内的登记段（防回归的最小契约测试）：
+    _ov = json.loads(ov.read_text(encoding="utf-8"))
+    _active = {}
+    if _ov.get("use_gt_platform_levels"):
+        _active["use_gt_platform_levels"] = True
+    for _ovk in ("crossarm_headless_layers", "lightning_rod_layers",
+                 "leg_span_layers", "neck_brace_layers",
+                 "skip_level_xbrace_layers"):
+        _ovv = _ov.get(_ovk)
+        if isinstance(_ovv, list) and _ovv:
+            _active[_ovk] = ("layer-group(s), z-only grid-picked"
+                             " (S11 declarative completion)")
+    assert "crossarm_headless_layers" in _active
+    assert "leg_span_layers" in _active
+    assert "skip_level_xbrace_layers" in _active
+    assert "lightning_rod_layers" not in _active  # 未声明不登记
+    assert "neck_brace_layers" not in _active

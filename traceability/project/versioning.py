@@ -225,6 +225,23 @@ def collect_version_info(out_dir: Path, repo_root: Path,
                     _active["terminal_levels_injected"] = "override table"
                 else:
                     _active["terminal_levels_injected"] = "JC1 canonical table"
+            # S11 族声明式补全面（2026-09-05 外部审计披露缺口）：五个
+            # overlay 键不带 gt_ 前缀，绕过了名称式预检——登记义务与
+            # 键名无关。这些键是「z-only 网格投票层 + 人工圈选」的
+            # 层对/层站声明（无 x/y 注入），启用即属 level-assisted
+            # 口径的一部分，必须在 gt_injected.surfaces 显式披露。
+            for _ovk in (
+                "crossarm_headless_layers",
+                "lightning_rod_layers",
+                "leg_span_layers",
+                "neck_brace_layers",
+                "skip_level_xbrace_layers",
+            ):
+                _ovv = _ov.get(_ovk)
+                if isinstance(_ovv, list) and _ovv:
+                    _active[_ovk] = (
+                        f"{len(_ovv)} layer-group(s), z-only grid-picked"
+                        " (S11 declarative completion)")
             if _active:
                 info["gt_injected"] = {
                     "surfaces": _active,

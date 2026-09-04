@@ -410,6 +410,30 @@ def main() -> int:
         else (out_dir / "_no_demo_sync"))
     report["postprocess"] = postprocess
     report["profile"] = args.profile
+
+    # 2026-09-05 外部审计披露缺口：level_grid_validation.json 随跑批
+    # 落盘（「S11 层对 ∈ 投票网格」从文档断言变成可复核产物）。
+    # 复用 scripts/validate_level_grid.py 的 zc1 配置；脚本输出固定
+    # 在 full-deliver，非默认 out_dir（production 等）时搬运副本，
+    # 保证每个跑批目录都有该审计产物。
+    try:
+        import subprocess as _sp
+        _vl = REPO / "scripts/validate_level_grid.py"
+        _vr = _sp.run(
+            [sys.executable, str(_vl), "--tower", "zc1"],
+            capture_output=True, text=True, cwd=str(REPO))
+        _default = REPO / "out/35A2-ZC1-full-deliver/level_grid_validation.json"
+        _lg_out = out_dir / "level_grid_validation.json"
+        if _default.exists() and out_dir != _default.parent:
+            shutil.copy2(_default, _lg_out)
+        report["level_grid_validation"] = {
+            "ok": _vr.returncode == 0,
+            "exit_code": _vr.returncode,
+            "artifact": _lg_out.name,
+        }
+    except Exception as _exc_lg:  # noqa: BLE001 —— 产物缺失必须留痕
+        report["level_grid_validation"] = {"ok": False, "error": repr(_exc_lg)}
+
     (out_dir / "full_run_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",

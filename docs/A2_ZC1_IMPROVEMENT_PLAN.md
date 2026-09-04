@@ -557,3 +557,35 @@ endpoint_sum<500，对 GT 全表 285 杆匈牙利 1:1）：
 1:1 上限 4 + GT 局部细节 5 + side 提取老问题 4 + 底段 GT 缺 2）。
 下一步若继续，方向是阶段 5（pure 口碑）或阶段 1（泛化工程债），
 两者均非 ZC1 dev 分数提升项。
+
+## 十七、外部审计整改（2026-09-05，任务一/二）
+
+### 任务一：S11f X 撑几何修正（P0）✅
+
+独立复核确认 4 根 xbr 杆 3D 端点和 1359mm ≥500（front 210 /
+side 1355——front 投影 y 深度不可见致单视图假命中）。根因：
+生成器画「过塔心中线全对角」(sx,sy)→(-sx,-sy)，GT 实际是侧面
+X 撑板（x 翻转、y 同号）。「hw 残差 Δ30-35」声明只对首端成立；
+末端面板外扩 ~1.5×hw 无独立证据（画线带零横杆、BOM 塔头册缺失
+607/608 L=1747 差 121mm 不足以定位）——修法①实质注 GT。
+**处置：撤 xbr 声明（overlay 删键），dual-recon 270→266（R
+94.7%→93.3%）**，生成器代码/测试保留。存留族 62 杆 3D 端点和
+复审全 <500（crossarm 414 / lrod 38 / legspan 279 / neck 184）。
+commit ab93523。
+
+### 任务二：披露补全（P0）✅
+
+1. **gt_injected.surfaces 登记**（versioning.py）：五个 S11 键
+   （crossarm_headless_layers / lightning_rod_layers /
+   leg_span_layers / neck_brace_layers / skip_level_xbrace_layers）
+   启用即登记，标注 "z-only grid-picked (S11 declarative
+   completion)"。**登记义务与键名无关**——不带 gt_ 前缀曾绕过
+   名称式预检，此缺口已闭合。JC1 验证零误登记（fail-closed）。
+2. **overlay _doc ×6**：总说明 + 各键证据链 + xbr 撤杆记录。
+3. **level_grid_validation.json 随跑批落盘**（run_35A2_zc1_full
+   自动调 validate_level_grid.py，产物进各 out_dir）：
+   `s11_layer_declarations` 段复核「声明层 ∈ 投票网格 ±150」——
+   全部 Δ0 精确命中，gate pass。文档断言变成可复核产物。
+
+红线：pytest 732（+1 披露契约测试）；JC1 99.6% 不动；
+pure 9 不变；ZC1 266/93.3% 保持。

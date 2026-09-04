@@ -126,6 +126,52 @@ def main() -> int:
     gate_pass = rate >= GATE_MIN_HIT
     report["gate"] = {"min_hit": GATE_MIN_HIT, "rate": rate, "pass": gate_pass}
 
+    # S11 族声明式补全面复核（2026-09-05 外部审计披露缺口）：
+    # 「层对 ∈ 投票网格」从文档断言变成可复核产物。每个启用键的
+    # 每个声明层须在网格 ±150 内命中（tol 与层位吸附同档）。
+    # crossarm 三元组第 3 元是 side_sel（±1 单侧声明），非层位。
+    s11_decls = {}
+    for key, arity in (
+        ("crossarm_headless_layers", 2),
+        ("lightning_rod_layers", 2),
+        ("leg_span_layers", 2),
+        ("neck_brace_layers", 3),
+        ("skip_level_xbrace_layers", 2),
+    ):
+        groups = overlay.get(key) or []
+        if not isinstance(groups, list) or not groups:
+            continue
+        checks = []
+        for gi, grp in enumerate(groups):
+            zs = [float(g) for g in grp[:arity]] if isinstance(grp, (list, tuple)) else []
+            per_z = []
+            for z in zs:
+                best = min(levels, key=lambda l: abs(l - z)) if levels else None
+                dev = abs(best - z) if best is not None else None
+                per_z.append({
+                    "declared": z,
+                    "nearest_grid": best,
+                    "dev_mm": round(dev, 1) if dev is not None else None,
+                    "in_grid_tol150": bool(dev is not None and dev <= 150.0),
+                })
+            checks.append({"group_index": gi, "levels": per_z})
+        s11_decls[key] = {
+            "n_groups": len(groups),
+            "tol_mm": 150.0,
+            "all_declared_in_grid": all(
+                c["in_grid_tol150"] for chk in checks for c in chk["levels"]),
+            "groups": checks,
+        }
+    if s11_decls:
+        report["s11_layer_declarations"] = s11_decls
+        bad = [k for k, v in s11_decls.items() if not v["all_declared_in_grid"]]
+        report["s11_layer_declarations_gate"] = {
+            "pass": not bad,
+            "offending_keys": bad,
+        }
+        print("S11 层对声明复核: " + ("✓ 全部 ∈ 网格(±150)"
+              if not bad else f"✗ 越界键 {bad}"))
+
     out = Path(cfg["out"])
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")

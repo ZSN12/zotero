@@ -867,5 +867,11 @@
    27400.0,
    28100.0
   ]
- ]
+ ],
+ "_doc": "S11 族声明式补全键（2026-09-05 披露补全）：以下五个 *_layers 键为「z-only 网格投票层 + 人工圈选」的层对/层站声明——无 x/y 注入，但选择哪些层来自 development 期人工圈选，已登记 version.json 的 gt_injected.surfaces（level-assisted 口径）。声明层必须 ∈ 投票网格（validate_level_grid.py 的 s11_layer_declarations_gate 复核，tol 150）。",
+ "_doc_crossarm_headless_layers": "S11 横担层对 [[z_root, z_tip, side_sel?]]：层位 gt_canonical（网格投票层），x_tip 由 BOM 弦长反推（crossarm_headless_bom），root/tip 站宽 hw 锥线，mid-station 比率 0.6/宽 1.24 为 JC1 development 拟合常数。",
+ "_doc_lightning_rod_layers": "S11c 避雷针主杆层对 [[z_anchor, z_top]]：均网格层，站宽 hw 锥线外推（残差 Δ41/Δ49）；BOM 无件号（塔头册缺失）。",
+ "_doc_leg_span_layers": "S11d 主腿跨段层对 [[z_lo, z_hi]]：两端均网格层。段1 [19400,27400] 有BOM 401-403 L=8014 qty=4 交叉验证（Δ10mm）；段2 [12200,19400] 的12200 是 12 册图纸层（GT 11900 的图纸表达，z 残差 300mm TOL 吸收），无 BOM 对应。站宽 hw 锥线（Δ19-31）。",
+ "_doc_neck_brace_layers": "S11e 塔颈 K 撑层站 [[z_lo, z_mid, z_hi]]：三层均网格投票层，中站 (±hw(z_mid),0)，角站 hw 锥线（残差 Δ30）。",
+ "_doc_skip_level_xbrace_layers": "S11f 跳层 X 撑层对 [[z_lo, z_hi]]——已撤（2026-09-05 外部审计：生成器「过塔心中线全对角」与 GT 侧面 X 撑板几何不符，3D 端点和1359mm ≥500，front 单视图假命中；末端面板外扩 ~1.5×hw 无独立证据来源）。键保留文档记录，值不得再声明，除非补齐板几何证据。"
 }
