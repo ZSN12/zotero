@@ -441,28 +441,6 @@ def expand_4_face_symmetry_model(
                 "details": _bbl_rep.get("details") or [],
             }
 
-    # 阶段 5.4b（P2.6，2026-09-05）：跨册边界腿 span 合成。多册图册的
-    # 跨界真实腿分段（(11500,14500)/(11800,14400)/(16000,19000) 等）在
-    # 任一单册的腿链上都覆盖不全（各册链只画自己 z 段）。span 表 =
-    # overlay 声明的 z-only 设计常数（cross_sheet_leg_spans_mm，与
-    # leg_synth_spans_mm 同披露纪律）；x 端点 = 合并模型自身腿链节点
-    # 插值（无 GT x/y）。产杆与单册 leg_synth 同语义（recognized/
-    # centerline_extract/leg_synth），进 pure 口径。
-    _xspan_cfg = spec.get("cross_sheet_leg_spans_mm") or []
-    if _xspan_cfg:
-        from ..solve.tower_geometry import synthesize_cross_sheet_leg_spans
-        snapped_nodes, snapped_bars, _xspan_rep = synthesize_cross_sheet_leg_spans(
-            snapped_nodes, snapped_bars, list(_xspan_cfg),
-        )
-        _df_xs = model.components.get("drawing_file")
-        if _df_xs is not None:
-            _df_xs.properties["cross_sheet_leg_span_report"] = {
-                "generated": int(_xspan_rep.get("generated", 0)),
-                "spans_declared": int(_xspan_rep.get("spans_declared", 0)),
-                "generated_details": _xspan_rep.get("generated_details") or [],
-                "skipped": _xspan_rep.get("skipped") or [],
-            }
-
     # 阶段 5.6：悬空断裂收尾（P3 真实性治理，门禁 genuine_dangling<=4 目标）。
     # 实测（2026-09-02 dbd2d13 产物审计）：45 处物理悬空 stem 中 28 处自由端
     # 距异杆线段 52~199mm（制图惯例「线端停在构件边缘」），5 处为焊接通道
