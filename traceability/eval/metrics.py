@@ -673,6 +673,9 @@ def bars_from_model_2d(
                 # 全塔 3D 实体杆（下平上拱悬臂），无 face 归属，GT 侧
                 # 对应杆无 face 直接投影，口径对称。
                 "crossarm_truss_headless",
+                # S11c（2026-09）：塔头避雷针主杆（lightning_rod_headless）
+                # ——锚层/顶层位 + 体锥线 hw 外推的 3D 实体杆，同上口径。
+                "lightning_rod_headless",
             )
             if resolved is None and not (is_dia or is_3d_recon):
                 continue

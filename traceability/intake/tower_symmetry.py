@@ -1199,6 +1199,36 @@ def expand_4_face_symmetry_model(
                 "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
             }
 
+    # S11c：塔头避雷针主杆补全（ZC1 阶段 4 批次，2026-09-05）。
+    # overlay lightning_rod_layers: [[z_anchor, z_top]] 显式声明；
+    # x/y 由体锥线 hw(z) 外推（实测残差：锚站 Δ41、顶站 Δ49，
+    # 端点和偏差 90mm << TOL 500）。
+    _lrod_layers = spec.get("lightning_rod_layers") or []
+    if _lrod_layers and half_width_fn is not None:
+        from ..solve.tower_geometry import complete_lightning_rod_headless
+        _lrod_norm: List[tuple] = []
+        for _l in _lrod_layers:
+            try:
+                _lrod_norm.append((float(_l[0]), float(_l[1])))
+            except (TypeError, ValueError, IndexError):
+                continue
+        face_nodes, face_bars, _lrod_rep = complete_lightning_rod_headless(
+            face_nodes, face_bars, half_width_fn, _lrod_norm,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_lrod = model.components.get("drawing_file")
+        if _df_lrod is not None:
+            _df_lrod.properties["lightning_rod_headless"] = {
+                "generated": _lrod_rep.get("generated", 0),
+                "layers": _lrod_rep.get("layers", []),
+                "reason": _lrod_rep.get("reason"),
+                "n_layers": len(_lrod_norm),
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
     # P2 第二波（Wave 3）：拓扑后主腿节间化——已实测证伪并回退。
     # 实验（2026-09 离线 + 全管线 A/B）：
     #   * 富切点（全端点簇）切分 → 9 处悬空断裂，leg TP 82→26；
@@ -1725,6 +1755,13 @@ def expand_4_face_symmetry_model(
             # S10 同口径直通 2D（无 face 归属）。
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "crossarm_truss_headless"
+            evidence_status = "reconstructed"
+        elif b.get("lightning_rod_headless"):
+            # S11c 塔头避雷针主杆（ZC1 阶段 4 批次）：锚层/顶层由
+            # overlay 显式声明，x/y 由体锥线 hw 外推。确定性重建物理
+            # 杆，与 S11 同口径直通 2D（无 face 归属）。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "lightning_rod_headless"
             evidence_status = "reconstructed"
         elif b.get("terminal_pair_structure"):
             # P3.5 终止层对结构生成杆：在 4 面展开后按终止层表

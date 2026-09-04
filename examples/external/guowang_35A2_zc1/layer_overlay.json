@@ -844,5 +844,11 @@
    1.0
   ]
  ],
- "crossarm_headless_bom": "full_bom.json"
+ "crossarm_headless_bom": "full_bom.json",
+ "lightning_rod_layers": [
+  [
+   34000.0,
+   39400.0
+  ]
+ ]
 }

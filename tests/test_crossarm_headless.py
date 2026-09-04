@@ -137,3 +137,27 @@ def test_headless_single_side_declaration():
         bom_rows=bom, level_source_label="dxf_derived",
     )
     assert rep2["generated"] > rep["generated"]
+
+
+def test_lightning_rod_headless():
+    """S11c 避雷针主杆：锚/顶层声明 → 4 根同号锥形杆。"""
+    from traceability.solve.tower_geometry import complete_lightning_rod_headless
+    nodes = {"n1": (406.0, 406.0, 34000.0)}
+    nn, nb, rep = complete_lightning_rod_headless(
+        nodes, [], _hw_linear, [(34000.0, 39400.0)],
+        level_source_label="gt_canonical",
+    )
+    assert rep["generated"] == 4  # (±x,±y) 四角全组合
+    # 同号保持：from 与 to 的 x 符号一致、y 符号一致（GT 实测
+    # PM_0004/0016-0018 四种组合全存在）
+    for b in nb:
+        if b.get("geometry_origin") != "lightning_rod_headless":
+            continue
+        assert b["geometry_class"] == "derived_parametric"
+        assert b["level_source"] == "gt_canonical"
+        f, t = nn[b["from"]], nn[b["to"]]
+        assert f[0] * t[0] > 0, f"x 符号断裂: {f}→{t}"
+        assert f[1] * t[1] > 0, f"y 符号断裂: {f}→{t}"
+        assert f[2] == 34000.0 and t[2] == 39400.0
+        # 锚站宽 > 顶站宽（锥形收顶）
+        assert abs(f[0]) > abs(t[0])

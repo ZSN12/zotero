@@ -2689,6 +2689,132 @@ def complete_crossarm_truss_headless(
     }
 
 
+def complete_lightning_rod_headless(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    rod_layers: List[Tuple[float, float]],
+    *,
+    level_source_label: Optional[str] = None,
+    dedup_tol_mm: float = 60.0,
+    id_prefix: str = "lrod",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S11c：塔头无图源避雷针主杆补全（ZC1 阶段 4 批次，2026-09）。
+
+    GT 结构（ZC1 避雷针，4 根）：从横担上层锚 G=(447,±447,34000)
+    到塔顶 A=(150,±150,39400) 的锥形四角平行杆族（L=5416 整杆，
+    无中间站）。BOM 无对应件号（塔头册缺失），但两端 z 层都在
+    beam_marker_levels 网格（34000/39400），x/y 由体锥线 hw(z)
+    外推（实测残差：hw(39400)=101 vs GT 150、hw(34000)=406 vs
+    447，端点和偏差 90mm << TOL 500）。
+
+    rod_layers: [[z_anchor, z_top]] 显式声明（overlay，人工标定，
+    level_source 诚实标注——与 crossarm_headless_layers 同口径）。
+    锚站 G=(hw(z_a),hw(z_a),z_a)、顶站 A=(hw(z_t),hw(z_t),z_t)，
+    4 根同号组合 (±,±)→(±,±)。
+
+    口径：geometry_origin=lightning_rod_headless、
+    geometry_class=derived_parametric（与 S11 横担同族）。
+    """
+    if not nodes or half_width_fn is None or not rod_layers:
+        return nodes, bars, {"generated": 0, "layers": [], "reason": "no_inputs"}
+
+    def _hw(z: float) -> float:
+        try:
+            return max(float(half_width_fn(float(z))), 0.0)
+        except Exception:
+            return 0.0
+
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = list(bars)
+    counter = {"n": 7850000}
+
+    snap_xy_mm = 150.0
+    snap_z_mm = 200.0
+    _zbucket: Dict[int, List[Tuple[str, Vec3]]] = {}
+    for nid, p in nodes.items():
+        _zbucket.setdefault(int(float(p[2]) // 100), []).append((nid, p))
+
+    def _mk(x: float, y: float, z: float) -> str:
+        zb = int(z // 100)
+        for zk in range(zb - 3, zb + 4):
+            for nid, p in _zbucket.get(zk, ()):
+                if (abs(float(p[0]) - x) <= snap_xy_mm
+                        and abs(float(p[1]) - y) <= snap_xy_mm
+                        and abs(float(p[2]) - z) <= snap_z_mm):
+                    return nid
+        counter["n"] += 1
+        nid = f"{id_prefix}_node_{counter['n']}"
+        new_nodes[nid] = (round(x, 2), round(y, 2), round(z, 1))
+        _zbucket.setdefault(int(z // 100), []).append((nid, new_nodes[nid]))
+        return nid
+
+    existing: List[Tuple[Vec3, Vec3]] = []
+    for b in bars:
+        fn, tn = b.get("from"), b.get("to")
+        pf, pt = nodes.get(fn) if fn else None, nodes.get(tn) if tn else None
+        if pf is not None and pt is not None:
+            existing.append((pf, pt))
+
+    def _exists(p1: Vec3, p2: Vec3) -> bool:
+        for q1, q2 in existing:
+            for a1, a2 in ((q1, q2), (q2, q1)):
+                d = (abs(float(a1[0]) - float(p1[0])) + abs(float(a1[1]) - float(p1[1]))
+                     + abs(float(a1[2]) - float(p1[2]))
+                     + abs(float(a2[0]) - float(p2[0])) + abs(float(a2[1]) - float(p2[1]))
+                     + abs(float(a2[2]) - float(p2[2])))
+                if d <= dedup_tol_mm * 2.5:
+                    return True
+        return False
+
+    generated = 0
+    layers_report: List[dict] = []
+    for layer in rod_layers:
+        try:
+            z_a, z_t = float(layer[0]), float(layer[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if z_t <= z_a:
+            continue
+        w_a, w_t = _hw(z_a), _hw(z_t)
+        if w_a <= 50.0 or w_t <= 20.0:
+            continue
+        for sx in (1.0, -1.0):
+            for sy in (1.0, -1.0):
+                g = _mk(sx * w_a, sy * w_a, z_a)
+                a = _mk(sx * w_t, sy * w_t, z_t)
+                p1, p2 = new_nodes[g], new_nodes[a]
+                if _exists(p1, p2):
+                    continue
+                counter["n"] += 1
+                new_bars.append({
+                    "id": f"{id_prefix}_bar_{counter['n']}",
+                    "from": g,
+                    "to": a,
+                    "role": "LEG",
+                    "diagonal_topology": False,
+                    "lightning_rod_headless": True,
+                    "geometry_origin": "lightning_rod_headless",
+                    "geometry_class": "derived_parametric",
+                    "level_source": level_source_label,
+                })
+                existing.append((p1, p2))
+                generated += 1
+        layers_report.append({
+            "z_anchor": round(z_a, 1), "z_top": round(z_t, 1),
+            "w_anchor": round(w_a, 1), "w_top": round(w_t, 1),
+        })
+
+    if not layers_report:
+        return nodes, bars, {"generated": 0, "layers": [],
+                             "reason": "no_valid_layer"}
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "layers": layers_report[0] if len(layers_report) == 1 else layers_report,
+        "n_layers": len(layers_report),
+    }
+
+
 def prune_spurious_crossarm_bars(
     nodes: NodeMap,
     bars: List[dict],
