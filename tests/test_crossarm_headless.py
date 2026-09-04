@@ -204,3 +204,32 @@ def test_leg_span_survives_stitch():
     kept = [b for b in out if b.get("geometry_origin") == "leg_span_completion"]
     assert len(kept) == 1, "legspan 杆必须原样保留"
     assert rep.get("skipped", {}).get("leg_span_completion") == 1
+
+
+def test_neck_braces_and_xbrace():
+    """S11e/f 塔颈 K 撑 + 跳层 X 撑。"""
+    from traceability.solve.tower_geometry import (
+        complete_neck_braces_headless, complete_skip_level_xbrace_headless)
+    nodes = {"n1": (810.0, 810.0, 27400.0)}
+    # K 撑：三层站 → 中站上下臂 8 根
+    nn, nb, rep = complete_neck_braces_headless(
+        nodes, [], _hw_linear, [(26600.0, 27400.0, 28100.0)],
+        level_source_label="gt_canonical")
+    assert rep["generated"] == 8
+    mids = {nn[b["from"]][2] == 27400.0 or nn[b["to"]][2] == 27400.0 for b in nb
+            if b.get("geometry_origin") == "neck_brace_completion"}
+    assert all(mids), "每根 K 撑必接 27400 中站"
+    for b in nb:
+        if b.get("geometry_origin") != "neck_brace_completion": continue
+        assert b["geometry_class"] == "derived_parametric"
+        assert b["neck_brace_completion"] is True
+    # X 撑：层对 → 4 根对角
+    nn2, nb2, rep2 = complete_skip_level_xbrace_headless(
+        nodes, [], _hw_linear, [(30200.0, 31600.0)],
+        level_source_label="gt_canonical")
+    assert rep2["generated"] == 4
+    for b in nb2:
+        if b.get("geometry_origin") != "skip_level_xbrace": continue
+        f, t = nn2[b["from"]], nn2[b["to"]]
+        assert f[0] * t[0] < 0 and f[1] * t[1] < 0, "X 撑须对角（异号）"
+        assert f[2] == 31600.0 and t[2] == 30200.0

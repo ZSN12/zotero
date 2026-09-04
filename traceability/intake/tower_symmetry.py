@@ -1266,6 +1266,66 @@ def expand_4_face_symmetry_model(
                 "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
             }
 
+    # S11e：塔颈 K 形腹杆补全（ZC1 阶段 4 批次三，2026-09-05）。
+    # 05 册画线止于 ~26863，塔颈三层站 26600/27400/28100 的 K 撑
+    # （角站→正面中站→角站）全缺。neck_brace_layers: [[z_lo,z_mid,
+    # z_hi]] 三层站声明（均网格投票层），站宽 hw 锥线（残差 Δ30）。
+    _neck_layers = spec.get("neck_brace_layers") or []
+    if _neck_layers and half_width_fn is not None:
+        from ..solve.tower_geometry import complete_neck_braces_headless
+        _neck_norm: List[tuple] = []
+        for _l in _neck_layers:
+            try:
+                _neck_norm.append((float(_l[0]), float(_l[1]), float(_l[2])))
+            except (TypeError, ValueError, IndexError):
+                continue
+        face_nodes, face_bars, _neck_rep = complete_neck_braces_headless(
+            face_nodes, face_bars, half_width_fn, _neck_norm,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_nk = model.components.get("drawing_file")
+        if _df_nk is not None:
+            _df_nk.properties["neck_brace_completion"] = {
+                "generated": _neck_rep.get("generated", 0),
+                "layers": _neck_rep.get("layers", []),
+                "reason": _neck_rep.get("reason"),
+                "n_layers": len(_neck_norm),
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
+    # S11f：跳层直达 X 撑补全（ZC1 阶段 4 批次三，2026-09-05）。
+    # GT 31600→30200 直达（L=1868）穿 30900 交叉点（GT 该带无层内
+    # 杆），tpg 逐段生成 26 杆全 FP。xbrace_layers: [[z_lo,z_hi]]
+    # 声明直达层对，站宽 hw（残差 Δ30-35）。
+    _xbr_layers = spec.get("skip_level_xbrace_layers") or []
+    if _xbr_layers and half_width_fn is not None:
+        from ..solve.tower_geometry import complete_skip_level_xbrace_headless
+        _xbr_norm: List[tuple] = []
+        for _l in _xbr_layers:
+            try:
+                _xbr_norm.append((float(_l[0]), float(_l[1])))
+            except (TypeError, ValueError, IndexError):
+                continue
+        face_nodes, face_bars, _xbr_rep = complete_skip_level_xbrace_headless(
+            face_nodes, face_bars, half_width_fn, _xbr_norm,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_xb = model.components.get("drawing_file")
+        if _df_xb is not None:
+            _df_xb.properties["skip_level_xbrace"] = {
+                "generated": _xbr_rep.get("generated", 0),
+                "layers": _xbr_rep.get("layers", []),
+                "reason": _xbr_rep.get("reason"),
+                "n_layers": len(_xbr_norm),
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
     # P2 第二波（Wave 3）：拓扑后主腿节间化——已实测证伪并回退。
     # 实验（2026-09 离线 + 全管线 A/B）：
     #   * 富切点（全端点簇）切分 → 9 处悬空断裂，leg TP 82→26；
@@ -1806,6 +1866,20 @@ def expand_4_face_symmetry_model(
             # BOM 长度交叉验证（Δ10mm）。与 S11c 同口径直通 2D。
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "leg_span_completion"
+            evidence_status = "reconstructed"
+        elif b.get("neck_brace_completion"):
+            # S11e 塔颈 K 形腹杆（ZC1 阶段 4 批次三）：三层站由
+            # overlay 声明（网格投票层），站宽由体锥线 hw 外推。
+            # 与 S11 族同口径直通 2D。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "neck_brace_completion"
+            evidence_status = "reconstructed"
+        elif b.get("skip_level_xbrace"):
+            # S11f 跳层直达 X 撑（ZC1 阶段 4 批次三）：直达层对由
+            # overlay 声明，站宽由体锥线 hw 外推。与 S11 族同口径
+            # 直通 2D。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "skip_level_xbrace"
             evidence_status = "reconstructed"
         elif b.get("terminal_pair_structure"):
             # P3.5 终止层对结构生成杆：在 4 面展开后按终止层表

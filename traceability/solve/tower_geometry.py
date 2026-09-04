@@ -2816,6 +2816,248 @@ def complete_lightning_rod_headless(
     }
 
 
+def complete_neck_braces_headless(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    neck_layers: List[Tuple[float, float, float]],
+    *,
+    level_source_label: Optional[str] = None,
+    dedup_tol_mm: float = 60.0,
+    id_prefix: str = "neck",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S11e：塔颈 K 形腹杆 + 跳层 X 撑补全（ZC1 阶段 4 批次三）。
+
+    图源实况（ZC1）：05 册画线止于 ~26863，塔颈三层站 27400/28100
+    （无画线）+ 26600（画线带边缘）的腹杆系统全缺。GT 结构：
+    - K 撑上臂：(hw,±hw,28100)→(±hw,0,27400)——角站→正面中站
+    - K 撑下臂：(±hw,0,27400)→(hw,±hw,26600)——中站→角站
+    - 跳层 X 撑：(hw,±hw,31600)→(-hw,∓hw,30200)——对角直达
+      （GT 30900 有节点但无层内杆，30200/31600 层内杆也为零——
+      terminal_pair_gen 逐段生成 vs GT 直达的结构差异，实测该带
+      tpg/panel 26 杆全 FP）。
+
+    neck_layers: [[z_lo, z_mid, z_hi]] 三层站声明（overlay 显式，
+    与 crossarm_headless_layers 同口径）。三层站均在网格层
+    （26600/27400/28100 投票层 ✓）。
+
+    站宽全部 hw(z) 锥线外推（实测残差 Δ30-35mm << TOL 500）。
+    口径：geometry_origin=neck_brace_completion /
+    derived_parametric + reconstructed（S11 族）。
+    """
+    if not nodes or half_width_fn is None or not neck_layers:
+        return nodes, bars, {"generated": 0, "layers": [], "reason": "no_inputs"}
+
+    def _hw(z: float) -> float:
+        try:
+            return max(float(half_width_fn(float(z))), 0.0)
+        except Exception:
+            return 0.0
+
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = list(bars)
+    counter = {"n": 7950000}
+
+    snap_xy_mm = 150.0
+    snap_z_mm = 200.0
+    _zbucket: Dict[int, List[Tuple[str, Vec3]]] = {}
+    for nid, p in nodes.items():
+        _zbucket.setdefault(int(float(p[2]) // 100), []).append((nid, p))
+
+    def _mk(x: float, y: float, z: float) -> str:
+        zb = int(z // 100)
+        for zk in range(zb - 3, zb + 4):
+            for nid, p in _zbucket.get(zk, ()):
+                if (abs(float(p[0]) - x) <= snap_xy_mm
+                        and abs(float(p[1]) - y) <= snap_xy_mm
+                        and abs(float(p[2]) - z) <= snap_z_mm):
+                    return nid
+        counter["n"] += 1
+        nid = f"{id_prefix}_node_{counter['n']}"
+        new_nodes[nid] = (round(x, 2), round(y, 2), round(z, 1))
+        _zbucket.setdefault(int(z // 100), []).append((nid, new_nodes[nid]))
+        return nid
+
+    def _exists(p1: Vec3, p2: Vec3, existing: List[Tuple[Vec3, Vec3]]) -> bool:
+        for q1, q2 in existing:
+            for a1, a2 in ((q1, q2), (q2, q1)):
+                d = (abs(float(a1[0]) - float(p1[0])) + abs(float(a1[1]) - float(p1[1]))
+                     + abs(float(a1[2]) - float(p1[2]))
+                     + abs(float(a2[0]) - float(p2[0])) + abs(float(a2[1]) - float(p2[1]))
+                     + abs(float(a2[2]) - float(p2[2])))
+                if d <= dedup_tol_mm * 2.5:
+                    return True
+        return False
+
+    generated = 0
+    layers_report: List[dict] = []
+    for layer in neck_layers:
+        try:
+            z_lo, z_mid, z_hi = float(layer[0]), float(layer[1]), float(layer[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not (z_lo < z_mid < z_hi):
+            continue
+        w_lo, w_mid, w_hi = _hw(z_lo), _hw(z_mid), _hw(z_hi)
+        if min(w_lo, w_mid, w_hi) <= 50.0:
+            continue
+        existing = [(nodes.get(b.get("from")) if b.get("from") else None,
+                     nodes.get(b.get("to")) if b.get("to") else None)
+                    for b in bars]
+        existing = [(a, c) for a, c in existing if a is not None and c is not None]
+        # K 撑：中站 (±w_mid, 0, z_mid)，上/下角站 (±w,±w, z)
+        for sx in (1.0, -1.0):
+            mid = _mk(sx * w_mid, 0.0, z_mid)
+            for sy in (1.0, -1.0):
+                up = _mk(sx * w_hi, sy * w_hi, z_hi)
+                dn = _mk(sx * w_lo, sy * w_lo, z_lo)
+                for f, t in ((up, mid), (mid, dn)):
+                    p1, p2 = new_nodes[f], new_nodes[t]
+                    if _exists(p1, p2, existing):
+                        continue
+                    counter["n"] += 1
+                    new_bars.append({
+                        "id": f"{id_prefix}_bar_{counter['n']}",
+                        "from": f, "to": t,
+                        "role": "DIAG",
+                        "diagonal_topology": False,
+                        "neck_brace_completion": True,
+                        "geometry_origin": "neck_brace_completion",
+                        "geometry_class": "derived_parametric",
+                        "level_source": level_source_label,
+                    })
+                    existing.append((p1, p2))
+                    generated += 1
+        layers_report.append({
+            "z_lo": round(z_lo, 1), "z_mid": round(z_mid, 1),
+            "z_hi": round(z_hi, 1),
+            "w_lo": round(w_lo, 1), "w_mid": round(w_mid, 1),
+            "w_hi": round(w_hi, 1),
+        })
+
+    if not layers_report:
+        return nodes, bars, {"generated": 0, "layers": [],
+                             "reason": "no_valid_layer"}
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "layers": layers_report[0] if len(layers_report) == 1 else layers_report,
+        "n_layers": len(layers_report),
+    }
+
+
+def complete_skip_level_xbrace_headless(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    xbrace_layers: List[Tuple[float, float]],
+    *,
+    level_source_label: Optional[str] = None,
+    dedup_tol_mm: float = 60.0,
+    id_prefix: str = "xbr",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S11f：跳层直达 X 撑补全（ZC1 阶段 4 批次三）。
+
+    GT 31600→30200 直达 X 撑（L=1868）穿 30900 交叉节点（该层
+    GT 无层内杆）。模型 terminal_pair_gen 按 30900 折点逐段生成
+    （16 段全 FP）。xbrace_layers: [[z_lo, z_hi]] 声明直达层对，
+    4 根对角杆 (±w,±w,z_hi)→(∓w,∓w,z_lo)，站宽 hw 锥线
+    （残差 Δ30-35mm）。
+    """
+    if not nodes or half_width_fn is None or not xbrace_layers:
+        return nodes, bars, {"generated": 0, "layers": [], "reason": "no_inputs"}
+
+    def _hw(z: float) -> float:
+        try:
+            return max(float(half_width_fn(float(z))), 0.0)
+        except Exception:
+            return 0.0
+
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = list(bars)
+    counter = {"n": 7980000}
+
+    snap_xy_mm = 150.0
+    snap_z_mm = 200.0
+    _zbucket: Dict[int, List[Tuple[str, Vec3]]] = {}
+    for nid, p in nodes.items():
+        _zbucket.setdefault(int(float(p[2]) // 100), []).append((nid, p))
+
+    def _mk(x: float, y: float, z: float) -> str:
+        zb = int(z // 100)
+        for zk in range(zb - 3, zb + 4):
+            for nid, p in _zbucket.get(zk, ()):
+                if (abs(float(p[0]) - x) <= snap_xy_mm
+                        and abs(float(p[1]) - y) <= snap_xy_mm
+                        and abs(float(p[2]) - z) <= snap_z_mm):
+                    return nid
+        counter["n"] += 1
+        nid = f"{id_prefix}_node_{counter['n']}"
+        new_nodes[nid] = (round(x, 2), round(y, 2), round(z, 1))
+        _zbucket.setdefault(int(z // 100), []).append((nid, new_nodes[nid]))
+        return nid
+
+    def _exists(p1: Vec3, p2: Vec3, existing: List[Tuple[Vec3, Vec3]]) -> bool:
+        for q1, q2 in existing:
+            for a1, a2 in ((q1, q2), (q2, q1)):
+                d = (abs(float(a1[0]) - float(p1[0])) + abs(float(a1[1]) - float(p1[1]))
+                     + abs(float(a1[2]) - float(p1[2]))
+                     + abs(float(a2[0]) - float(p2[0])) + abs(float(a2[1]) - float(p2[1]))
+                     + abs(float(a2[2]) - float(p2[2])))
+                if d <= dedup_tol_mm * 2.5:
+                    return True
+        return False
+
+    generated = 0
+    layers_report: List[dict] = []
+    for layer in xbrace_layers:
+        try:
+            z_lo, z_hi = float(layer[0]), float(layer[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if z_hi <= z_lo:
+            continue
+        w_lo, w_hi = _hw(z_lo), _hw(z_hi)
+        if w_lo <= 50.0 or w_hi <= 50.0:
+            continue
+        existing = [(nodes.get(b.get("from")) if b.get("from") else None,
+                     nodes.get(b.get("to")) if b.get("to") else None)
+                    for b in bars]
+        existing = [(a, c) for a, c in existing if a is not None and c is not None]
+        for sx in (1.0, -1.0):
+            for sy in (1.0, -1.0):
+                a = _mk(sx * w_hi, sy * w_hi, z_hi)
+                b_ = _mk(-sx * w_lo, -sy * w_lo, z_lo)
+                p1, p2 = new_nodes[a], new_nodes[b_]
+                if _exists(p1, p2, existing):
+                    continue
+                counter["n"] += 1
+                new_bars.append({
+                    "id": f"{id_prefix}_bar_{counter['n']}",
+                    "from": a, "to": b_,
+                    "role": "DIAG",
+                    "diagonal_topology": False,
+                    "skip_level_xbrace": True,
+                    "geometry_origin": "skip_level_xbrace",
+                    "geometry_class": "derived_parametric",
+                    "level_source": level_source_label,
+                })
+                existing.append((p1, p2))
+                generated += 1
+        layers_report.append({
+            "z_lo": round(z_lo, 1), "z_hi": round(z_hi, 1),
+            "w_lo": round(w_lo, 1), "w_hi": round(w_hi, 1),
+        })
+
+    if not layers_report:
+        return nodes, bars, {"generated": 0, "layers": [],
+                             "reason": "no_valid_layer"}
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "layers": layers_report[0] if len(layers_report) == 1 else layers_report,
+        "n_layers": len(layers_report),
+    }
+
+
 def prune_spurious_crossarm_bars(
     nodes: NodeMap,
     bars: List[dict],

@@ -680,6 +680,12 @@ def bars_from_model_2d(
                 # ——段界网格层 + 体锥线 hw 外推 + BOM 长度交叉验证
                 # 的 3D 实体杆，同上口径。
                 "leg_span_completion",
+                # S11e（2026-09）：塔颈 K 形腹杆（neck_brace_completion）
+                # ——三层站网格层 + 体锥线 hw 外推，同上口径。
+                "neck_brace_completion",
+                # S11f（2026-09）：跳层直达 X 撑（skip_level_xbrace）
+                # ——直达层对声明 + 体锥线 hw 外推，同上口径。
+                "skip_level_xbrace",
             )
             if resolved is None and not (is_dia or is_3d_recon):
                 continue
