@@ -668,6 +668,11 @@ def bars_from_model_2d(
                 # 生成的全塔 3D 实体杆系（leg/xc/yc 各 4 根/对），
                 # 无 face 归属，GT 侧对应杆同样无 face 直接投影。
                 "terminal_pair_gen",
+                # S11（2026-09）：塔头无图源横担 parametric 补全杆
+                # （crossarm_truss_headless）——层位+锥线+BOM 弦长推导的
+                # 全塔 3D 实体杆（下平上拱悬臂），无 face 归属，GT 侧
+                # 对应杆无 face 直接投影，口径对称。
+                "crossarm_truss_headless",
             )
             if resolved is None and not (is_dia or is_3d_recon):
                 continue

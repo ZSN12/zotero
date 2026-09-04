@@ -1,0 +1,1416 @@
+[
+  {
+    "bar_id": "401",
+    "section": "Q345L90X6",
+    "length_mm": "8014",
+    "qty": "1",
+    "segment": "05"
+  },
+  {
+    "bar_id": "402",
+    "section": "Q345L90X6",
+    "length_mm": "8014",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "403",
+    "section": "Q345L90X6",
+    "length_mm": "8014",
+    "qty": "1",
+    "segment": "05"
+  },
+  {
+    "bar_id": "404",
+    "section": "L40X3",
+    "length_mm": "2822",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "405",
+    "section": "L40X3",
+    "length_mm": "2822",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "406",
+    "section": "L40X3",
+    "length_mm": "2793",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "407",
+    "section": "L40X3",
+    "length_mm": "2793",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "408",
+    "section": "L40X3",
+    "length_mm": "2652",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "409",
+    "section": "L40X3",
+    "length_mm": "2652",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "410",
+    "section": "L40X3",
+    "length_mm": "2516",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "411",
+    "section": "L40X3",
+    "length_mm": "2516",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "412",
+    "section": "L40X3",
+    "length_mm": "2273",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "413",
+    "section": "L40X3",
+    "length_mm": "2273",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "414",
+    "section": "L50X4",
+    "length_mm": "1500",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "415",
+    "section": "Q345L90X7",
+    "length_mm": "550",
+    "qty": "4",
+    "segment": "05"
+  },
+  {
+    "bar_id": "416",
+    "section": "-6X206",
+    "length_mm": "226",
+    "qty": "4",
+    "segment": "05"
+  },
+  {
+    "bar_id": "417",
+    "section": "L45X4",
+    "length_mm": "1374",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "418",
+    "section": "L45X4",
+    "length_mm": "1374",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "419",
+    "section": "L40X3",
+    "length_mm": "2865",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "420",
+    "section": "L40X3",
+    "length_mm": "2865",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "421",
+    "section": "L40X3",
+    "length_mm": "2722",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "422",
+    "section": "L40X3",
+    "length_mm": "2722",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "423",
+    "section": "L40X3",
+    "length_mm": "2583",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "424",
+    "section": "L40X3",
+    "length_mm": "2583",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "425",
+    "section": "L40X3",
+    "length_mm": "2449",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "426",
+    "section": "L40X3",
+    "length_mm": "2449",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "427",
+    "section": "L40X3",
+    "length_mm": "1127",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "428",
+    "section": "L40X3",
+    "length_mm": "1127",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "429",
+    "section": "L50X4",
+    "length_mm": "1500",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "430",
+    "section": "-6X191",
+    "length_mm": "200",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "431",
+    "section": "-6X187",
+    "length_mm": "190",
+    "qty": "4",
+    "segment": "05"
+  },
+  {
+    "bar_id": "432",
+    "section": "L40X4",
+    "length_mm": "2161",
+    "qty": "2",
+    "segment": "05"
+  },
+  {
+    "bar_id": "433",
+    "section": "-6X94",
+    "length_mm": "316",
+    "qty": "4",
+    "segment": "05"
+  },
+  {
+    "bar_id": "601",
+    "section": "Q345L90X7",
+    "length_mm": "6359",
+    "qty": "1",
+    "segment": "07"
+  },
+  {
+    "bar_id": "602",
+    "section": "Q345L90X7",
+    "length_mm": "6359",
+    "qty": "3",
+    "segment": "07"
+  },
+  {
+    "bar_id": "603",
+    "section": "L56X5",
+    "length_mm": "3909",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "604",
+    "section": "Q345L63X5",
+    "length_mm": "5163",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "605",
+    "section": "Q345L63X5",
+    "length_mm": "5163",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "606",
+    "section": "L40X3",
+    "length_mm": "983",
+    "qty": "8",
+    "segment": "07"
+  },
+  {
+    "bar_id": "607",
+    "section": "L40X3",
+    "length_mm": "1747",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "608",
+    "section": "L40X3",
+    "length_mm": "1747",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "609",
+    "section": "L40X3",
+    "length_mm": "1798",
+    "qty": "8",
+    "segment": "07"
+  },
+  {
+    "bar_id": "610",
+    "section": "L40X3",
+    "length_mm": "1082",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "611",
+    "section": "L40X3",
+    "length_mm": "1082",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "612",
+    "section": "L56X4",
+    "length_mm": "4511",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "613",
+    "section": "L56X4",
+    "length_mm": "4511",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "614",
+    "section": "L40X3",
+    "length_mm": "1108",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "615",
+    "section": "L40X3",
+    "length_mm": "1108",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "616",
+    "section": "L40X3",
+    "length_mm": "1428",
+    "qty": "8",
+    "segment": "07"
+  },
+  {
+    "bar_id": "617",
+    "section": "L40X3",
+    "length_mm": "1215",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "618",
+    "section": "L40X3",
+    "length_mm": "1215",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "619",
+    "section": "Q345L100X8",
+    "length_mm": "550",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "620",
+    "section": "Q345L100X7",
+    "length_mm": "550",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "621",
+    "section": "Q345-6X187",
+    "length_mm": "230",
+    "qty": "8",
+    "segment": "07"
+  },
+  {
+    "bar_id": "622",
+    "section": "-6X205",
+    "length_mm": "354",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "623",
+    "section": "L56X5",
+    "length_mm": "2714",
+    "qty": "2",
+    "segment": "07"
+  },
+  {
+    "bar_id": "624",
+    "section": "L56X5",
+    "length_mm": "2714",
+    "qty": "2",
+    "segment": "07"
+  },
+  {
+    "bar_id": "625",
+    "section": "L56X4",
+    "length_mm": "1962",
+    "qty": "2",
+    "segment": "07"
+  },
+  {
+    "bar_id": "626",
+    "section": "L45X4",
+    "length_mm": "1372",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "627",
+    "section": "-6X137",
+    "length_mm": "217",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "628",
+    "section": "-6X148",
+    "length_mm": "316",
+    "qty": "4",
+    "segment": "07"
+  },
+  {
+    "bar_id": "701",
+    "section": "Q345L80X6",
+    "length_mm": "6359",
+    "qty": "1",
+    "segment": "08"
+  },
+  {
+    "bar_id": "702",
+    "section": "Q345L80X6",
+    "length_mm": "6359",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "703",
+    "section": "Q345L80X6",
+    "length_mm": "6359",
+    "qty": "1",
+    "segment": "08"
+  },
+  {
+    "bar_id": "704",
+    "section": "L50X4",
+    "length_mm": "2224",
+    "qty": "4",
+    "segment": "08"
+  },
+  {
+    "bar_id": "705",
+    "section": "L40X3",
+    "length_mm": "2696",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "706",
+    "section": "L40X3",
+    "length_mm": "2696",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "707",
+    "section": "L40X3",
+    "length_mm": "2660",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "708",
+    "section": "L40X3",
+    "length_mm": "2660",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "709",
+    "section": "L40X3",
+    "length_mm": "2523",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "710",
+    "section": "L40X3",
+    "length_mm": "2523",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "711",
+    "section": "L40X3",
+    "length_mm": "2287",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "712",
+    "section": "L40X3",
+    "length_mm": "2287",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "713",
+    "section": "L50X4",
+    "length_mm": "1520",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "714",
+    "section": "Q345L90X7",
+    "length_mm": "550",
+    "qty": "4",
+    "segment": "08"
+  },
+  {
+    "bar_id": "715",
+    "section": "Q345L80X7",
+    "length_mm": "550",
+    "qty": "4",
+    "segment": "08"
+  },
+  {
+    "bar_id": "716",
+    "section": "-6X181",
+    "length_mm": "190",
+    "qty": "4",
+    "segment": "08"
+  },
+  {
+    "bar_id": "717",
+    "section": "-6X186",
+    "length_mm": "346",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "718",
+    "section": "-6X182",
+    "length_mm": "220",
+    "qty": "4",
+    "segment": "08"
+  },
+  {
+    "bar_id": "719",
+    "section": "L40X3",
+    "length_mm": "1320",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "720",
+    "section": "L40X3",
+    "length_mm": "1320",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "721",
+    "section": "L40X3",
+    "length_mm": "2730",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "722",
+    "section": "L40X3",
+    "length_mm": "2730",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "723",
+    "section": "L40X3",
+    "length_mm": "2591",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "724",
+    "section": "L40X3",
+    "length_mm": "2591",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "725",
+    "section": "L40X3",
+    "length_mm": "2457",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "726",
+    "section": "L40X3",
+    "length_mm": "2457",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "727",
+    "section": "L40X3",
+    "length_mm": "1131",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "728",
+    "section": "L40X3",
+    "length_mm": "1131",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "729",
+    "section": "L50X4",
+    "length_mm": "1520",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "730",
+    "section": "-6X181",
+    "length_mm": "190",
+    "qty": "4",
+    "segment": "08"
+  },
+  {
+    "bar_id": "731",
+    "section": "-6X253",
+    "length_mm": "351",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "732",
+    "section": "-6X182",
+    "length_mm": "190",
+    "qty": "4",
+    "segment": "08"
+  },
+  {
+    "bar_id": "733",
+    "section": "-6X191",
+    "length_mm": "201",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "734",
+    "section": "L45X4",
+    "length_mm": "1528",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "735",
+    "section": "L45X4",
+    "length_mm": "1528",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "736",
+    "section": "L40X4",
+    "length_mm": "1110",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "737",
+    "section": "L40X3",
+    "length_mm": "784",
+    "qty": "4",
+    "segment": "08"
+  },
+  {
+    "bar_id": "738",
+    "section": "-6X126",
+    "length_mm": "194",
+    "qty": "4",
+    "segment": "08"
+  },
+  {
+    "bar_id": "739",
+    "section": "-6X144",
+    "length_mm": "302",
+    "qty": "4",
+    "segment": "08"
+  },
+  {
+    "bar_id": "740",
+    "section": "L40X4",
+    "length_mm": "2181",
+    "qty": "2",
+    "segment": "08"
+  },
+  {
+    "bar_id": "741",
+    "section": "-6X94",
+    "length_mm": "302",
+    "qty": "4",
+    "segment": "08"
+  },
+  {
+    "bar_id": "801",
+    "section": "Q345L90X6",
+    "length_mm": "8967",
+    "qty": "1",
+    "segment": "09"
+  },
+  {
+    "bar_id": "802",
+    "section": "Q345L90X6",
+    "length_mm": "8967",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "803",
+    "section": "Q345L90X6",
+    "length_mm": "8967",
+    "qty": "1",
+    "segment": "09"
+  },
+  {
+    "bar_id": "804",
+    "section": "L50X4",
+    "length_mm": "2490",
+    "qty": "4",
+    "segment": "09"
+  },
+  {
+    "bar_id": "805",
+    "section": "L45X4",
+    "length_mm": "3023",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "806",
+    "section": "L45X4",
+    "length_mm": "3023",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "807",
+    "section": "L40X3",
+    "length_mm": "2975",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "808",
+    "section": "L40X3",
+    "length_mm": "2975",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "809",
+    "section": "L40X3",
+    "length_mm": "2821",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "810",
+    "section": "L40X3",
+    "length_mm": "2821",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "811",
+    "section": "L40X3",
+    "length_mm": "2674",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "812",
+    "section": "L40X3",
+    "length_mm": "2674",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "813",
+    "section": "L40X3",
+    "length_mm": "2417",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "814",
+    "section": "L40X3",
+    "length_mm": "2417",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "815",
+    "section": "L50X4",
+    "length_mm": "1500",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "816",
+    "section": "Q345L100X7",
+    "length_mm": "550",
+    "qty": "4",
+    "segment": "09"
+  },
+  {
+    "bar_id": "817",
+    "section": "Q345L90X7",
+    "length_mm": "550",
+    "qty": "4",
+    "segment": "09"
+  },
+  {
+    "bar_id": "818",
+    "section": "-6X187",
+    "length_mm": "190",
+    "qty": "4",
+    "segment": "09"
+  },
+  {
+    "bar_id": "819",
+    "section": "-6X191",
+    "length_mm": "344",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "820",
+    "section": "-6X206",
+    "length_mm": "234",
+    "qty": "4",
+    "segment": "09"
+  },
+  {
+    "bar_id": "821",
+    "section": "L45X4",
+    "length_mm": "1481",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "822",
+    "section": "L45X4",
+    "length_mm": "1481",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "823",
+    "section": "L40X3",
+    "length_mm": "3053",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "824",
+    "section": "L40X3",
+    "length_mm": "3053",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "825",
+    "section": "L40X3",
+    "length_mm": "2897",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "826",
+    "section": "L40X3",
+    "length_mm": "2897",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "827",
+    "section": "L40X3",
+    "length_mm": "2747",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "828",
+    "section": "L40X3",
+    "length_mm": "2747",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "829",
+    "section": "L40X3",
+    "length_mm": "2603",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "830",
+    "section": "L40X3",
+    "length_mm": "2603",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "831",
+    "section": "L40X4",
+    "length_mm": "1202",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "832",
+    "section": "L40X4",
+    "length_mm": "1202",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "833",
+    "section": "L50X4",
+    "length_mm": "1500",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "834",
+    "section": "-6X190",
+    "length_mm": "187",
+    "qty": "4",
+    "segment": "09"
+  },
+  {
+    "bar_id": "835",
+    "section": "-6X352",
+    "length_mm": "263",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "836",
+    "section": "-6X187",
+    "length_mm": "190",
+    "qty": "4",
+    "segment": "09"
+  },
+  {
+    "bar_id": "837",
+    "section": "-6X195",
+    "length_mm": "200",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "838",
+    "section": "L50X4",
+    "length_mm": "1731",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "839",
+    "section": "L50X4",
+    "length_mm": "1731",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "840",
+    "section": "L40X4",
+    "length_mm": "1253",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "841",
+    "section": "L40X3",
+    "length_mm": "875",
+    "qty": "4",
+    "segment": "09"
+  },
+  {
+    "bar_id": "842",
+    "section": "-6X127",
+    "length_mm": "198",
+    "qty": "4",
+    "segment": "09"
+  },
+  {
+    "bar_id": "843",
+    "section": "-6X144",
+    "length_mm": "316",
+    "qty": "4",
+    "segment": "09"
+  },
+  {
+    "bar_id": "844",
+    "section": "L40X4",
+    "length_mm": "2161",
+    "qty": "2",
+    "segment": "09"
+  },
+  {
+    "bar_id": "845",
+    "section": "-6X94",
+    "length_mm": "316",
+    "qty": "4",
+    "segment": "09"
+  },
+  {
+    "bar_id": "901",
+    "section": "L50X4",
+    "length_mm": "2820",
+    "qty": "4",
+    "segment": "10"
+  },
+  {
+    "bar_id": "902",
+    "section": "L50X4",
+    "length_mm": "3394",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "903",
+    "section": "L50X4",
+    "length_mm": "3394",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "904",
+    "section": "L45X4",
+    "length_mm": "3222",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "905",
+    "section": "L45X4",
+    "length_mm": "3222",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "906",
+    "section": "L56X4",
+    "length_mm": "2380",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "907",
+    "section": "Q345L100X7",
+    "length_mm": "550",
+    "qty": "4",
+    "segment": "10"
+  },
+  {
+    "bar_id": "908",
+    "section": "-6X187",
+    "length_mm": "192",
+    "qty": "4",
+    "segment": "10"
+  },
+  {
+    "bar_id": "909",
+    "section": "-6X184",
+    "length_mm": "341",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "910",
+    "section": "-6X187",
+    "length_mm": "195",
+    "qty": "4",
+    "segment": "10"
+  },
+  {
+    "bar_id": "911",
+    "section": "L45X4",
+    "length_mm": "1669",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "912",
+    "section": "L45X4",
+    "length_mm": "1669",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "913",
+    "section": "L45X4",
+    "length_mm": "3420",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "914",
+    "section": "L45X4",
+    "length_mm": "3420",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "915",
+    "section": "L45X4",
+    "length_mm": "1581",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "916",
+    "section": "L45X4",
+    "length_mm": "1581",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "917",
+    "section": "L56X4",
+    "length_mm": "2380",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "918",
+    "section": "-6X190",
+    "length_mm": "187",
+    "qty": "4",
+    "segment": "10"
+  },
+  {
+    "bar_id": "919",
+    "section": "-6X256",
+    "length_mm": "346",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "920",
+    "section": "-6X187",
+    "length_mm": "190",
+    "qty": "4",
+    "segment": "10"
+  },
+  {
+    "bar_id": "921",
+    "section": "-6X199",
+    "length_mm": "266",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "922",
+    "section": "L50X4",
+    "length_mm": "1964",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "923",
+    "section": "L50X4",
+    "length_mm": "1964",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "924",
+    "section": "L45X4",
+    "length_mm": "1418",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "925",
+    "section": "L40X3",
+    "length_mm": "992",
+    "qty": "4",
+    "segment": "10"
+  },
+  {
+    "bar_id": "926",
+    "section": "-6X127",
+    "length_mm": "198",
+    "qty": "4",
+    "segment": "10"
+  },
+  {
+    "bar_id": "927",
+    "section": "-6X144",
+    "length_mm": "316",
+    "qty": "4",
+    "segment": "10"
+  },
+  {
+    "bar_id": "928",
+    "section": "L50X4",
+    "length_mm": "1633",
+    "qty": "4",
+    "segment": "10"
+  },
+  {
+    "bar_id": "929",
+    "section": "L40X4",
+    "length_mm": "2451",
+    "qty": "2",
+    "segment": "10"
+  },
+  {
+    "bar_id": "930",
+    "section": "-6X134",
+    "length_mm": "213",
+    "qty": "4",
+    "segment": "10"
+  },
+  {
+    "bar_id": "8867",
+    "section": "",
+    "length_mm": "3",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "3359",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "2315",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "1188",
+    "section": "",
+    "length_mm": "8",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "4012",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "1561",
+    "section": "",
+    "length_mm": "8",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "3806",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "1432",
+    "section": "",
+    "length_mm": "8",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "3497",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "1302",
+    "section": "",
+    "length_mm": "8",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "2380",
+    "section": "",
+    "length_mm": "2",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "550",
+    "section": "",
+    "length_mm": "8",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "195",
+    "section": "",
+    "length_mm": "8",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "343",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "205",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "200",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "266",
+    "section": "",
+    "length_mm": "2",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "2325",
+    "section": "",
+    "length_mm": "2",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "1687",
+    "section": "",
+    "length_mm": "2",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "1182",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "217",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "316",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "2451",
+    "section": "",
+    "length_mm": "2",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "1633",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  },
+  {
+    "bar_id": "212",
+    "section": "",
+    "length_mm": "4",
+    "qty": "1",
+    "segment": "12"
+  }
+]

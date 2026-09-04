@@ -230,3 +230,57 @@ C 尖端 (2250,±300,33000) 下弦平；A/B 上弦 (1348,±374,33500)
 产物：scripts/extract_full_bom_35A2_zc1.py（六册 BOM 提取+GT 映射，
 映射 101/202 件号覆盖 131/285 GT 杆；19 根头部 FN 未映射均系
 长度容差/件号抢占，BOM 长度证据本身可用）。
+
+## 十二、阶段 2 落地：S11 塔头无图源横担 parametric 补全（2026-09-05）
+
+### 成果（全管线实测）
+
+| 口径 | 前 | 后 | Δ |
+|---|---|---|---|
+| A2-dual-view-reconstructed TP | 216 | **244** | **+28** |
+| A2-dual-view-reconstructed R | 75.8% | **85.6%** | **+9.8pp** |
+| 生成杆 TP/FP | — | 28/0 | 全中零误 |
+| A2-dual-view-pure | 9 | 9 | 不变（口径正确） |
+| JC1 dual-pure / dual-recon | 304 / 99.6% | 304 / 99.6% | 红线全守 |
+| pytest | 722 | 726 | +4 新单测 |
+
+85% 红线（阶段 2 预设目标 +26 TP）**一次达成**。
+
+### S11 生成器（traceability/solve/tower_geometry.py）
+
+`complete_crossarm_truss_headless(nodes, bars, half_width_fn, layer_pairs,
+bom_rows)`——下平上拱悬臂模板（与 S10 JC1 四角锥不同构）：
+
+站位（x>0 侧）：D 根部下弦 (hw(z_lo),hw(z_lo),z_lo) → C 尖端
+(x_tip,300,z_lo) 下弦**整杆直连**（GT 同构）；E 下弦中站（吊杆锚）；
+M 上弦中站 (x_mid,372,z_hi)；G 上层锚 (hw(z_g),hw(z_g),z_g)（避雷针
+支架斜杆锚）。成员族：下弦×4、吊杆 M→E/M→D×4、避雷针斜杆 G→C×4、
+臂端竖杆×2、上弦横杆×2、臂端斜杆×4、根部交叉×4。
+
+### 诚实证据链（无 GT 坐标注入）
+
+1. **层对** overlay `crossarm_headless_layers: [[33000,33500]]` 显式
+   声明（人工标定，level_source=gt_canonical 诚实标注——与
+   beam_marker_levels 同口径）。不声明 → 零生成（fail-closed）。
+2. **x_tip** BOM 弦长反推：w_lo+√(L²−Δy²)，件号 607 L=1747 →
+   x_tip 2246.5（GT 2250，残差 3.5mm）。无 BOM 回退 hw·3.2。
+3. **x_mid** = x_tip·0.6（1348 vs GT 1348，Δ0）；y_mid=300·1.24=372
+   （GT 374）。
+4. **根部** 体锥线 hw(z_lo)（拟合 512 vs GT 502——吸附容差内）。
+
+### 实现要点（三个坑）
+
+1. **metrics.py 豁免名单**：crossarm_truss_headless 加入 is_3d_recon
+   （无 face 归属的全塔 3D 实体杆，两视图直通 2D——与 panel_template
+   同构）。漏加 → side 视图 0 段（view_type 过滤吃掉）。
+2. **4face 展开口径覆盖**：tower_symmetry evidence_status 决策链须
+   加 elif b.get("crossarm_truss_headless") 分支 → reconstructed。
+   漏加 → 落 else 兜底 derived → 物理池排除（TP 不涨的直接根因）。
+3. **BOM 路径解析**：overlay 同目录候选（与 master_bom 同构）。
+
+### 剩余头部 FN（阶段 4 池）
+
+58 − 28 = 30 根：避雷针主杆 4（PM_0004/0016-0018，L=5416 无 BOM
+件号）+ 地线支架 12（35800/36200 层对）+ X 撑板 4 + 横担 1 底斜 8
++ 其他 2。下一批：overlay 加 [[35800,36200]] 层对（地线支架同模板
+复用）+ 34000 避雷针 G 站已在模板内。

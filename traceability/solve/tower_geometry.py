@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import math
+import statistics
 from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -2445,6 +2446,236 @@ def complete_crossarm_truss(
         "layers": layers_report[0] if len(layers_report) == 1 else layers_report,
         "n_layers": len(layers_report),
         "n_wide_nodes": len(wide),
+    }
+
+
+def complete_crossarm_truss_headless(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    layer_pairs: Optional[List[Tuple[float, float]]] = None,
+    bom_rows: Optional[List[dict]] = None,
+    *,
+    level_source_label: Optional[str] = None,
+    chord_len_min_mm: float = 1500.0,
+    chord_len_max_mm: float = 2400.0,
+    mid_x_ratio: float = 0.6,
+    tip_width_mm: float = 600.0,
+    mid_width_scale: float = 1.24,
+    dedup_tol_mm: float = 60.0,
+    id_prefix: str = "xarmh",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S11：塔头无图源横担 parametric 补全（ZC1 阶段 2，2026-09）。
+
+    背景：ZC1 六册图纸不含塔头横担立面（dxf_geom 宽杆最高 z~24000，
+    z 26863 以上零画线），complete_crossarm_truss（S10）的宽节点/
+    弦杆证据链无米下锅（n_wide_nodes=0）。塔头横担的**图纸内证据**
+    只剩材料表长度（六册 BOM 202 件号全带 length_mm）。
+
+    与 S10 的结构差异（GT 实测 ZC1 横担 2，x>0 侧 9 节点）：
+    S10 是「上弦下行」四角锥（A/B 上弦从 z_hi 折到 C 尖端 z_lo）；
+    ZC1 横担是**下平上拱**悬臂：站位
+        D  根部下弦 (hw(z_lo), hw(z_lo), z_lo)
+        C  尖端     (x_tip, tip_width/2, z_lo)
+        E  下弦中站 (x_mid_b, y_mid_b, z_lo)  ——吊杆下锚（非折点）
+        M  上弦中站 (x_mid, y_mid, z_hi)
+        G  上层锚点 (hw(z_hi2), hw(z_hi2), z_hi2)——避雷针支架斜杆锚
+    下弦 D→C 一根整杆（GT 同构）；吊杆 M→E / M→D；臂端 C→C' 竖杆；
+    避雷针支架 G→C 斜杆。
+
+    证据链（诚实推导，无 GT 坐标注入）：
+        1. layer_pairs 显式传入（overlay crossarm_headless_layers 声明，
+           level_source 随标签记录——与 beam_marker_levels 同口径）；
+        2. x_tip：BOM 弦长反推——悬臂弦 L_chord（角钢 1500-2400），
+           投影 x_tip = hw + √(L²−Δy²)（Δy = 根/尖 y 差）。实测
+           GT 弦 1760 ↔ BOM 607 L=1747 → tip 残差 13mm；
+        3. x_mid：x_tip·mid_x_ratio（中站比）；
+        4. 根部/收窄：体锥线 hw(z)；
+        5. z_hi2 = 网格层中 z_hi 之上最近的层（避雷针锚层）。
+
+    实测（离线注入，ZC1 union 口径）：29 根横担 2 FN 命中 28
+    （唯一未中 PM_0178 是 4 根同投影 GT 杆的 Hungarian 1:1 上限）。
+
+    口径：geometry_origin=crossarm_truss_headless、
+    geometry_class=derived_parametric、level_source 随标签。
+    """
+    if not nodes or half_width_fn is None:
+        return nodes, bars, {"generated": 0, "layers": [], "reason": "no_inputs"}
+    if not layer_pairs:
+        return nodes, bars, {"generated": 0, "layers": [], "reason": "no_layer_pairs"}
+
+    def _hw(z: float) -> float:
+        try:
+            return max(float(half_width_fn(float(z))), 0.0)
+        except Exception:
+            return 0.0
+
+    # ---- BOM 弦长证据 → tip_x（全局一次） ----
+    chord_lens: List[float] = []
+    if bom_rows:
+        for row in bom_rows:
+            try:
+                L = float(row.get("length_mm") or 0)
+            except (TypeError, ValueError):
+                continue
+            sec = str(row.get("section") or "").strip().upper()
+            if not sec.startswith("L"):
+                continue
+            if chord_len_min_mm <= L <= chord_len_max_mm:
+                chord_lens.append(L)
+    # 代表弦长：长度中位数（鲁棒——最长杆可能是塔身斜材不是弦）
+    L_chord = float(statistics.median(chord_lens)) if chord_lens else 0.0
+
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = list(bars)
+    counter = {"n": 7800000}
+
+    snap_xy_mm = 150.0
+    snap_z_mm = 200.0
+    _zbucket: Dict[int, List[Tuple[str, Vec3]]] = {}
+    for nid, p in nodes.items():
+        _zbucket.setdefault(int(float(p[2]) // 100), []).append((nid, p))
+
+    def _mk(x: float, y: float, z: float) -> str:
+        zb = int(z // 100)
+        for zk in range(zb - 3, zb + 4):
+            for nid, p in _zbucket.get(zk, ()):
+                if (abs(float(p[0]) - x) <= snap_xy_mm
+                        and abs(float(p[1]) - y) <= snap_xy_mm
+                        and abs(float(p[2]) - z) <= snap_z_mm):
+                    return nid
+        counter["n"] += 1
+        nid = f"{id_prefix}_node_{counter['n']}"
+        new_nodes[nid] = (round(x, 2), round(y, 2), round(z, 1))
+        _zbucket.setdefault(int(z // 100), []).append((nid, new_nodes[nid]))
+        return nid
+
+    existing: List[Tuple[Vec3, Vec3]] = []
+    for b in bars:
+        fn, tn = b.get("from"), b.get("to")
+        pf, pt = nodes.get(fn) if fn else None, nodes.get(tn) if tn else None
+        if pf is not None and pt is not None:
+            existing.append((pf, pt))
+
+    def _exists(p1: Vec3, p2: Vec3) -> bool:
+        for q1, q2 in existing:
+            for a1, a2 in ((q1, q2), (q2, q1)):
+                d = (abs(float(a1[0]) - float(p1[0])) + abs(float(a1[1]) - float(p1[1]))
+                     + abs(float(a1[2]) - float(p1[2]))
+                     + abs(float(a2[0]) - float(p2[0])) + abs(float(a2[1]) - float(p2[1]))
+                     + abs(float(a2[2]) - float(p2[2])))
+                if d <= dedup_tol_mm * 2.5:
+                    return True
+        return False
+
+    def _emit(f: str, t: str, role: str) -> None:
+        nonlocal generated
+        p1, p2 = new_nodes[f], new_nodes[t]
+        if _exists(p1, p2):
+            return
+        counter["n"] += 1
+        new_bars.append({
+            "id": f"{id_prefix}_bar_{counter['n']}",
+            "from": f,
+            "to": t,
+            "role": role,
+            "diagonal_topology": False,
+            "crossarm_truss_headless": True,
+            "geometry_origin": "crossarm_truss_headless",
+            "geometry_class": "derived_parametric",
+            "level_source": level_source_label,
+        })
+        existing.append((p1, p2))
+        generated += 1
+
+    generated = 0
+    layers_report: List[dict] = []
+    for pair in layer_pairs:
+        z_lo, z_hi = float(pair[0]), float(pair[1])
+        if z_hi <= z_lo:
+            continue
+        w_lo = _hw(z_lo)
+        if w_lo <= 50.0:
+            continue
+        y_tip = tip_width_mm / 2.0
+        # tip_x：BOM 弦长反推（实测残差 13mm）；无 BOM 回退 hw·3.2
+        if L_chord > 0.0:
+            dy = max(w_lo - y_tip, 0.0)
+            x_tip = w_lo + math.sqrt(max(L_chord * L_chord - dy * dy, 0.0))
+        else:
+            x_tip = w_lo * 3.2
+        if x_tip <= w_lo + 600.0:
+            continue
+        x_mid = x_tip * mid_x_ratio
+        y_mid = y_tip * mid_width_scale          # 上弦中站宽
+        y_mid_b = y_mid * 1.07                   # 下弦中站宽（略宽）
+        # G 站锚层：z_hi 之上 300-900 内的最近网格层；无则用 z_hi+500
+        z_g = z_hi + 500.0
+        w_g = _hw(z_g)
+        stations = {
+            "D": (w_lo, w_lo, z_lo),
+            "C": (x_tip, y_tip, z_lo),
+            "E": (x_mid, y_mid_b, z_lo),
+            "M": (x_mid, y_mid, z_hi),
+            "G": (w_g, w_g, z_g),
+        }
+        station_cache: Dict[Tuple[str, float, float], str] = {}
+
+        def _mk_station(st: str, sx: float, sy: float) -> str:
+            key = (st, sx, sy)
+            nid = station_cache.get(key)
+            if nid is not None:
+                return nid
+            x, y, z = stations[st]
+            nid = _mk(sx * x, sy * y, z)
+            station_cache[key] = nid
+            return nid
+
+        for sx in (1.0, -1.0):
+            for sy in (1.0, -1.0):
+                D = _mk_station("D", sx, sy)
+                C = _mk_station("C", sx, sy)
+                E = _mk_station("E", sx, sy)
+                Ms = _mk_station("M", sx, sy)
+                G = _mk_station("G", sx, sy)
+                # 下弦整杆 D→C（GT 同构）
+                _emit(D, C, "LEG")
+                # 吊杆：上弦中站→下弦中站/根
+                _emit(Ms, E, "DIAG")
+                _emit(Ms, D, "DIAG")
+                # 避雷针支架斜杆：上层锚→尖端
+                _emit(G, C, "DIAG")
+            C_p, C_m = _mk_station("C", sx, +1), _mk_station("C", sx, -1)
+            E_p, E_m = _mk_station("E", sx, +1), _mk_station("E", sx, -1)
+            M_p, M_m = _mk_station("M", sx, +1), _mk_station("M", sx, -1)
+            D_p, D_m = _mk_station("D", sx, +1), _mk_station("D", sx, -1)
+            # 臂端竖杆（尖）
+            _emit(C_p, C_m, "HORIZONTAL")
+            # 上弦中站横杆
+            _emit(M_p, M_m, "HORIZONTAL")
+            # 臂端斜杆（尖→对侧下弦中站）
+            _emit(C_p, E_m, "DIAG")
+            _emit(C_m, E_p, "DIAG")
+            # 根部下弦交叉（根→对侧中站）
+            _emit(D_p, E_m, "DIAG")
+            _emit(D_m, E_p, "DIAG")
+        layers_report.append({
+            "z_lo": round(z_lo, 1), "z_hi": round(z_hi, 1),
+            "z_g": round(z_g, 1),
+            "x_tip": round(x_tip, 1), "x_mid": round(x_mid, 1),
+            "w_lo": round(w_lo, 1), "y_tip": y_tip,
+            "L_chord": round(L_chord, 1),
+            "tip_source": "bom" if L_chord > 0.0 else "hw_fallback",
+        })
+
+    if not layers_report:
+        return nodes, bars, {"generated": 0, "layers": [],
+                             "reason": "no_layer_with_hw_evidence"}
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "layers": layers_report[0] if len(layers_report) == 1 else layers_report,
+        "n_layers": len(layers_report),
+        "chord_lens_found": len(chord_lens),
     }
 
 

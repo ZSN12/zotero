@@ -1145,6 +1145,57 @@ def expand_4_face_symmetry_model(
                 "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
             }
 
+    # S11：塔头无图源横担 parametric 补全（ZC1 阶段 2，2026-09-05）。
+    # ZC1 六册图纸不含塔头横担立面（dxf_geom 宽杆最高 z~24000），S10
+    # 证据链无米下锅。overlay 显式声明 crossarm_headless_layers（层对
+    # z_lo/z_hi，人工标定——与 beam_marker_levels 同口径，level_source
+    # 诚实标注），几何仍从体锥线 hw + BOM 弦长反推（图纸内证据）。
+    # 离线实测（ZC1 union）：29 根横担 2 FN 命中 28（唯一未中是
+    # 4 根同投影 GT 杆的 Hungarian 1:1 上限）。
+    _xarmh_pairs = spec.get("crossarm_headless_layers") or []
+    if _xarmh_pairs and half_width_fn is not None:
+        from ..solve.tower_geometry import complete_crossarm_truss_headless
+        _bom_rows = None
+        _bom_path = spec.get("crossarm_headless_bom")
+        if _bom_path:
+            from pathlib import Path as _P
+            _cands = [_P(_bom_path)]
+            # overlay 同目录（相对 overlay 的引用——与 master_bom 解析同构）
+            if overlay is not None and not isinstance(overlay, dict):
+                _cands.append(_P(overlay).parent / _bom_path)
+            _cands.append(_P(__file__).resolve().parent.parent.parent / _bom_path)
+            _pb = next((c for c in _cands if c.exists()), None)
+            if _pb is not None:
+                import json as _json
+                try:
+                    _bom_rows = _json.loads(_pb.read_text(encoding="utf-8"))
+                except Exception:
+                    _bom_rows = None
+        _pairs_norm: List[tuple] = []
+        for _p in _xarmh_pairs:
+            try:
+                _pairs_norm.append((float(_p[0]), float(_p[1])))
+            except (TypeError, ValueError, IndexError):
+                continue
+        face_nodes, face_bars, _xarmh_rep = complete_crossarm_truss_headless(
+            face_nodes, face_bars, half_width_fn, _pairs_norm,
+            bom_rows=_bom_rows,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+            tip_width_mm=float(spec.get("crossarm_truss_tip_width_mm", 600.0)),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_xarmh = model.components.get("drawing_file")
+        if _df_xarmh is not None:
+            _df_xarmh.properties["crossarm_truss_headless"] = {
+                "generated": _xarmh_rep.get("generated", 0),
+                "layers": _xarmh_rep.get("layers", []),
+                "reason": _xarmh_rep.get("reason"),
+                "n_pairs": len(_pairs_norm),
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
     # P2 第二波（Wave 3）：拓扑后主腿节间化——已实测证伪并回退。
     # 实验（2026-09 离线 + 全管线 A/B）：
     #   * 富切点（全端点簇）切分 → 9 处悬空断裂，leg TP 82→26；
@@ -1663,6 +1714,14 @@ def expand_4_face_symmetry_model(
             # 确定性重建物理杆，与 panel_template_completion 同口径。
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "crossarm_truss_completion"
+            evidence_status = "reconstructed"
+        elif b.get("crossarm_truss_headless"):
+            # S11 塔头无图源横担 parametric 杆（ZC1 阶段 2）：层对由
+            # overlay 显式声明（level_source 诚实标注），几何从体锥线
+            # hw + BOM 弦长反推（图纸内证据）。确定性重建物理杆，与
+            # S10 同口径直通 2D（无 face 归属）。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "crossarm_truss_headless"
             evidence_status = "reconstructed"
         elif b.get("terminal_pair_structure"):
             # P3.5 终止层对结构生成杆：在 4 面展开后按终止层表

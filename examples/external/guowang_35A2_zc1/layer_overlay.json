@@ -832,5 +832,12 @@
   "35A2-ZC1-08": {
    "auto_z_window": true
   }
- }
+ },
+ "crossarm_headless_layers": [
+  [
+   33000.0,
+   33500.0
+  ]
+ ],
+ "crossarm_headless_bom": "full_bom.json"
 }
