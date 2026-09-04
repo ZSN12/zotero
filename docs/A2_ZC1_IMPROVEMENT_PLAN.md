@@ -502,3 +502,27 @@ S11 族六生成器（crossarm/lrod/legspan/neck/xbrace）在生产口径
 （GT 平台层注入关闭）下 **66/66 全 TP 零 FP**。production
 dual-recon 122 TP 中 S11 族占 66（54%）——生产口径最大贡献者。
 双口径（canonical 94.7% / production 42.8%）全部通过验证。
+
+## 十六、外部审计修正（2026-09-05，ZCode 独立复核）
+
+对 S11 族 66 根生成杆做 3D 端点和独立匹配复核（与评测器同语义
+endpoint_sum<500，对 GT 全表 285 杆匈牙利 1:1）：
+
+- **62/66 全 3D TP**；4 根 S11f 跳层 X 撑（4f_xbr_bar_7980001-0004）
+  3D 成本 1359mm——一端 ±9mm 几乎精确，**另一端 y 偏 ±1331mm、
+  z 偏 200mm**。它们在官方口径计入 TP 是因为 front 投影（x,z）
+  不可见 y 深度（front 成本 210<500）；side 视图成本 1355 不命中。
+- 因此 **十五.1 的「66/66 全 TP 零 FP」与十二.5 的「hw 站宽残差
+  Δ30-35」对 S11f 批次不成立**（残差 Δ30-35 只对首端成立；末端的
+  1331mm 说明 GT X 撑板的对角端不在 hw 锥线面上，生成器的站位
+  假设与 GT 板结构不同构）。诚实呈报应为：S11 族 3D 全 TP
+  62/66，S11f 4 根为 front 单视图命中（宽度未验证）。
+- 270 TP 官方数字本身复核无误（口径冻结、对 recognized 杆同权），
+  但若按 3D 严格口径，R 94.7% → 93.3%（266/285）。
+- 待办（移交执行会话）：① S11f 末端 y 取值改为 X 撑板实际连接
+  几何（板边/半环中心）或声明宽度未验证；② 5 个 S11 overlay 键
+  （crossarm_headless_layers / lightning_rod_layers / leg_span_layers /
+  neck_brace_layers / skip_level_xbrace_layers）登记进 versioning.py
+  gt_injected.surfaces（z-only、网格投票层 + 人工圈选 provenance），
+  现状未登记；③ ZC1 跑批产物补 level_grid_validation.json（设计稿
+  §5 已定义，当前「层对 ∈ 投票网格」只有文档断言、无产物可复核）。
