@@ -180,6 +180,52 @@ def _layer_hit(layer: str, names: List[str]) -> bool:
     return any(n in norm for n in fuzzy)
 
 
+def _side_extra_bar_layers_cfg(
+    stem: str,
+    overlay: Optional[str | Path | dict] = None,
+) -> Optional[Tuple[List[str], float, Dict]]:
+    """02 侧视专项：读取 overlay 的 side_extra_bar_layers 配置。
+
+    返回 (补充图层列表, 最小物理长度 mm, side region 几何 dict) 或
+    None（未声明/本 stem 无 side region）。region dict 需含
+    x0/x1/y0/y1/origin_x/origin_y/scale_y——由 view_regions 求得，
+    未声明 origin 的用 region 边界推（x0/y0 为原点兜底）。
+    """
+    from .tower_spec import load_tower_spec
+    ov = load_tower_spec(overlay) if overlay else None
+    if not isinstance(ov, dict):
+        return None
+    extra = ov.get("side_extra_bar_layers")
+    if not isinstance(extra, dict):
+        return None
+    layers = [str(x).strip() for x in (extra.get("layers") or []) if str(x).strip()]
+    if not layers:
+        return None
+    min_mm = float(extra.get("min_len_mm") or 100.0)
+    stems = extra.get("stems") or None
+    if stems is not None:
+        stems = {str(s) for s in stems}
+        if stem not in stems:
+            return None
+    sreg = None
+    for r in view_regions(stem, overlay=overlay):
+        if str(r.get("kind") or "").lower() == "side":
+            sreg = r
+            break
+    if sreg is None:
+        return None
+    xs = [float(v) for v in (sreg.get("region") or [0, 0, 0, 0])[:2]] or [0.0, 0.0]
+    ys = [float(v) for v in (sreg.get("region") or [0, 0, 0, 0])[2:4]] or [0.0, 0.0]
+    geom = {
+        "x0": min(xs), "x1": max(xs),
+        "y0": min(ys), "y1": max(ys),
+        "origin_x": float(sreg.get("origin", [0, 0])[0] if sreg.get("origin") else min(xs)),
+        "origin_y": float(sreg.get("origin", [0, 0])[1] if sreg.get("origin") else min(ys)),
+        "scale_y": float(sreg.get("scale_y") or sreg.get("scale") or 20.0),
+    }
+    return layers, min_mm, geom
+
+
 def _flatten_modelspace_entities(msp) -> List:
     """展开模型空间实体：INSERT 递归展开为 LINE/LWPOLYLINE/TEXT 等虚拟实体。
 
@@ -1547,6 +1593,51 @@ def extract_tower_from_dxf(
                     "end": (pts[i + 1][0], pts[i + 1][1]),
                     "layer": layer,
                 })
+
+    # 02 侧视专项（2026-09-05）：侧立面图层补充收集。国网 02 册塔底段
+    # 主斜杆/横担远弦画在 layer 0（不在 bar_layers_by_stem=['1','4']），
+    # 实测 side region 内 |view_x|>500 的结构线约 60 条被图层门拦掉
+    # （GT y ±606-725 塔底斜杆无图源）。overlay 声明
+    # side_extra_bar_layers + side_extra_min_len_mm 时，对两端都落在
+    # side region 内、图层命中补充集、图面长度达门槛的 LINE 追加进
+    # raw_segments——空间+长度双重白名单，不整体放开图层
+    # （全局放开实测 P 62.8→58.2，-4.6pp 不可接受）。
+    _side_extra = _side_extra_bar_layers_cfg(stem, overlay=layer_map_path)
+    if _side_extra is not None:
+        _ex_layers, _ex_min_mm, _sreg = _side_extra
+        _ox, _oy = float(_sreg.get("origin_x")), float(_sreg.get("origin_y"))
+        _sc = float(_sreg.get("scale_y") or 20.0)
+        _x0, _x1 = float(_sreg["x0"]), float(_sreg["x1"])
+        _y0, _y1 = float(_sreg["y0"]), float(_sreg["y1"])
+        _min_draw = float(_ex_min_mm) / max(_sc, 1e-6)
+        _have = {seg.get("handle") for seg in raw_segments}
+        _extra_n = 0
+        for e in _flatten_modelspace_entities(msp):
+            if e.dxftype() != "LINE":
+                continue
+            layer = getattr(e.dxf, "layer", "0")
+            if not _layer_hit(layer, _ex_layers):
+                continue
+            if e.dxf.handle in _have:
+                continue
+            s = (e.dxf.start.x, e.dxf.start.y)
+            t = (e.dxf.end.x, e.dxf.end.y)
+            if not (_x0 <= s[0] <= _x1 and _y0 <= s[1] <= _y1
+                    and _x0 <= t[0] <= _x1 and _y0 <= t[1] <= _y1):
+                continue
+            if math.hypot(t[0] - s[0], t[1] - s[1]) < _min_draw:
+                continue
+            raw_segments.append({
+                "handle": e.dxf.handle,
+                "start": s,
+                "end": t,
+                "layer": layer,
+                "side_extra_layer": True,
+            })
+            _extra_n += 1
+        if _extra_n:
+            print(f"[side-extra] {stem}: 追加 {_extra_n} 条侧视结构线"
+                  f"（layers={_ex_layers}, min_len={_ex_min_mm}mm）")
 
     # P1 图元分类：尺寸线/图框线从杆件候选中剔除（"一条 LINE ≠ 一根杆件"）。
     if raw_segments:

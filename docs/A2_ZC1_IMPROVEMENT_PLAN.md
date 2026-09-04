@@ -141,3 +141,48 @@ P4.3 纪律冻结参数、跑一次 ZC1 盲测（blind_test 目录现在是空�
    全量 pytest。
 4. 提分纪律照旧：recognized 入池语义不变、metrics.py 不动、无 GT x/y
    注入、parametric 层诚实标注。
+
+## 十、JC1 02 侧视提取链专项实测（2026-09-05）
+
+### 诊断结论（完整因果链）
+
+1. **side_reads 冻结链本身健康**：02 册 81 根 side 画线杆全部成功冻结
+   （含未配对节点——冻结条件的 view_x/view_y 兜底有效），z 吸附后
+   塔头 36 条（z≥33000）已在 side_reads。
+2. **历史剪除是主要丢失点**：`side_lift_prune_above_z_mm=34200`
+   （当时「52 根全 FP」的决策）删掉 z 中点≥34200 的 20 条塔头侧读
+   + `side_lift_drop_x_source=['z_pair']` 删 5 条。apply_side_reads
+   注入 132 杆后最终只留 100（50 l + 50 r）。
+3. **分位数归一化映射正确**（此前误判为错误）：已配对 23 节点拟合
+   z = 36601.8 − 1.3897·view_y_local，R²≈1（span 6600/实际跨度 4750
+   的压缩比）。155 个画线端点直加假设的「残差正态」是巧合。
+4. **塔底远弦在 layer 0**：side region 内 |view_x|>500 的 90 条结构线
+   在 layer 0/3（bar_layers_by_stem=['1','4'] 拦掉）；塔头远弦已在
+   layer 1/4 被提取（bar_138/108/109/160 等 26 杆）。
+5. **画线 z 映射精度 ±300mm** 是剩余近失（10 条 500-1000）的根因。
+
+### 实验矩阵（A/B 参数，不改共享 overlay）
+
+| 实验 | 参数 | pure TP | FP | P | 结论 |
+|---|---|---|---|---|---|
+| 基线 | — | 304 | 175 | 63.5% | — |
+| sidep | `--side-prune-z 36601` | **307** | 182 | 62.8% | **+3，可保留** |
+| sidel | `--extra-bar-layer 0` | 309 | 222 | 58.2% | +2 但 P −4.6pp，放弃 |
+| sidex | `--side-prune-z 36601 --side-extra-layer` | 304* | 200 | 60.3% | 净 0（z 精度不足） |
+
+*sidex 的 40 条 layer 0 白名单线成杆后 7 条可命中 GT 但 Hungarian
+竞争下净变化 0；近失 10 条卡在 z 映射残差。
+
+### 新增 A/B 通道（scripts/run_35A1_jc1_full.py）
+
+- `--side-prune-z FLOAT`：覆盖 side_lift_prune_above_z_mm（36601=保留塔头）
+- `--side-keep-x-source`：保留 x_source=z_pair 杆
+- `--extra-bar-layer L`：追加 02 册 bar_layers（全局，慎用）
+- `--side-extra-layer`：side region 内 layer 0 双白名单收集
+  （overlay `side_extra_bar_layers`，tower_dxf._side_extra_bar_layers_cfg）
+
+### 残余空间与止损
+
+模拟上限 +31 TP 依赖画线 z 精度 ≤±100mm（当前 ±300）。继续提分需
+z 映射精化（per-sheet 线性标定用 DIM 标注锚点），属阶段 5 自校准
+范畴。+3 已按纪律记档（未达 +10 红纹门槛，不改共享 overlay）。

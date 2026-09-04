@@ -209,6 +209,22 @@ def main() -> int:
                         help="P2 D3：平台层来源。level_grid=marker 锚层（图纸梁标注，"
                              "非 GT 表）+纯 DXF 下游（横隔全量层/terminal_pair 关闭）；"
                              "默认 gt=GT 平台表（canonical 口径）")
+    parser.add_argument("--side-prune-z", type=float, default=None,
+                        help="02 专项：塔尖区 side 杆剪除边界覆盖（overlay "
+                             "side_lift_prune_above_z_mm）。36601=保留全部塔头侧读杆；"
+                             "默认 None=沿用 overlay 现值（34200，历史决策）")
+    parser.add_argument("--side-keep-x-source", action="store_true",
+                        help="02 专项：保留 x_source=z_pair 的 side 杆（overlay "
+                             "side_lift_drop_x_source 置空）。默认关=沿用 overlay 剪除")
+    parser.add_argument("--extra-bar-layer", default=None,
+                        help="02 专项：向 bar_layers_by_stem['35A1-JC1-02'] 追加图层"
+                             "（如 '0'——塔底/横担结构线实测在 layer 0）。"
+                             "A/B 注入，不改共享 overlay")
+    parser.add_argument("--side-extra-layer", action="store_true",
+                        help="02 专项：side region 内补充图层收集（overlay "
+                             "side_extra_bar_layers={layers:['0'], min_len_mm:100}）。"
+                             "空间+长度双白名单——只收 side region 内 ≥100mm 物理"
+                             "长的 layer 0 结构线，front 视图不受影响")
     args = parser.parse_args()
 
     overlay = full_overlay()
@@ -282,7 +298,51 @@ def main() -> int:
         overlay["use_gt_platform_levels"] = True
         print("平台层来源: gt（GT 平台表，canonical 口径）")
 
-    if args.selection_mode or args.break_source or args.panel_source:
+    # 02 侧视专项：塔尖剪除边界 / z_pair 剪除的 A/B 覆盖（脚本层，
+    # 不改共享 overlay）。历史决策（z≥34200 全 FP）在 sidegen x 合成
+    # 质量差的前提下做出；重评实验用参数覆盖而非删规则。
+    if args.side_prune_z is not None:
+        overlay["side_lift_prune_above_z_mm"] = float(args.side_prune_z)
+        if not args.out_dir and not _ab_dir_taken:
+            out_dir = REPO / "out/35A1-JC1-sidep"
+        _ab_dir_taken = True
+        args.skip_sync = True
+        print(f"side 塔尖剪除边界: {args.side_prune_z}（覆盖 overlay）→ {out_dir}")
+    if args.side_keep_x_source:
+        overlay["side_lift_drop_x_source"] = []
+        if not args.out_dir and not _ab_dir_taken:
+            out_dir = REPO / "out/35A1-JC1-sidek"
+        _ab_dir_taken = True
+        args.skip_sync = True
+        print("side x_source=z_pair 剪除: 关闭（保留配对解算杆）")
+    if args.extra_bar_layer:
+        _bl = overlay.setdefault("bar_layers_by_stem", {})
+        _cur = list(_bl.get("35A1-JC1-02") or [])
+        for _lyr in str(args.extra_bar_layer).split(","):
+            _lyr = _lyr.strip()
+            if _lyr and _lyr not in _cur:
+                _cur.append(_lyr)
+        _bl["35A1-JC1-02"] = _cur
+        if not args.out_dir and not _ab_dir_taken:
+            out_dir = REPO / "out/35A1-JC1-sidel"
+        _ab_dir_taken = True
+        args.skip_sync = True
+        print(f"02 册杆件图层追加: {args.extra_bar_layer} → {_cur}（A/B 注入）")
+    if args.side_extra_layer:
+        overlay["side_extra_bar_layers"] = {
+            "layers": ["0"],
+            "min_len_mm": 100.0,
+            "stems": ["35A1-JC1-02"],
+        }
+        if not args.out_dir and not _ab_dir_taken:
+            out_dir = REPO / "out/35A1-JC1-sidex"
+        _ab_dir_taken = True
+        args.skip_sync = True
+        print("side region 图层补充收集: layer 0, ≥100mm, 仅 02 册（双白名单）")
+
+    if (args.selection_mode or args.break_source or args.panel_source
+            or args.side_prune_z is not None or args.side_keep_x_source
+            or args.extra_bar_layer or args.side_extra_layer):
         out_dir.mkdir(parents=True, exist_ok=True)
         tmp_sel = out_dir / "_overlay_ab.json"
         tmp_sel.write_text(json.dumps(overlay, ensure_ascii=False, indent=2), encoding="utf-8")
