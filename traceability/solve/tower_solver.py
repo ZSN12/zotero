@@ -256,8 +256,29 @@ def _solve_with_length_constraints(
                     f"杆件 {bid} 长度约束不一致：剩余平方 {rem:.2f}<0（可能图纸/扫描误差）")
                 continue
             delta = math.sqrt(rem)
-            # 符号：优先取与已知节点质心一致的方向，避免镜像翻转
-            sign = 1.0
+            # 符号：取与已解节点质心一致的方向，避免镜像翻转。
+            # P3-7（2026-09-04）：旧代码注释承诺「优先取与质心一致的
+            # 方向」但实现恒 +1——单轴缺失时恒 +1 可能把节点解到塔身
+            # 镜像侧。现在按注释实现：候选 ±delta 两个解中，取使
+            # target 更接近已解节点质心的一侧（无已解参照时回退 +1
+            # 保持旧行为）。
+            _solved = [n for n in nodes.values()
+                       if len(known_axes(n)) == 3 and n is not target]
+            if _solved:
+                _cx = sum(n["x"] for n in _solved) / len(_solved)
+                _cy = sum(n["y"] for n in _solved) / len(_solved)
+                _cz = sum(n["z"] for n in _solved) / len(_solved)
+
+                def _sq_off(v):
+                    return ((v - _cx) ** 2 if axis == "x" else 0.0) + \
+                           ((v - _cy) ** 2 if axis == "y" else 0.0) + \
+                           ((v - _cz) ** 2 if axis == "z" else 0.0)
+
+                _plus = float(base[axis]) + delta
+                _minus = float(base[axis]) - delta
+                sign = 1.0 if _sq_off(_plus) <= _sq_off(_minus) else -1.0
+            else:
+                sign = 1.0
             target[axis] = float(base[axis]) + sign * delta
             target["axis_origin"] = dict(target.get("axis_origin") or {})
             target["axis_origin"][axis] = "derived"

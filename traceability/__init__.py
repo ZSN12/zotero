@@ -8,4 +8,4 @@
 本包提供数据模型、依赖 DAG、变更传播与命令行工具。
 """
 
-__version__ = "0.1.0"
+__version__ = "0.4.0"  # 与 pyproject.toml [project].version 同步（P3-7 修正 0.1.0 漂移）

@@ -6,7 +6,9 @@ EngineeringModel。这是 Skill 的代码化落地，硬性规则：
     1. 每个对象必须有 SourceRef（没有来源就不进模型）
     2. 读不到的尺寸 -> origin=placeholder，绝不猜值
     3. confidence 永远 < 1.0（模型识别默认封顶 0.9）
-    4. 冲突不覆盖：同一 id 的重复候选 -> 保留低置信度并标记
+    4. 冲突不覆盖：同一 id 的重复候选 -> 保留低置信度一方并标记
+       id_conflict（P3-7 起在 to_engineering_model 落地；此前 add_component
+       的字典覆盖语义使该承诺形同虚设）
     5. 输出必须是 EngineeringModel，禁止裸 JSON 直出
 """
 
@@ -80,14 +82,48 @@ def to_engineering_model(
         },
     ))
 
+    # P3-7：候选级（obj.confidence）置信度登记簿——冲突裁决用同一口径
+    # 比较，避免 obj 置信度与 SourceRef 置信度两个语义混比。
+    _cand_conf: Dict[str, float] = {}
+
     for obj in candidate.objects:
         conf = _clamp_confidence(obj.confidence)
         src = _make_source(obj.source, obj)
 
         if obj.obj_type == "component":
             data = obj.data
+            _cid = data.get("id", f"c_{len(model.components)}")
+            # P3-7（2026-09-04）兑现契约第 4 条「冲突不覆盖」：同一 id 的
+            # 重复候选——保留低置信度一方并在其 properties 标记
+            # id_conflict；「覆盖」被限制在本层（候选→模型）显式发生，
+            # EngineeringModel.add_component 本身保持字典语义不变。
+            if _cid in _cand_conf:
+                _old_conf = _cand_conf[_cid]
+                if conf < _old_conf:
+                    # 新候选置信度更低 → 保留新（低置信度一方），旧的被拒
+                    model.add_component(Component(
+                        id=_cid,
+                        name=data.get("name", data.get("id", "unnamed")),
+                        kind=data.get("kind", "unknown"),
+                        source=src,
+                        properties={
+                            **data.get("properties", {}),
+                            "id_conflict": (
+                                f"duplicate id: previous candidate "
+                                f"(conf={_old_conf:.2f}) dropped"),
+                        },
+                        tags=data.get("tags", []),
+                    ))
+                else:
+                    # 旧候选置信度不高于新 → 保留旧（低置信度一方），新的被拒
+                    _old = model.components[_cid]
+                    _old.properties = dict(_old.properties or {})
+                    _old.properties["id_conflict"] = (
+                        f"duplicate candidate (conf={conf:.2f}) dropped")
+                continue
+            _cand_conf[_cid] = conf
             model.add_component(Component(
-                id=data.get("id", f"c_{len(model.components)}"),
+                id=_cid,
                 name=data.get("name", data.get("id", "unnamed")),
                 kind=data.get("kind", "unknown"),
                 source=src,

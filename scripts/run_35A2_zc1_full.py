@@ -55,6 +55,10 @@ def sheet_bar_summary(cross_file_dir: Path) -> list[tuple[str, int]]:
     return sorted(rows, key=lambda x: -x[1])
 
 
+# P3-7：崩溃落盘路径 holder（main 赋值后生效）
+_CRASH_OUT = [None]
+
+
 def run_postprocess(out_dir: Path, repo: Path, overlay_path: Path,
                     demo_dir: Path) -> dict:
     """P0 收口流水线：review queue → diff → version.json → sync demo 资产。
@@ -93,7 +97,7 @@ def run_postprocess(out_dir: Path, repo: Path, overlay_path: Path,
         return f"review_queue.json ({(out_dir / 'review_queue.json').stat().st_size} B)"
 
     def run_diff() -> str:
-        old = repo / "out/35A1-JC1-baseline/model.json  # noqa"
+        old = repo / "out/35A1-JC1-baseline/model.json"
         if not old.exists():
             return "跳过：冻结基线缺失（diff 模式不可用）"
         if not (out_dir / "model.json").exists():
@@ -206,6 +210,11 @@ def main() -> int:
     overlay = full_overlay()
     overlay_path = OVERLAY_PATH
     out_dir = OUT
+    # P3-7（2026-09-04）：崩溃落盘路径提前登记到模块级 holder——
+    # main() 早段（参数解析/前置检查）崩溃时 out_dir 局部名未定义，
+    # 旧崩溃兜底自身 NameError 被内层 except 吞掉，traceback 永不落盘。
+    global _CRASH_OUT
+    _CRASH_OUT[0] = out_dir
     dxf_batch = args.dxf_dir or DXF_BATCH
     if args.gt_align:
         # gt_align 只在脚本层开启，不改共享 overlay 文件，避免污染测试/其它调用方。
@@ -412,8 +421,11 @@ if __name__ == "__main__":
         # 任何未捕获异常都落盘 traceback，避免「无声退出、log 为空」。
         print(tb, flush=True)
         try:
-            (out_dir / "crash_traceback.log").write_text(tb, encoding="utf-8")
-            print(f"崩溃 traceback 已写: {out_dir / 'crash_traceback.log'}", flush=True)
+            _co = _CRASH_OUT[0]
+            if _co is not None:
+                _co.mkdir(parents=True, exist_ok=True)
+                (_co / "crash_traceback.log").write_text(tb, encoding="utf-8")
+                print(f"崩溃 traceback 已写: {_co / 'crash_traceback.log'}", flush=True)
         except Exception:
             pass
         raise

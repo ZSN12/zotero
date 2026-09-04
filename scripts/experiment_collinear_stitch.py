@@ -376,7 +376,10 @@ def stitch_model(
         new_props.update({
             "from_node": nid_s,
             "to_node": nid_e,
-            "geometry_class": "recognized",
+            # P3-7（2026-09-04）：此处曾硬编码 "geometry_class": "recognized"，
+            # 把上一行刚算出的防洗白守卫 inherit_cls 无条件覆盖——镜像面
+            # （b/l/r）源杆拼接后被洗白成直读杆，2026-08-31 的修正意图
+            # 从未生效。删除该键，让 inherit_cls 生效。
             "geometry_origin": "collinear_stitch",
             "stitched_from": list(members),
             "stitched_n_segments": len(members),

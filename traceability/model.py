@@ -186,7 +186,14 @@ class EngineeringModel:
         return stale
 
     def refresh(self, nodes: set[str]) -> None:
-        """重算/重验后，把指定节点及其未受影响的上游恢复 CURRENT。"""
+        """重算/重验后，把指定节点恢复 CURRENT。
+
+        P3-7（2026-09-04）docstring 修正：旧文案「及其未受影响的上游」
+        与实现不符——invalidate 只向下游传播，未受影响的上游从来不会
+        变 STALE，无需恢复；受影响（STALE）的上游也不应被本调用连带
+        恢复（下游 CURRENT 不能洗白上游 STALE）。实际语义：仅把列出的
+        节点置 CURRENT，其余状态一律不动。
+        """
         for n in nodes:
             self.staleness[n] = Staleness.CURRENT
 
