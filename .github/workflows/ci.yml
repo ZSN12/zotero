@@ -49,6 +49,12 @@ jobs:
         run: python3 domains/angle-tower/scripts/self_test.py --quick
       - name: Domain pack entry regression (gates + six-layer chain)
         run: pytest tests/test_domain_pack_gates.py tests/test_domain_pack_layers.py -p no:cacheprovider -q
+      # 2026-09-05 审计缺口（web/demo 镜像停更 + 跨塔 overlay 指纹污染）：
+      # out/ 与 web/demo/** 均 gitignore，CI 无法比真实产物——用合成夹具
+      # 验证检查逻辑（过期/缺文件/跨塔污染/version 漂移必抓）。交付机跑
+      # scripts/check_demo_mirror_sync.py 对真实目录做 sha 级复检。
+      - name: Demo mirror sync check (fixture tests)
+        run: pytest tests/test_demo_mirror_sync.py -p no:cacheprovider -q
 
   full-suite:
     runs-on: ubuntu-latest

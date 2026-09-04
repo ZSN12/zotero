@@ -12,7 +12,7 @@
 >
 > | 塔 | 实测（2026-09-03） | 说明 |
 > |---|---|---|
-> | 35A1-JC1 | TP 220 / P 58.2% / R 20.5%（commit 48b0696 实测） | 对外主口径 |
+> | 35A1-JC1 | TP 304 / P 63.5% / R 28.4%（commit 987abd7 实测，P2.6 撤回后） | 对外主口径 |
 > | 35A2-ZC1 | TP 9 / P 6.5% / R 3.2% | 直读层薄弱，见第 2 点图源归因 |
 >
 > 辅助口径按诚实分层呈报：`A2-dual-view-reconstructed`（含 level-assisted）JC1 99.1% / ZC1 75.8%，**只作内部归因，不得对外当直读能力**。GT z-only 层表注入全部登记于 version.json `gt_injected.surfaces`。

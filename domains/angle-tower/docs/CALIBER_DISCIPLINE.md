@@ -20,7 +20,7 @@ front 投影退化的杆（y_member）由 side 补、side 退化的（x 向）�
 呈报格式（示例）：
 
 ```
-A2-dual-view-pure: TP 220 / P 58.2% / R 20.5%（35A1-JC1，2026-09-03，commit 48b0696 实测）
+A2-dual-view-pure: TP 304 / P 63.5% / R 28.4%（35A1-JC1，2026-09-05，commit 987abd7 实测——P2.6 注入撤回后基线）
 ```
 
 **禁止事项**：
@@ -54,7 +54,7 @@ B 级 GT 的 `caveats` 字段列出限制；`evaluate_ground_truth.py` 会在报
 
 | 塔 | A2-dual-view-pure | dual-union (reconstructed) | front 2D 天花板 |
 |---|---|---|---|
-| 35A1-JC1 | TP 220 / P 58.2% / R 20.5% | 1068 / 99.7% | 80.1%（858/1071） |
+| 35A1-JC1 | TP 304 / P 63.5% / R 28.4% | 1067 / 99.6% | 80.1%（858/1071） |
 | 35A2-ZC1 | TP 9 / P 6.5% / R 3.2% | 216 / 75.8% | 72.6%（207/285） |
 
 天花板 = 投影退化上限（y_member 退化为点 + depth_diag 与 leg 重合损失），
