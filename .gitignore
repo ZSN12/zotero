@@ -34,3 +34,4 @@ tools/oda-file-converter/tmp-input/
 
 # 备份文件
 *.bak
+build/
