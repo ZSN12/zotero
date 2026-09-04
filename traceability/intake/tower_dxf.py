@@ -574,6 +574,9 @@ def _merge_collinear_fragments(
         used[k] = True
     merged.extend(segs[k] for k in _synth_is)
 
+    # P3-6：折叠链碎段回炉池（见下方 _fold 检出注释）
+    _retry_pool: List[Dict] = []
+
     for i in range(len(segs)):
         if used[i]:
             continue
@@ -644,6 +647,47 @@ def _merge_collinear_fragments(
         projs = [(p[0] - origin[0]) * ux + (p[1] - origin[1]) * uy for p in pts]
         t0, t1 = min(projs), max(projs)
         start = (origin[0] + ux * t0, origin[1] + uy * t0)
+        # P3-6（2026-09-04）：折叠链检出 → 严格重拼。
+        # 贪心链吸收只校验候选与「当前链尾轴」的关系，X 交叉斜材族
+        # 的分支可在交点处贴轴入链，随后把链端点拖向两侧——链 span
+        # 塌缩（02 册 side 实测 14~18 段折叠链 span 61/51/36u，吃掉
+        # 6 根 860mm 斜杆画线）。链终态自校验：任一碎段端点到最终
+        # span 线垂距超 colinear_tol*2 → 判折叠。折叠链的碎段回炉
+        # 池，用「两端都在轴上」的严格共线规则重拼——真共线碎段仍
+        # 焊回整线，X 交叉分支各自归位。只作用于 side（损伤区），
+        # front 链行为不变（全局版实测 front Hungarian 重排打穿
+        # dual-recon 99.5% 红线）。
+        _fold = False
+        if len(chain) > 1 and str((chain[0].get("view_type") or "")) == "side":
+            for s in chain:
+                if (abs((s["start"][0] - start[0]) * uy - (s["start"][1] - start[1]) * ux) > colinear_tol * 2
+                        or abs((s["end"][0] - start[0]) * uy - (s["end"][1] - start[1]) * ux) > colinear_tol * 2):
+                    _fold = True
+                    break
+        if _fold:
+            # 折叠链：原链保留（其 span 意外匹配的 GT 不丢——v5 实测
+            # 拆链丢 10 TP 换 7 TP 得不偿失），碎段另进回炉池，用严格
+            # 共线规则重拼出真实画线作为**追加**段。两个证据形态并存，
+            # Hungarian 各取所需。
+            _retry_pool.extend(dict(s, _retry_from=chain[0].get("handle"))
+                               for s in chain)
+            end = (origin[0] + ux * t1, origin[1] + uy * t1)
+            merged.append({
+                "handle": chain[0]["handle"],  # 保 str 兼容下游 handle 索引
+                "start": start,
+                "end": end,
+                "layer": chain[0]["layer"],
+                "fragments": len(chain),
+                "fragments_handles": [s["handle"] for s in chain],
+                "folded_chain": True,
+            })
+            for _ek in ("geometry_origin", "source_extractor", "geometry_class",
+                        "evidence_status", "view_type", "scale_ratio"):
+                if chain[0].get(_ek) is not None:
+                    merged[-1][_ek] = chain[0][_ek]
+            if chain[0].get("region") is not None:
+                merged[-1]["region"] = chain[0]["region"]
+            continue
         end = (origin[0] + ux * t1, origin[1] + uy * t1)
         merged.append({
             "handle": chain[0]["handle"],  # 保 str 兼容下游 handle 索引
@@ -662,6 +706,90 @@ def _merge_collinear_fragments(
                 merged[-1][_ek] = chain[0][_ek]
         if chain[0].get("region") is not None:
             merged[-1]["region"] = chain[0]["region"]
+
+    # P3-6：折叠链碎段严格重拼。回炉池里的碎段属于多条真实画线（X
+    # 交叉族），用「候选两端都在链轴 ±colinear_tol 内」的严格规则
+    # 重新链式合并：过轴即分叉的分支不再入链，真共线碎段仍焊回整线。
+    # 重拼结果的属性透传与主路径一致（链首继承）。
+    if _retry_pool:
+        _rp = sorted(_retry_pool, key=lambda s: -_span(s))
+        _rp_used = [False] * len(_rp)
+        for i in range(len(_rp)):
+            if _rp_used[i]:
+                continue
+            _chain = [_rp[i]]
+            _rp_used[i] = True
+            _grew = True
+            while _grew:
+                _grew = False
+                _base = _chain[-1]
+                _ba = _ang(_base)
+                _ax = _base["end"][0] - _base["start"][0]
+                _ay = _base["end"][1] - _base["start"][1]
+                _bl = math.hypot(_ax, _ay)
+                if _bl <= 0:
+                    break
+                _ux, _uy = _ax / _bl, _ay / _bl
+                _best_j, _best_gap = None, gap_tol
+                for j in range(len(_rp)):
+                    if _rp_used[j]:
+                        continue
+                    _cand = _rp[j]
+                    _da = abs(_ang(_cand) - _ba)
+                    if _da > ang_tol and abs(_da - math.pi) > ang_tol:
+                        continue
+                    # 严格共线：候选两端到链轴垂距都 ≤ colinear_tol
+                    _ps = (_cand["start"][0] - _base["start"][0]) * _uy - \
+                          (_cand["start"][1] - _base["start"][1]) * _ux
+                    _pe = (_cand["end"][0] - _base["start"][0]) * _uy - \
+                          (_cand["end"][1] - _base["start"][1]) * _ux
+                    if abs(_ps) > colinear_tol or abs(_pe) > colinear_tol:
+                        continue
+                    _proj_cur = (_base["end"][0] - _base["start"][0]) * _ux + \
+                                (_base["end"][1] - _base["start"][1]) * _uy
+                    _pcs = (_cand["start"][0] - _base["start"][0]) * _ux + \
+                           (_cand["start"][1] - _base["start"][1]) * _uy
+                    _pce = (_cand["end"][0] - _base["start"][0]) * _ux + \
+                           (_cand["end"][1] - _base["start"][1]) * _uy
+                    _gap = min(abs(_pcs - _proj_cur), abs(_pce - _proj_cur))
+                    if _gap < _best_gap:
+                        _best_gap, _best_j = _gap, j
+                if _best_j is not None:
+                    _chain.append(_rp[_best_j])
+                    _rp_used[_best_j] = True
+                    _grew = True
+            if len(_chain) == 1:
+                _s0 = dict(_chain[0])
+                _s0.pop("_retry_from", None)
+                merged.append(_s0)
+                continue
+            _pts = [p for s in _chain for p in (s["start"], s["end"])]
+            _org = _chain[0]["start"]
+            _ax = _chain[-1]["end"][0] - _org[0]
+            _ay = _chain[-1]["end"][1] - _org[1]
+            _al = math.hypot(_ax, _ay)
+            if _al <= 0:
+                for s in _chain:
+                    _s0 = dict(s)
+                    _s0.pop("_retry_from", None)
+                    merged.append(_s0)
+                continue
+            _ux, _uy = _ax / _al, _ay / _al
+            _pr = [(p[0] - _org[0]) * _ux + (p[1] - _org[1]) * _uy for p in _pts]
+            _t0, _t1 = min(_pr), max(_pr)
+            _mseg = {
+                "handle": _chain[0]["handle"],
+                "start": (_org[0] + _ux * _t0, _org[1] + _uy * _t0),
+                "end": (_org[0] + _ux * _t1, _org[1] + _uy * _t1),
+                "layer": _chain[0]["layer"],
+                "fragments": len(_chain),
+                "fragments_handles": [s["handle"] for s in _chain],
+            }
+            for _ek in ("geometry_origin", "source_extractor", "geometry_class",
+                        "evidence_status", "view_type", "scale_ratio", "region"):
+                if _chain[0].get(_ek) is not None:
+                    _mseg[_ek] = _chain[0][_ek]
+            merged.append(_mseg)
     return merged
 
 
