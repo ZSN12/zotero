@@ -385,3 +385,15 @@ crossarm_headless_layers 与 beam_marker_levels 同源同口径
 - pytest 728（722 基线 + 6 新单测）
 - 诚实证据链：层位声明（gt_canonical 标注）+ BOM 弦长反推
   （残差 3.5mm）+ 体锥线外推（残差 41-49mm）——零 GT x/y 注入
+
+### 十四.1 production_dxf 口径验证（2026-09-05 第四批）
+
+S11/S11c 在 production profile（GT 平台层注入关闭）下同样 46/46
+全 TP 零 FP——生成器对 profile 无关性验证通过。production 口径
+dual-recon 102 TP（S11 占 46，45%——生产口径下最大贡献者）。
+
+level_source 标注遵循既有管线约定（与 panel_template_completion
+同构：随管线 level_source 模式标注 canonical=gt_canonical /
+production=dxf_derived）。诚实性备注：crossarm_headless_layers
+层对本身是 overlay 人工声明（两口径下同源），几何推导（BOM 弦长/
+锥线）是图纸内证据。
