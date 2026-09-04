@@ -146,3 +146,25 @@ class SheetLoaderTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BeatAnchorTest(unittest.TestCase):
+    def test_beat_anchors_join_grid_as_anchor(self):
+        """尺寸节拍（第三证据源）入锚骨架，w2 级、marker 优先级更高。"""
+        levels, records = vote_level_grid(
+            {}, {"S1": [8000.0]}, {"S1": 7000.0},
+            beat_anchors={"S1": [7400.0, 7760.0]})
+        self.assertEqual(levels, [7000.0, 7400.0, 7760.0, 8000.0])
+        beats = [r for r in records if r["kind"] == "beat"]
+        self.assertEqual(len(beats), 2)
+
+    def test_beat_anchors_from_cross_file_filters_degenerate(self):
+        """n_beats 退化（region_span_linear 端点两值）不投票。"""
+        model = {"components": {"df": {"kind": "drawing_file", "properties": {
+            "dimension_beat_anchors_by_sheet": {
+                "S-real": {"z": [12000, 12400, 12800, 13200], "n_beats": 3},
+                "S-degenerate": {"z": [17000, 24000], "n_beats": 0},
+                "S-empty": {"z": []},
+            }}}}}
+        from traceability.solve.level_grid import beat_anchors_from_cross_file
+        self.assertEqual(beat_anchors_from_cross_file(model), {"S-real": [12000.0, 12400.0, 12800.0, 13200.0]})

@@ -50,8 +50,9 @@ ANCHOR_DEDUP_MM = 300    # 锚层去重距离
 FILL_MIN_DIST_MM = 400   # 几何补位与骨架最小距离
 MARKER_WEIGHT = 3
 BOUNDARY_WEIGHT = 2
+BEAT_WEIGHT = 2           # 尺寸标注节拍（dimension_beat_anchors，标注类证据）
 
-_KIND_PRIORITY = {"marker": 2, "boundary": 1, "geom": 0}
+_KIND_PRIORITY = {"marker": 2, "beat": 1, "boundary": 1, "geom": 0}
 
 
 def _sheet_endpoint_histogram(
@@ -119,6 +120,7 @@ def vote_level_grid(
     sheet_endpoints: Dict[str, List[Tuple[float, str, str]]],
     marker_levels: Dict[str, List[float]],
     z_offsets: Dict[str, float],
+    beat_anchors: Optional[Dict[str, List[float]]] = None,
 ) -> Tuple[List[float], List[dict]]:
     """投票层网格主入口（纯函数，无 IO）。
 
@@ -128,6 +130,8 @@ def vote_level_grid(
         端点 z 需已复原（view_y + z_offset）。
     marker_levels : {册名: [标注层 z]}（beam_marker_levels_mm）
     z_offsets : {册名: datum z}（view_regions，仅高程册）
+    beat_anchors : {册名: [尺寸节拍 z]}（dimension_beat_anchors，
+        图纸尺寸链节拍——标注类证据，与 marker 文本/几何端点独立）
 
     返回
     ----
@@ -139,6 +143,9 @@ def vote_level_grid(
     for sheet, lvs in marker_levels.items():
         for z in lvs:
             anchors.append((float(z), MARKER_WEIGHT, "marker", sheet))
+    for sheet, beats in (beat_anchors or {}).items():
+        for z in beats:
+            anchors.append((float(z), BEAT_WEIGHT, "beat", sheet))
     for sheet, zoff in z_offsets.items():
         if zoff:
             anchors.append((float(zoff), BOUNDARY_WEIGHT, "boundary", sheet))
@@ -206,11 +213,36 @@ def endpoints_from_sheet_model(model: dict, z_offset: float) -> List[Tuple[float
     return eps
 
 
+def beat_anchors_from_cross_file(model: dict) -> Dict[str, List[float]]:
+    """从 cross_file 模型的 drawing_file.properties 提取尺寸节拍锚。
+
+    dimension_beat_anchors_by_sheet：{册: {"z": [...], ...}}——图纸
+    尺寸链节拍（设计师画的标高节拍），与 marker 文本/几何端点独立的
+    第三证据源。仅取 n_beats>0 的真实节拍（region_span_linear 退化为
+    端点两值的册不贡献中间层）。
+    """
+    out: Dict[str, List[float]] = {}
+    for c in (model.get("components") or {}).values():
+        if c.get("kind") != "drawing_file":
+            continue
+        by_sheet = (c.get("properties") or {}).get(
+            "dimension_beat_anchors_by_sheet") or {}
+        for sheet, rec in by_sheet.items():
+            if not isinstance(rec, dict) or not rec.get("z"):
+                continue
+            zs = [float(z) for z in rec["z"] if z is not None]
+            if len(zs) >= 3:  # 退化模式（仅端点两值）不投票
+                out[sheet] = zs
+    return out
+
+
 def grid_from_sheets_dir(
-    sheets_dir: Path, overlay: dict
+    sheets_dir: Path, overlay: dict, cross_file_model: Optional[dict] = None,
 ) -> Tuple[List[float], List[dict], List[str]]:
     """从交付 sheets/ 目录 + overlay 配置构建投票网格。
 
+    cross_file_model：可选 cross_file/model.json dict——提供时启用尺寸
+    节拍锚（beat_anchors）第三证据源。
     返回 (levels, records, warnings)。仅 view_regions 里有 datum 的册
     参与（其余册 z 不可复原，记 warning）。
     """
@@ -245,7 +277,9 @@ def grid_from_sheets_dir(
             continue
         sheet_endpoints[stem] = endpoints_from_sheet_model(model, z_offsets[stem])
 
-    levels, records = vote_level_grid(sheet_endpoints, marker_levels, z_offsets)
+    beat = beat_anchors_from_cross_file(cross_file_model) if cross_file_model else {}
+    levels, records = vote_level_grid(
+        sheet_endpoints, marker_levels, z_offsets, beat_anchors=beat)
     return levels, records, warnings
 
 

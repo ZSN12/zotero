@@ -28,12 +28,14 @@ TOWERS = {
     "jc1": {
         "sheets": "out/35A1-JC1-full-deliver/sheets",
         "overlay": "examples/external/guowang_35A1/layer_overlay.json",
+        "cross_file": "out/35A1-JC1-full-deliver/cross_file/model.json",
         "out": "out/35A1-JC1-full-deliver/level_grid_validation.json",
         "gt_source": "gt_profile",
     },
     "zc1": {
         "sheets": "out/35A2-ZC1-full-deliver/sheets",
         "overlay": "examples/external/guowang_35A2_zc1/layer_overlay.json",
+        "cross_file": "out/35A2-ZC1-full-deliver/cross_file/model.json",
         "out": "out/35A2-ZC1-full-deliver/level_grid_validation.json",
         "gt_source": "overlay",
     },
@@ -58,7 +60,11 @@ def main() -> int:
     cfg = TOWERS[args.tower]
 
     overlay = json.loads(Path(cfg["overlay"]).read_text(encoding="utf-8"))
-    levels, records, warnings = grid_from_sheets_dir(Path(cfg["sheets"]), overlay)
+    cf_path = Path(cfg["cross_file"])
+    cf_model = (json.loads(cf_path.read_text(encoding="utf-8"))
+                if cf_path.exists() else None)
+    levels, records, warnings = grid_from_sheets_dir(
+        Path(cfg["sheets"]), overlay, cross_file_model=cf_model)
 
     # 验证目标（被替换的 GT 层表）
     if cfg["gt_source"] == "overlay":
