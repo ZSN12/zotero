@@ -658,6 +658,9 @@ def _merge_collinear_fragments(
         # front 链行为不变（全局版实测 front Hungarian 重排打穿
         # dual-recon 99.5% 红线）。
         _fold = False
+        # 前提：调用方（tower_dxf.py 阶段2 按视图分组）保证本函数输入
+        # 全部同 view_type，故查链首即可判定 side；若未来出现混合输入
+        # 调用方，需改为 any(s.get("view_type")=="side" for s in chain)。
         if len(chain) > 1 and str((chain[0].get("view_type") or "")) == "side":
             for s in chain:
                 if (abs((s["start"][0] - start[0]) * uy - (s["start"][1] - start[1]) * ux) > colinear_tol * 2
@@ -668,7 +671,8 @@ def _merge_collinear_fragments(
             # 折叠链：原链保留（其 span 意外匹配的 GT 不丢——v5 实测
             # 拆链丢 10 TP 换 7 TP 得不偿失），碎段另进回炉池，用严格
             # 共线规则重拼出真实画线作为**追加**段。两个证据形态并存，
-            # Hungarian 各取所需。
+            # Hungarian 各取所需。folded_chain 仅为审计元数据（区分
+            # 折叠链 span 与正常链），无下游消费。
             _retry_pool.extend(dict(s, _retry_from=chain[0].get("handle"))
                                for s in chain)
             end = (origin[0] + ux * t1, origin[1] + uy * t1)
@@ -731,10 +735,16 @@ def _merge_collinear_fragments(
                     break
                 _ux, _uy = _ax / _bl, _ay / _bl
                 _best_j, _best_gap = None, gap_tol
+                _seed_region = _region_key(_base)
                 for j in range(len(_rp)):
                     if _rp_used[j]:
                         continue
                     _cand = _rp[j]
+                    # k3 复审（2026-09-04）：C1 region 约束在回炉池同样
+                    # 生效——回炉池混装多条折叠链的碎段，无 region 过滤
+                    # 时跨区串链（塔身↔材料表）会在此重新发生。
+                    if _seed_region is not None and _region_key(_cand) != _seed_region:
+                        continue
                     _da = abs(_ang(_cand) - _ba)
                     if _da > ang_tol and abs(_da - math.pi) > ang_tol:
                         continue
@@ -777,8 +787,12 @@ def _merge_collinear_fragments(
             _ux, _uy = _ax / _al, _ay / _al
             _pr = [(p[0] - _org[0]) * _ux + (p[1] - _org[1]) * _uy for p in _pts]
             _t0, _t1 = min(_pr), max(_pr)
+            # k3 复审（2026-09-04）：重拼段 handle 加 #r 后缀——折叠链
+            # 本体已用 chain[0].handle 输出，同一碎段若在回炉池做链首，
+            # 两条输出段会共享同一 handle 字符串，下游按 handle 建索引
+            # （件号挂接/审计）会互相覆盖。与 subdivide 的 #s{j} 惯例一致。
             _mseg = {
-                "handle": _chain[0]["handle"],
+                "handle": f"{_chain[0]['handle']}#r",
                 "start": (_org[0] + _ux * _t0, _org[1] + _uy * _t0),
                 "end": (_org[0] + _ux * _t1, _org[1] + _uy * _t1),
                 "layer": _chain[0]["layer"],
