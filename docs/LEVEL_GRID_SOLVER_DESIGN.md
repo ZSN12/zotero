@@ -1,8 +1,8 @@
 # LevelGridSolver 设计稿——DXF 证据自推层网格（P2）
 
-状态：设计冻结 v1（2026-09-05）。D1 已完成（内核 `traceability/solve/level_grid.py`
-+ 离线验证 `scripts/validate_level_grid.py` + 单测 `tests/test_level_grid.py`）；
-D2 集成 A/B 待做。
+状态：设计冻结 v1（2026-09-05）。D1 完成（内核 + 验证 + 单测）；
+**D2 完成（2026-09-05）：D2a 落地，D2b/D2c/环梁白名单经实测论证
+不可去 GT 化，边界如下 §6a**。
 
 ## 1. 问题：层位 z 值的 GT 依赖面
 
@@ -106,12 +106,32 @@ D1 正式内核两塔门禁（85%）均过；网格独有层 ZC1 14 个（6800/7
 
 ## 6. 集成方案（分阶段，每步全量 A/B + 红线）
 
-| 阶段 | 替换点 | 验收 |
-|---|---|---|
-| D2a | `leg_chain_stitch_break_terminal` 的 break 层：`gt_terminal_levels_override` → 投票网格 | JC1 dual-pure 不回退（≥304），dual-recon ≥99% 红线，ZC1 不回退 |
-| D2b | 横隔硬编码 6 常数（L1 债）→ 网格高置信层 | 同上 + 横隔 TP 数不降 |
-| D2c | `panel_cross_skip_pairs` 跳层对层集 | 同上 |
-| D3 | （评估后决定）`use_gt_platform_levels` → 网格 marker+boundary 层 | 需单独 A/B：平台层质量影响面大，回退则保留 GT 表并记档 |
+| 阶段 | 替换点 | 验收 | 结果 |
+|---|---|---|---|
+| D2a | `leg_chain_stitch_break_terminal` 断链层 → 投票网格（`leg_chain_stitch_break_source="level_grid"`，overlay 开关） | JC1 dual-pure 不回退，dual-recon ≥99% 红线，ZC1 不回退 | **✅ 落地（2026-09-05）**：JC1 TP 304=304 / ZC1 TP 9=9，recon 红线均保持（JC1 99.6% / ZC1 75.8%）；网格 56/48 层实际驱动断链（split_at_degree 99→56）；A/B 入口 `run_*.py --break-source level_grid`（脚本层覆盖 + 独立目录） |
+| D2b | 横隔层表 `gt_diaphragm_levels_override` → 网格层 | 横隔 TP 不降 | **❌ 不可去 GT 化**（§6a 论证 1） |
+| D2c | `panel_cross_skip_pairs` 跳层对层集 | 同 D2a | **⏸ 两塔 skip_pairs=False（死路径），且跨度观测覆盖 12/42（§6a 论证 3）——启动 skip_pairs 时再做** |
+| 环梁白名单 | `generate_diaphragms` 22700/…/34200 常数（L1 债） | 横隔 TP 不降 | **❌ 不可去 GT 化**（§6a 论证 2）；实测有效集仅 {22800,32700,33500,34200}（22700/22900 是死代码——panel_levels 不含此二层），重新归类为「构型选择常数（4 层 16 杆，reconstructed 口径）」 |
+| D3 | （评估后决定）`use_gt_platform_levels` → 网格 marker+boundary 层 | 需单独 A/B | ⏸ 待评估。marker 24 层 ⊇ GT 平台 15 层（15/15 命中），但平台层子集选择与横隔同构（图纸不区分），预计同样不可去 |
+
+## 6a. 不可去 GT 化边界（实测论证，2026-09-05）
+
+1. **横隔层子集（gt_diaphragm_levels 14 层）**：图纸画了全部平台层
+   （marker 24 层 ⊇ GT 横隔 14 层，15/15 命中），GT 只在 14 层有横隔杆
+   ——「哪层没有横隔」是设计详图的省略选择，不是图纸证据。用 marker
+   全集当横隔层 → 10 个假横隔层 × 25 杆 ≈ 250 FP；用子集需要 GT 独有
+   信息。维持 override 表。
+2. **全宽环梁层白名单**：有效集 {22800, 32700, 33500, 34200}，每层 4 杆。
+   逐一测过的图纸判据全部失败：marker_synth 梁杆存在性（每层都有）、
+   梁杆 xy 跨度（塔头收窄段不可比）、大跨 dxf 斜杆端点（22800 无、
+   6500/8500/14000/16000 假阳）、水平长杆（22800 的全是横隔自产循环
+   依赖）。这 4 层的选择是构型语义（横担支撑环 vs 标准横隔），当前
+   提取层没有该语义。
+3. **跨度白名单（terminal_pair_span_whitelist 42 对）**：合并模型
+   dxf_geom/diag_synth 长斜杆跨度观测（span≥1000，snap 网格层 ±400）
+   覆盖 GT 白名单 12/42——漏的 30 对正是需要合成器补的节间（图纸直读
+   覆盖不足是生成器存在的原因）。观测可做 FP 过滤/评分（现有机制），
+   不可枚举白名单。
 
 **不改变的**：
 - `metrics.py` 容差/匹配器（提分纪律）；
