@@ -48,7 +48,7 @@
   P4 模式：失败记录到 graph，不炸主链）。
 
 ## 红线（不变）
-- JC1 dual-pure TP ≥ 332（P2.6b 后新基线，4a637bb）
+- JC1 dual-pure TP ≥ 304（P2.6/P2.6b 注入撤回后基线，987abd7；+23 系 6b7831b 通用真修复）
 - JC1 dual-recon R ≥ 99.6%（现 99.6%）
 - ZC1 dual-union R ≥ 75.8%
 - 任何改动全量 A/B + pytest（k3 审查按用户 2026-09-05 指示停用）
@@ -72,3 +72,31 @@
   册头部画线密集（368 线/层）但碎屑化严重。
 - side 20k 簇（~28 FN）：画线为水平线，GT 为斜深杆（depth diag），
   画图与 GT 结构不一致，不可诚实回收。
+
+## P2.6 注入撤回记录（2026-09-05，外部审计裁定）
+- 外部审计决定性发现核实成立：cross_sheet_leg_spans_mm 11 条 span 与 GT
+  区间 11/11 精确对应（144 根 GT 杆），span z 端对来自 GT FN 分析而非
+  设计常数；docstring/overlay 标注「z-only 设计常数/纯 DXF 证据链」与
+  来源不符。git revert 987abd7 全额撤回 +28 TP（1e1c8e0 +26、4a637bb
+  +2）；保留 6b7831b +23（leg_synth 豁免链合并，通用真修复）。
+- 撤回后复核：dual-pure 304 / 63.5% / 28.4%（精确恢复 P2.5 基线），
+  dual-recon 1067/99.6% 红线保持；ZC1 重跑 9 / 216/75.8% 持平。
+- 规则重建评估（否决）：跨册节点不共享 id；front 投影每侧 6 条平行
+  腿线、家族 x 差（~30mm）与跨家族错配同量级；图纸分段（07 表止于
+  12000 / 06 表起于 12000）与物理分段（11500-14500 等）结构性不一致且
+  无图纸证据可分辨——并集配对容差只能靠 GT 校准，属二次拟合。
+- 跨册物理分段（GT 144 根）改判「非诚实可回收池」，与 z<7000 底段、
+  双胞胎竞争池并列。
+- 审计遗留项处置：
+  - B1（ZC1 产物滞后）：重跑 35A2-ZC1-rerun1 并提升 canonical（生成
+    于当前 HEAD）；注：审计所指"MISMATCH"系对比目录用错（deliverable
+    用 guowang_35A2_zc1 专用 overlay，sha 匹配；真实问题仅产物滞后）。
+  - B2（零新增测试）：补 LegSynthExemptTest 三例（豁免保留/不与 dxf
+    碎段合并/审计计数）；stitch_leg_chains report 新增 skipped 通道
+    计数并落 leg_chain_stitch_report（实测 leg_synth_table=64、
+    terminal_pair_structure=304）。
+  - B3（对外文档漂移）：README:53 与 SKILL.md:111 由 220 更新为 304
+    （P 63.5% / R 28.4%）。
+  - B4（L1 硬编码）：tower_geometry.py:1218 层常量组经 blame 属
+    f224da0（2026-09-02 P3.12c，前轮遗留）而非本轮新增——审计归属
+    有误但债本身真实，维持登记（L1 硬编码 Phase 3 项内）。

@@ -108,7 +108,7 @@ python3 domains/angle-tower/scripts/run_layer.py 5 --out-dir out/35A1-JC1-full-d
 | `A2-dual-view-reconstructed` | + 确定性重建（镜像） | 内部归因 |
 | `level_assisted` / `parametric` | + z-only 层表补全 / 参数化外推 | 内部归因，分层披露 |
 
-当前基线（2026-09-03）：JC1 dual-view-pure TP 220 / P 58.2% / R 20.5%；
+当前基线（2026-09-05，P2.6 注入撤回后）：JC1 dual-view-pure TP 304 / P 63.5% / R 28.4%；
 ZC1 dual-union（reconstructed）R 75.8%。GT 来源等级：`.mod/.NODE` 直出可
 并列呈报；GLB 反提取（如 JC2 canonical）仅限内部回归，见 GT `caveats`。
 

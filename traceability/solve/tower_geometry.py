@@ -3841,7 +3841,8 @@ def stitch_leg_chains(
             continue
         legs.append(dict(b, _a=a, _c=c))
     if len(legs) < 2:
-        return list(bars), {"merged_groups": 0, "n_legs": len(legs)}
+        return list(bars), {"merged_groups": 0, "n_legs": len(legs),
+                            "skipped": dict(skipped)}
 
     # 节间定位：panel i 覆盖 [pl[i], pl[i+1])（P3.4：断链层 = _break）
     pls = list(_break)
@@ -3997,6 +3998,9 @@ def stitch_leg_chains(
         "n_legs_in": len(legs),
         "n_bars_in": len(bars),
         "n_bars_out": len(out_bars),
+        # P2.5b（B2 可审计）：豁免通道计数（diaphragm/terminal_pair/
+        # leg_synth_table）落报告——跨口径审计要求。
+        "skipped": dict(skipped),
     }
 
 

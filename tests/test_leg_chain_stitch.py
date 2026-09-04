@@ -170,3 +170,62 @@ class LegChainStitchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LegSynthExemptTest(unittest.TestCase):
+    """P2.5（2026-09-05，6b7831b）：leg_synth 表驱动跨型杆豁免链合并。
+
+    真实病灶（06 册实测）：双拼角钢两链分段边界差 100mm
+    （(14400,17000) vs (14500,17000)），链内去重 dup_mid_tol_mm=120
+    把中点距 ~51mm 的后到者当重复删除；(14000,16000)+(14000,17000)
+    被重叠合并成跨层长杆。表驱动分段已完整（overlay 披露的
+    leg_synth_spans_mm），跳过链合并保留证据杆原貌。
+    豁免计数进 report["skipped"]（B2 可审计要求）。
+    """
+
+    def test_leg_synth_twin_spans_both_kept(self):
+        """双拼邻段 (14400,17000)/(14500,17000) 都保留——豁免去重误杀。"""
+        nodes = {
+            "a1": (1760, 1760, 14400), "a2": (1580, 1580, 17000),
+            "b1": (1750, 1750, 14500), "b2": (1575, 1575, 17000),
+        }
+        bars = [
+            _bar("tA", "a1", "a2", geometry_origin="leg_synth"),
+            _bar("tB", "b1", "b2", geometry_origin="leg_synth"),
+        ]
+        out, rep = stitch_leg_chains(nodes, bars, panel_levels=[6500, 14400, 17000])
+        # 两根都原样保留：不去重、不合并、属性不变
+        self.assertEqual(len(out), 2)
+        ids = {b["id"] for b in out}
+        self.assertEqual(ids, {"tA", "tB"})
+        # 豁免计数落报告（可审计）
+        self.assertEqual(rep.get("skipped", {}).get("leg_synth_table"), 2)
+
+    def test_leg_synth_not_merged_with_dxf_fragments(self):
+        """leg_synth 杆不与同角 dxf 腿碎段合并（重叠链合并豁免）。"""
+        nodes = {
+            "a1": (1760, 1760, 14000), "a2": (1580, 1580, 17000),
+            "f1": (1755, 1755, 14000), "f2": (1700, 1700, 15000),
+            "f3": (1660, 1660, 15900), "f4": (1590, 1590, 16900),
+        }
+        bars = [
+            _bar("tab", "a1", "a2", geometry_origin="leg_synth"),
+            _bar("fr1", "f1", "f2"), _bar("fr2", "f2", "f3"),
+            _bar("fr3", "f3", "f4"),
+        ]
+        out, rep = stitch_leg_chains(nodes, bars, panel_levels=[6500, 14000, 17000])
+        # 表杆原样保留
+        ids = {b["id"]: b for b in out}
+        self.assertIn("tab", ids)
+        self.assertEqual(ids["tab"]["from"], "a1")
+        self.assertEqual(ids["tab"]["to"], "a2")
+        # dxf 碎段正常合并（豁免不影响常规通道）
+        self.assertEqual(rep["merged_groups"], 1)
+        self.assertEqual(rep.get("skipped", {}).get("leg_synth_table"), 1)
+
+    def test_leg_synth_exempt_audit_counter_reported(self):
+        """豁免计数进报告——跨口径可审计（B2 修复要求）。"""
+        nodes = {"a1": (1760, 1760, 14400), "a2": (1580, 1580, 17000)}
+        bars = [_bar("tA", "a1", "a2", geometry_origin="leg_synth")]
+        _, rep = stitch_leg_chains(nodes, bars, panel_levels=[6500, 14400, 17000])
+        self.assertEqual(rep.get("skipped", {}).get("leg_synth_table"), 1)
