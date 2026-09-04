@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>参与 — Engineering Traceability</title>
+<meta name="description" content="参与方式：开源贡献、领域包共建、工程合作与试点。诚实性契约是加入的唯一前提。" />
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <span class="brand">Engineering<span class="dot">·</span>Traceability</span>
+  <a href="index.html">首页</a>
+  <a href="product.html">产品能力</a>
+  <a href="demo.html">在线演示</a>
+  <a href="research.html">研究</a>
+  <a href="opensource.html">开源</a>
+  <a href="about.html">关于</a>
+  <a href="careers.html" class="active">参与</a>
+  <a class="cta" href="/">进入 Demo →</a>
+</nav>
+
+<div class="wrap">
+
+  <section class="hero" style="padding-bottom:24px">
+    <div class="kicker">参与</div>
+    <h1>和我们一起把「可信」做实</h1>
+    <p class="lead">
+      这个项目不设「招聘页」——我们设<b>参与页</b>。开源仓库即是面试：
+      提交一个被合并的 PR（修一个 bug、补一个领域包、加一条评测），
+      比任何简历都说明问题。
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>四条参与路径</h2>
+    <div class="grid c2">
+      <div class="card">
+        <h3>🛠 开源贡献者</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          MIT 协议，任何背景都可参与。好的入手点：测试加固、文档勘误、
+          新塔型 overlay 适配（换塔只改配置的纪律见
+          <a href="product.html">产品能力</a>）。
+          贡献约定：诚实性优先——不粉饰失败、不冒充口径。
+        </p>
+      </div>
+      <div class="card">
+        <h3>🏗 领域包共建者</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          角钢塔领域包（angle-tower）是第一个实例。如果你熟悉其他工程
+          图纸域（桥梁 / 钢结构厂房 / 管道），六层契约模板可以直接复制——
+          我们最缺「第二领域」的验证者。
+        </p>
+      </div>
+      <div class="card">
+        <h3>🏭 工程合作与试点</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          有真实图纸与 BOM 数据的设计院 / 施工 / 运维单位：我们提供
+          全链跑批（上传 → GLB + 证据链 + 评测报告），你提供数据与
+          工程反馈。试点数据不出本地环境。
+        </p>
+      </div>
+      <div class="card">
+        <h3>📐 评测与基准共建</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          五层口径 / 匈牙利匹配 / 容差语义都是可挑战的设计——
+          认为口径不对，欢迎带论证来改。评测器是门禁不是可调参数，
+          改口径必须带全量回归对比。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>技术栈（贡献前一览）</h2>
+    <table>
+      <tr><th>层</th><th>技术</th><th>说明</th></tr>
+      <tr><td>图纸解析</td><td>ezdxf + 自研区域化提取</td><td>纯矢量，DXF 直读；DWG 走外部转换</td></tr>
+      <tr><td>几何求解</td><td>Python（无重依赖）</td><td>四面展开 / 腿链缝合 / 层位投票</td></tr>
+      <tr><td>验证</td><td>pytest + 五规则 Harness</td><td>700+ 用例；strict 导出阻断</td></tr>
+      <tr><td>交付</td><td>GLB / model.json / version.json</td><td>three.js 查看器；SHA 指纹链</td></tr>
+      <tr><td>（休眠）MLLM</td><td>Kimi 视觉链</td><td>扫描图路径存在但当前离线休眠，不是依赖</td></tr>
+    </table>
+    <p class="footnote">
+      刻意的架构选择：核心链路不依赖任何外部模型服务——离线可跑、
+      可审计、可复现是硬约束。
+    </p>
+  </section>
+
+  <section class="block" style="border-bottom:none">
+    <h2>唯一的硬门槛</h2>
+    <div class="card" style="max-width:640px">
+      <p style="font-size:16px">
+        <b>诚实性契约</b>：不粉饰失败、不冒充口径、不注入不可追溯的
+        「魔法数字」。见 <a href="about.html">关于页的四条铁律</a>——
+        违反任何一条，交付即无效。这一条对所有参与者同样适用。
+      </p>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div style="color:var(--ink-dim)">
+      <a href="about.html">← 关于</a> ·
+      <a href="index.html">返回首页</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

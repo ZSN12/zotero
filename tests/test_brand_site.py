@@ -16,7 +16,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SITE = REPO / "web" / "site"
 
-PAGES = ("index.html", "product.html", "demo.html", "opensource.html", "about.html")
+PAGES = ("index.html", "product.html", "demo.html", "research.html",
+         "opensource.html", "about.html", "careers.html")
 
 
 class BrandSiteStructureTest(unittest.TestCase):
@@ -44,21 +45,26 @@ class BrandSiteStructureTest(unittest.TestCase):
                     f"{page} 断链：{href}")
 
     def test_caliber_honesty_in_copy(self):
-        """口径纪律落在文案上：99.7% 只能以辅助/重建语境出现。"""
+        """口径纪律落在文案上：高召回只能以辅助/重建语境出现。
+
+        基线数字锚点（2026-09-05 全量实测）：pure 304 TP /
+        recon 1067 TP / R 99.6%。刷新基线时同步更新此处锚点。
+        """
         home = (SITE / "index.html").read_text(encoding="utf-8")
-        # 主口径卡片：纯直读 tag + 220 TP
+        # 主口径卡片：纯直读 tag + 304 TP（P 63.5 / R 28.4）
         self.assertIn("纯直读", home)
-        self.assertIn("220", home)
+        self.assertIn("304", home)
+        self.assertIn("63.5%", home)
         # 重建并集卡片必须带辅助口径 tag + 明示「仅内部归因」
         self.assertIn("重建并集", home)
         self.assertIn("仅内部归因", home)
-        # 99.7 出现处，同卡片必须含「重建」或「辅助」字样（粗校验：
+        # 99.6 出现处，同卡片必须含「重建」或「辅助」字样（粗校验：
         # 数字所在行 200 字内含口径限定词）
-        for m in re.finditer(r"99\.7%", home):
+        for m in re.finditer(r"99\.6%", home):
             ctx = home[max(0, m.start() - 200):m.end() + 200]
             self.assertTrue(
-                ("重建" in ctx) or ("辅助" in ctx) or ("dual-union" in ctx),
-                "99.7% 出现处 200 字内无重建/辅助口径限定词（口径纪律违例）")
+                ("重建" in ctx) or ("辅助" in ctx) or ("recon" in ctx),
+                "99.6% 出现处 200 字内无重建/辅助口径限定词（口径纪律违例）")
 
     def test_server_routes_site_pages(self):
         """web/server.py 提供 /site/* 路由（镜像 /demo/ 白名单模式）。"""

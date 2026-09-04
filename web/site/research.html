@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>研究 — Engineering Traceability</title>
+<meta name="description" content="评测体系与口径纪律：五层口径分层、换塔泛化、层位证据投票（LevelGridSolver）、诚实呈报基线。全部指标可复现。" />
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <span class="brand">Engineering<span class="dot">·</span>Traceability</span>
+  <a href="index.html">首页</a>
+  <a href="product.html">产品能力</a>
+  <a href="demo.html">在线演示</a>
+  <a href="research.html" class="active">研究</a>
+  <a href="opensource.html">开源</a>
+  <a href="about.html">关于</a>
+  <a href="careers.html">参与</a>
+  <a class="cta" href="/">进入 Demo →</a>
+</nav>
+
+<div class="wrap">
+
+  <section class="hero" style="padding-bottom:24px">
+    <div class="kicker">研究</div>
+    <h1>评测体系与口径纪律</h1>
+    <p class="lead">
+      我们把「怎么量」看得比「量出来多少」更重。五层口径分开呈报、
+      GT 注入面强制披露、每条指标钉 commit 可复现——<b>红就是红</b>。
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>当前基线 <span style="font-size:14px;color:var(--ink-dim)">（2026-09-05 · 容差 500mm · 匈牙利 1:1）</span></h2>
+    <table>
+      <tr><th>塔型</th><th>口径</th><th>TP</th><th>P</th><th>R</th><th>说明</th></tr>
+      <tr><td rowspan="2"><b>35A1-JC1</b></td>
+          <td><span class="caliber-tag pure">dual-view-pure</span></td>
+          <td><b>304</b></td><td>63.5%</td><td>28.4%</td>
+          <td>对外主口径：仅图面直读（recognized）</td></tr>
+      <tr><td><span class="caliber-tag assist">dual-view-recon</span></td>
+          <td>1067</td><td>30.1%</td><td>99.6%</td>
+          <td>重建并集（含层表/模板补全），仅内部归因</td></tr>
+      <tr><td rowspan="2"><b>35A2-ZC1</b></td>
+          <td><span class="caliber-tag pure">dual-view-pure</span></td>
+          <td>9</td><td>6.2%</td><td>3.2%</td>
+          <td>换塔泛化：只改配置不改引擎代码</td></tr>
+      <tr><td><span class="caliber-tag assist">dual-view-recon</span></td>
+          <td>216</td><td>8.0%</td><td>75.8%</td>
+          <td>同上，重建并集口径</td></tr>
+    </table>
+    <p class="footnote">
+      复现：<code>python3 scripts/eval_a2_profiles.py examples/gt/&lt;tower&gt;_ground_truth.json &lt;model.json&gt;</code>。
+      基线快照见 <code>out/&lt;tower&gt;-full-deliver/a2_dual_view.json</code> 与 version.json 指纹链。
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>五层口径：为什么必须分层呈报</h2>
+    <table>
+      <tr><th>口径</th><th>入池条件</th><th>用途</th></tr>
+      <tr><td><b>pure</b></td><td>仅图面直读杆（dxf_geom / diag_synth 等识别 origin）</td><td><b>对外唯一主口径</b>——真实识别能力</td></tr>
+      <tr><td><b>reconstructed</b></td><td>pure + 镜像孪生 + 层表补全</td><td>内部归因（上限测试），不得冒充直读</td></tr>
+      <tr><td><b>level_assisted</b></td><td>+ 设计标高表辅助</td><td>消融实验（GT 层位 vs DXF 层位归因）</td></tr>
+      <tr><td><b>parametric</b></td><td>+ 参数化外推（底段收分规律）</td><td>底段无图源区域的能力边界</td></tr>
+      <tr><td><b>full</b></td><td>全部</td><td>管线端到端健全性</td></tr>
+    </table>
+    <p class="footnote">
+      纪律：任何对外材料引用数字必须带口径标签；重建口径冒充直读 = 交付无效。
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>层位证据投票（LevelGridSolver）</h2>
+    <p class="lead" style="margin-bottom:20px">
+      塔身 z 层位网格由<b>图纸证据投票</b>自推，不注入塔专属 GT 常数：
+      梁标注层（w3）+ 尺寸链节拍锚（w2）+ 册基准面（w2）做锚骨架，
+      杆件端点直方图（核桶链 + 贪心剥峰）补几何层。每层带 provenance 可审计。
+    </p>
+    <div class="grid c3">
+      <div class="card">
+        <div class="num ok">97.6%</div>
+        <div class="label">JC1 终止层命中（可绘制区 40/41）<br/>GT 表只做离线验证，不进求解</div>
+      </div>
+      <div class="card">
+        <div class="num ok">100%</div>
+        <div class="label">ZC1 终止层命中（33/33）<br/>换塔零调参（同参数两塔共用）</div>
+      </div>
+      <div class="card">
+        <div class="num ok">A/B 持平</div>
+        <div class="label">断链层换投票网格后<br/>双塔 TP 零回退（JC1 304=304 / ZC1 9=9）</div>
+      </div>
+    </div>
+    <p class="footnote">
+      不可去 GT 化的边界也实测论证并记档（横隔层子集 / 环梁构型 / 跨度白名单——
+      详见 docs/LEVEL_GRID_SOLVER_DESIGN.md §6a）：哪些信息图纸里有、哪些没有，
+      说清楚比全替换更重要。
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>可观测性上限（为什么 100% 不存在）</h2>
+    <table>
+      <tr><th>因素</th><th>量（JC1）</th><th>含义</th></tr>
+      <tr><td>front 视图不可见</td><td>213 杆</td><td>侧视/横杆投影退化，单视上限 ≈ 80.1%</td></tr>
+      <tr><td>y_member 不可测</td><td>87 杆</td><td>三维空间杆在双视投影下均无几何信息</td></tr>
+      <tr><td>深度方向重叠损失</td><td>126 杆</td><td>前后排杆件投影重合，双视并集也无法分辨</td></tr>
+      <tr><td>基座区无图源</td><td>z&lt;6500</td><td>基础详图不画塔身结构，参数化外推不计入 pure</td></tr>
+    </table>
+    <p class="footnote">
+      这些不是借口，是可计算的天花板——每项都可用同一评测脚本复核。
+      我们报「扣掉天花板后的可达率」，不报修饰过的分母。
+    </p>
+  </section>
+
+  <section class="block" style="border-bottom:none">
+    <h2>发表物与复现</h2>
+    <div class="grid c2">
+      <div class="card">
+        <h3>📊 评测脚本</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          eval_a2_profiles.py（五层口径）· evaluate_ground_truth.py（分角色/来源）
+          · validate_level_grid.py（层位网格门禁 85%）· acceptance.sh（总门禁）
+        </p>
+      </div>
+      <div class="card">
+        <h3>📝 技术文档</h3>
+        <p style="color:var(--ink-dim);font-size:14.5px">
+          docs/ 下 40+ 篇设计/诊断/裁决记录——包括失败实验（P4.3 高斯密度
+          分裂被撤回）与注入事故复盘（P2.6 span 注入回滚）。
+        </p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div style="color:var(--ink-dim)">
+      <a href="product.html">← 产品能力</a> ·
+      <a href="opensource.html">开源 →</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -13,8 +13,10 @@
   <a href="index.html">首页</a>
   <a href="product.html" class="active">产品能力</a>
   <a href="demo.html">在线演示</a>
+  <a href="research.html">研究</a>
   <a href="opensource.html">开源</a>
   <a href="about.html">关于</a>
+  <a href="careers.html">参与</a>
   <a class="cta" href="/">进入 Demo →</a>
 </nav>
 
@@ -97,6 +99,33 @@
       </div>
     </div>
   </section>
+
+  <section class="block" style="border-bottom:none">
+    <h2>三维交付交互 <span style="font-size:14px;color:var(--ink-dim)">（真实管线产物 · 非渲染示意图）</span></h2>
+    <p class="lead" style="margin-bottom:16px">
+      下面的塔不是美术资产——是 35A1-JC1 六册 DXF 走完 L1–L6 管线后导出的
+      GLB 交付（canonical 口径）。拖拽旋转 / 滚轮缩放 / 右键平移；
+      <a href="/demo/jc1.html">全功能查看器</a>还带来源过滤、GT 叠加与 diff。
+    </p>
+    <div id="glb-stage" style="position:relative;height:520px;border-radius:12px;overflow:hidden;background:#0d1015;border:1px solid var(--line)">
+      <div id="glb-hint" style="position:absolute;left:14px;top:12px;z-index:2;font-size:12.5px;color:#9aa4b2">
+        🖱 拖拽旋转 · 滚轮缩放 · 右键平移 · 双击复位
+      </div>
+      <div id="glb-legend" style="position:absolute;right:14px;bottom:12px;z-index:2;font-size:12px;color:#c7d0dc;background:rgba(0,0,0,.55);border-radius:8px;padding:8px 12px">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#7fb0ff;margin-right:6px;vertical-align:middle"></span>主腿
+        <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ffd479;margin:0 6px 0 14px;vertical-align:middle"></span>斜材
+        <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#8ee6a8;margin:0 6px 0 14px;vertical-align:middle"></span>横杆/横隔
+      </div>
+      <div id="glb-loading" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;color:#9aa4b2;font-size:14px">
+        模型加载中…（约 1MB）
+      </div>
+    </div>
+    <p class="footnote">
+      同一 GLB 可离线复现：<code>python3 scripts/run_35A1_jc1_full.py</code> →
+      <code>out/35A1-JC1-full-deliver/canonical.glb</code>。查看器 three.js 本地渲染，
+      不上传数据。
+    </p>
+  </section>
 </div>
 
 <footer>
@@ -107,6 +136,107 @@
     </div>
   </div>
 </footer>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+// 品牌站内嵌 GLB 查看器（P3）：真实管线交付物交互。
+// 轻量版——OrbitControls + 惰性加载 + 角色配色（与全功能
+// /demo/jc1.html 同源资产 latest_deliver/canonical.glb）。
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const stage = document.getElementById('glb-stage');
+const loading = document.getElementById('glb-loading');
+if (stage) {
+  const W = () => stage.clientWidth, H = () => stage.clientHeight;
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(W(), H());
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = (() => {
+    const c = document.createElement('canvas'); c.width = 2; c.height = 256;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, '#2a3550'); grad.addColorStop(0.6, '#161c26'); grad.addColorStop(1, '#0d1015');
+    g.fillStyle = grad; g.fillRect(0, 0, 2, 256);
+    return new THREE.CanvasTexture(c);
+  })();
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+  const camera = new THREE.PerspectiveCamera(45, W() / H(), 10, 100000);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.autoRotate = true;          // 无操作 3 秒后恢复自转
+  controls.autoRotateSpeed = 0.6;
+  let idleTimer = null;
+  controls.addEventListener('start', () => {
+    controls.autoRotate = false;
+    clearTimeout(idleTimer);
+  });
+  controls.addEventListener('end', () => {
+    idleTimer = setTimeout(() => { controls.autoRotate = true; }, 3000);
+  });
+  const home = () => {
+    camera.position.set(26000, 22000, 34000);
+    controls.target.set(0, 16000, 0);
+    controls.update();
+  };
+  home();
+  renderer.domElement.addEventListener('dblclick', home);
+
+  // 角色配色（与全功能查看器一致：腿蓝/斜黄/横绿）
+  const ROLE_COLORS = [
+    [/LEG/i, 0x7fb0ff], [/DIAG/i, 0xffd479],
+    [/HORIZ|CROSS/i, 0x8ee6a8],
+  ];
+  const matCache = {};
+  new GLTFLoader().load('/demo/35A1-JC1/latest_deliver/canonical.glb', (gltf) => {
+    const model = gltf.scene;
+    const bbox = new THREE.Box3().setFromObject(model);
+    const cz = (bbox.min.z + bbox.max.z) / 2;
+    model.position.set(-(bbox.min.x + bbox.max.x) / 2, -(bbox.min.y + bbox.max.y) / 2, -cz);
+    model.traverse((o) => {
+      if (!o.isMesh) return;
+      const role = (o.userData && (o.userData.role || o.userData.kind || o.name)) || '';
+      let color = 0xb9c4d4;
+      for (const [re, c] of ROLE_COLORS) if (re.test(String(role))) { color = c; break; }
+      const key = String(color);
+      matCache[key] = matCache[key] || new THREE.MeshStandardMaterial({
+        color, metalness: 0.35, roughness: 0.55 });
+      o.material = matCache[key];
+    });
+    scene.add(model);
+    loading.remove();
+  });
+
+  const grid = new THREE.GridHelper(60000, 60, 0x2c3646, 0x1c232e);
+  grid.position.y = 0;
+  scene.add(grid);
+
+  new ResizeObserver(() => {
+    camera.aspect = W() / H();
+    camera.updateProjectionMatrix();
+    renderer.setSize(W(), H());
+  }).observe(stage);
+
+  (function tick() {
+    requestAnimationFrame(tick);
+    controls.update();
+    renderer.render(scene, camera);
+  })();
+}
+</script>
 
 </body>
 </html>
