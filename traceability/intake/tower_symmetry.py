@@ -578,6 +578,17 @@ def expand_4_face_symmetry_model(
         _pl_override = spec.get("gt_platform_levels_override") or []
         if _pl_override:
             panel_levels = sorted({float(z) for z in _pl_override})
+    elif level_source == "level_grid":
+        # P2 D3（2026-09-05）：平台层候选 = LevelGridSolver 网格的
+        # marker 锚层（beam_marker_levels 图纸梁标注证据，非 GT 表）。
+        # 纯 DXF 路径（横隔层不再走 gt_diaphragm 覆盖——全量网格层，
+        # 与 "dxf" 源同语义）。
+        _mk: List[float] = []
+        for _stem, _cfg in (spec.get("centerline_extract") or {}).items():
+            if isinstance(_cfg, dict):
+                _mk.extend(
+                    float(z) for z in (_cfg.get("beam_marker_levels_mm") or []))
+        panel_levels = sorted(set(_mk))
     elif level_source == "dxf":
         # P4.2 实测结论（2026-08-31）：v2 主腿断点在真实 merge 节点集上
         # 不可靠（碎片化链图 → 断点只剩 1 个，层推导退化为 5 层，full

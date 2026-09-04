@@ -205,6 +205,10 @@ def main() -> int:
                         help="P2 D2a：腿链断链层来源。level_grid=LevelGridSolver 投票网格"
                              "（DXF 证据自推，无 GT 表）；默认 gt=原 GT terminal 表"
                              "（研究对照口径不变）。A/B 注入：脚本层覆盖 + 独立输出目录")
+    parser.add_argument("--panel-source", choices=["gt", "level_grid"], default=None,
+                        help="P2 D3：平台层来源。level_grid=marker 锚层（图纸梁标注，"
+                             "非 GT 表）+纯 DXF 下游（横隔全量层/terminal_pair 关闭）；"
+                             "默认 gt=GT 平台表（canonical 口径）")
     args = parser.parse_args()
 
     overlay = full_overlay()
@@ -252,19 +256,33 @@ def main() -> int:
     if args.selection_mode:
         overlay["diagonal_topology_selection_mode"] = args.selection_mode
 
+    _ab_dir_taken = False
     if args.break_source == "level_grid":
         # P2 D2a：断链层换投票网格。脚本层覆盖（共享 overlay 不动），
         # 独立输出目录，不进 demo 同步（A/B 对照跑批）。
         overlay["leg_chain_stitch_break_source"] = "level_grid"
         if not args.out_dir:
             out_dir = REPO / "out/35A1-JC1-lgrid"
+        _ab_dir_taken = True
         args.skip_sync = True
         print(f"断链层来源: level_grid（投票网格，无 GT 表）→ {out_dir}")
     elif args.break_source == "gt":
         overlay["leg_chain_stitch_break_source"] = "gt"
         print("断链层来源: gt（GT terminal 表，原口径）")
 
-    if args.selection_mode or args.break_source:
+    if args.panel_source == "level_grid":
+        # P2 D3：平台层换 marker 锚层（图纸证据）+ 纯 DXF 下游语义。
+        overlay["panel_level_source"] = "level_grid"
+        if not args.out_dir and not _ab_dir_taken:
+            out_dir = REPO / "out/35A1-JC1-pgrid"
+        args.skip_sync = True
+        print(f"平台层来源: level_grid（marker 锚层，纯 DXF 下游）→ {out_dir}")
+    elif args.panel_source == "gt":
+        overlay["panel_level_source"] = "gt"
+        overlay["use_gt_platform_levels"] = True
+        print("平台层来源: gt（GT 平台表，canonical 口径）")
+
+    if args.selection_mode or args.break_source or args.panel_source:
         out_dir.mkdir(parents=True, exist_ok=True)
         tmp_sel = out_dir / "_overlay_ab.json"
         tmp_sel.write_text(json.dumps(overlay, ensure_ascii=False, indent=2), encoding="utf-8")
