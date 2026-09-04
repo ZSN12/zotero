@@ -1715,6 +1715,15 @@
   },
   "panel_cross_skip_pairs": false,
   "leg_chain_stitch_break_terminal": true,
+  "cross_sheet_leg_spans_mm": [
+    [9000.0, 14000.0],
+    [10000.0, 14000.0],
+    [11000.0, 14000.0],
+    [11500.0, 14500.0],
+    [11800.0, 14400.0],
+    [15000.0, 19000.0],
+    [16000.0, 19000.0]
+  ],
   "terminal_pair_structure": true,
   "side_horiz_synth": true,
   "parametric_base_skirt_depth_mm": 2500.0,
