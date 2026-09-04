@@ -27,34 +27,16 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..model import Component, EngineeringModel, SourceRef, SourceType
 
-# 权威默认源：国网官方资料包里的 GIM .mod 与计算文件 .NODE。
-# P3-7（2026-09-04）：去掉机器特定的 ~/Downloads 硬编码——换机器/换塔
-# 即静默指向不存在的路径。解析顺序：
-#   ① 环境变量 ETRACE_MOD / ETRACE_NODE（部署/CI 显式指定）
-#   ② 仓库 examples/external 下按官方资料包结构查找（随包分发时）
-#   ③ 旧 ~/Downloads 原始路径（本机历史行为兜底，保留兼容）
-# 交付管线（delivery.py）不受影响：它显式传 overlay 的
-# canonical_tower 路径，不走这里的默认值。
-import os
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_OFFICIAL_PKG = "输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)"
-_env_mod = os.environ.get("ETRACE_MOD")
-_env_node = os.environ.get("ETRACE_NODE")
-_repo_mod = _REPO_ROOT / "examples/external" / _OFFICIAL_PKG / \
-    "GIM/35A1/35A1-JC1/35A1-JC1-GIM输出/解析成果/35A1-JC1.mod"
-_repo_node = _REPO_ROOT / "examples/external" / _OFFICIAL_PKG / \
-    "计算文件/35A/35A1/35A1-JC1/35A1-JC1.NODE"
-_downloads_mod = Path.home() / "Downloads" / _OFFICIAL_PKG / \
-    "GIM/35A1/35A1-JC1/35A1-JC1-GIM输出/解析成果/35A1-JC1.mod"
-_downloads_node = Path.home() / "Downloads" / _OFFICIAL_PKG / \
-    "计算文件/35A/35A1/35A1-JC1/35A1-JC1.NODE"
+# 权威默认源：国网官方资料包里的 GIM .mod 与计算文件 .NODE
 DEFAULT_MOD = (
-    Path(_env_mod) if _env_mod
-    else (_repo_mod if _repo_mod.is_file() else _downloads_mod)
+    Path.home() / "Downloads"
+    / "输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)"
+    / "GIM/35A1/35A1-JC1/35A1-JC1-GIM输出/解析成果/35A1-JC1.mod"
 )
 DEFAULT_NODE = (
-    Path(_env_node) if _env_node
-    else (_repo_node if _repo_node.is_file() else _downloads_node)
+    Path.home() / "Downloads"
+    / "输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)"
+    / "计算文件/35A/35A1/35A1-JC1/35A1-JC1.NODE"
 )
 
 # 仓库内已提纯的 GT（标准 30m 呼高单塔，来自 计算 .NODE + GIM .mod）

@@ -503,38 +503,17 @@ def _dedup_exact_overlap_segments(
     """
     if not raw_segments:
         return raw_segments
-    # P3-7（2026-09-04）：空间网格索引替代全量对比——旧 O(n²) 双循环在
-    # 万级杆件图纸下可感知（每段与全部已保留段比端点）。重合对必然
-    # 端点近距，按端点网格分桶（桶宽 = 2*tol）后只在桶邻域比对；
-    # 判定逻辑与旧版逐字一致（d1/d2 判据不变，保留先出现者）。
-    _cell = max(2.0 * tol_units, 1e-9)
-    grid: Dict[Tuple[int, int], List[int]] = {}
     kept: List[Dict] = []
-
-    def _bucket(p) -> Tuple[int, int]:
-        return (math.floor(p[0] / _cell), math.floor(p[1] / _cell))
-
     for seg in raw_segments:
-        b1, b2 = _bucket(seg["start"]), _bucket(seg["end"])
         dup = False
-        # 候选只可能在「起点桶或终点桶 3x3 邻域」命中的已保留段里
-        cand_idx: set = set()
-        for (bx, by) in (b1, b2):
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    cand_idx.update(grid.get((bx + dx, by + dy), ()))
-        for i in cand_idx:
-            k = kept[i]
+        for k in kept:
             d1 = _dist(seg["start"], k["start"]) + _dist(seg["end"], k["end"])
             d2 = _dist(seg["start"], k["end"]) + _dist(seg["end"], k["start"])
             if min(d1, d2) < 2.0 * tol_units:
                 dup = True
                 break
         if not dup:
-            idx = len(kept)
             kept.append(seg)
-            for b in (b1, b2):
-                grid.setdefault(b, []).append(idx)
     return kept
 
 

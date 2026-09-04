@@ -19,6 +19,28 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
+# P3-7（2026-09-04）：补齐安装元数据——此前无 build-system/dependencies/
+# scripts，pip install 直接失败。依赖按实际 import 测绘（核心管线
+# ezdxf + numpy + scipy；shapely/trimesh 仅连接件网格与 GLB 导出路径
+# 用，Pillow 仅 MLLM 图像路径用，一并声明避免可选路径装完即断）。
+dependencies = [
+    "ezdxf>=1.0",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "shapely>=2.0",
+    "trimesh>=3.20",
+    "Pillow>=9.0",
+]
+
+[project.scripts]
+etrace = "traceability.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["traceability*"]
 
 [tool.pytest.ini_options]
 # 阶段8.3 测试分层：默认只跑快层（unit/pipeline，秒级~分钟内）；

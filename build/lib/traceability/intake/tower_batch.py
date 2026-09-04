@@ -1,0 +1,584 @@
+"""铁塔批量接入（A3 / B7 / F2）。
+
+目录内全部 DWG → DXF → 逐文件 intake，汇总 layer 报告；
+可选把同一塔型多文件合并为一个 EngineeringModel。
+
+原则：
+    * 每个输入文件都有一条 per-file 结果（F2 steps.json 数据源）
+    * 图签/明细类文件标记 drawing_kind，不计入「杆件解析失败」
+    * 合并时节点保留来源文件与 placeholder 语义，绝不臆造坐标
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from ..model import Component, Dimension, EngineeringModel, SourceRef, SourceType
+from .dwg import ensure_dxf_batch
+from .tower_dxf import classify_drawing_kind, resolve_drawing_kind, extract_tower_from_dxf, layer_usage_report
+from .tower_spec import should_use_cross_file_merge
+from .tower_views import _model_stem
+
+
+def intake_tower_batch(
+    input_dir: str | Path,
+    out_dir: str | Path,
+    layer_map_path: Optional[str | Path] = None,
+    merge: bool = False,
+) -> Dict[str, Any]:
+    """批量接入目录内全部 DWG/DXF。
+
+    返回 {
+        "files": [...],         # 每文件 {file, dxf, kind, bars, nodes, layers, error}
+        "layer_report": {...},  # 汇总图层使用
+        "model_path": Optional[str],   # merge=True 时写出的合并模型
+        "models_by_stem": {stem: EngineeringModel},  # 内存模型（供下游复用，避免二次解析）
+        "sheet_model_paths": {stem: path},           # per-sheet model.json 落盘路径
+        "ok": bool,
+    }
+    """
+    input_dir = Path(input_dir)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # A3：目录内全部 DWG 转 DXF
+    dxf_dir = out_dir / "dxf"
+    dxf_dir.mkdir(parents=True, exist_ok=True)
+    dxf_paths = ensure_dxf_batch(input_dir, dxf_dir)
+
+    files: List[Dict[str, Any]] = []
+    models: List[EngineeringModel] = []
+    models_by_stem: Dict[str, EngineeringModel] = {}
+    sheet_model_paths: Dict[str, str] = {}
+    layer_aggregate: Dict[str, Any] = {"files": {}, "total_entities": 0}
+    all_ok = True
+
+    for dxf in sorted(dxf_paths):
+        stem = Path(dxf).stem
+        kind = resolve_drawing_kind(stem, overlay=layer_map_path)
+        entry: Dict[str, Any] = {
+            "file": stem,
+            "dxf": dxf,
+            "kind": kind["kind"],
+            "parse_bars": kind["parse_bars"],
+            "bars": 0,
+            "nodes": 0,
+            "labeled": 0,
+            "association_rate": 0.0,
+            "error": None,
+        }
+        try:
+            usage = layer_usage_report(dxf, layer_map_path=layer_map_path)
+            entry["layers"] = usage
+            layer_aggregate["files"][stem] = usage
+            layer_aggregate["total_entities"] += usage.get("total_entities", 0)
+
+            model = extract_tower_from_dxf(dxf, layer_map_path=layer_map_path)
+            bars = [c for c in model.components.values() if c.kind == "tower_bar"]
+            nodes = [c for c in model.components.values() if c.kind == "tower_node"]
+            labeled = [c for c in bars if not str(c.properties.get("bar_id", "")).startswith("UNLABELED")]
+            entry.update({
+                "bars": len(bars),
+                "nodes": len(nodes),
+                "labeled": len(labeled),
+                "association_rate": round(len(labeled) / len(bars), 4) if bars else 0.0,
+            })
+            # 图签/明细不计入解析失败（B2）
+            if not kind["parse_bars"]:
+                entry["note"] = kind["reason"]
+            models.append(model)
+            # P1-4：保留内存模型 + 落盘 per-sheet model，供 cross_file_batch 等
+            # 下游直接复用，禁止再次调用 extract_tower_from_dxf。
+            model.name = stem
+            models_by_stem[stem] = model
+            sheet_path = out_dir / f"{stem}.json"
+            from ..io import save_model
+            save_model(model, sheet_path)
+            sheet_model_paths[stem] = sheet_path.as_posix()
+        except Exception as exc:  # 单文件失败不中断整批
+            entry["error"] = str(exc)
+            all_ok = False
+
+        files.append(entry)
+
+    model_path: Optional[str] = None
+    cross_file_dup: Dict[str, Any] = {}
+    merge_report: Dict[str, Any] = {}
+    if merge and models:
+        if should_use_cross_file_merge(layer_map_path):
+            from ..intake.tower_pipeline import finalize_tower_model
+
+            merged = merge_cross_file_views(models, layer_map_path=layer_map_path)
+            merged = finalize_tower_model(
+                merged, merge=True, layer_map_path=layer_map_path,
+            )
+            merge_report = {
+                "mode": "cross_file_view",
+                "files": len(models),
+                "view_mode": (
+                    merged.components.get("drawing_file") or Component(
+                        id="drawing_file", name="", kind="drawing_file", properties={},
+                    )
+                ).properties.get("view_mode"),
+                "bars": sum(1 for c in merged.components.values() if c.kind == "tower_bar"),
+                "nodes_solved": sum(
+                    1 for c in merged.components.values()
+                    if c.kind == "tower_node" and c.properties.get("solve_status") == "solved"
+                ),
+                "nodes_derived_y": sum(
+                    1 for c in merged.components.values()
+                    if c.kind == "tower_node"
+                    and c.properties.get("y_origin") == "z_peer_interpolate"
+                ),
+                "gussets_anchored": sum(
+                    1 for c in merged.components.values()
+                    if c.kind == "gusset_plate"
+                    and c.properties.get("solve_status") == "verified"
+                    and c.properties.get("polygon_global")
+                ),
+            }
+        else:
+            merged = merge_tower_models(models)
+            merge_report = {"mode": "id_prefix_merge", "files": len(models)}
+        cross_file_dup = cross_file_bar_id_report(models)
+        model_path = (out_dir / "model.json").as_posix()
+        from ..io import save_model
+        save_model(merged, model_path)
+
+    # per-file 结果写入 batch_report.json（F2 steps.json 数据源）
+    (out_dir / "batch_report.json").write_text(
+        json.dumps({"ok": all_ok, "files": files, "layer_report": layer_aggregate,
+                    "cross_file_bar_id_dup": cross_file_dup,
+                    "merge_report": merge_report},
+                   ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    return {
+        "ok": all_ok,
+        "files": files,
+        "layer_report": layer_aggregate,
+        "cross_file_bar_id_dup": cross_file_dup,
+        "merge_report": merge_report,
+        "model_path": model_path,
+        "models_by_stem": models_by_stem,
+        "sheet_model_paths": sheet_model_paths,
+        "batch_report": (out_dir / "batch_report.json").as_posix(),
+    }
+
+
+def cross_file_bar_id_report(models: List[EngineeringModel]) -> Dict[str, Any]:
+    """P0-5：按 bar_id 跨文件去重报告。
+
+    同一件号（bar_id）出现在多个文件时，可能表示立面/平面分文件里重复标注
+    同一物理杆件，也可能只是件号巧合。这里只如实列出，不自动去重、不改号，
+    交由人工核对（r_no_duplicate_bar_id 语义在单文件内，跨文件需人工判断）。
+
+    返回 {
+        "total_bar_ids": int,
+        "cross_file_groups": [{bar_id, files: [stem], count}],
+        "duplicate_count": int,
+    }
+    """
+    from collections import defaultdict
+
+    bar_id_files: Dict[str, List[str]] = defaultdict(list)
+    for model in models:
+        stem = model.name.removeprefix("tower-") if model.name.startswith("tower-") else model.name
+        for comp in model.components.values():
+            if comp.kind != "tower_bar":
+                continue
+            bid = str(comp.properties.get("bar_id", ""))
+            if not bid or bid.startswith("UNLABELED"):
+                continue
+            if stem not in bar_id_files[bid]:
+                bar_id_files[bid].append(stem)
+
+    cross_groups = [
+        {"bar_id": bid, "files": sorted(files), "count": len(files)}
+        for bid, files in sorted(bar_id_files.items())
+        if len(files) > 1
+    ]
+    return {
+        "total_bar_ids": len(bar_id_files),
+        "cross_file_groups": cross_groups,
+        "duplicate_count": len(cross_groups),
+    }
+
+
+def merge_cross_file_views(
+    models: List[EngineeringModel],
+    layer_map_path: Optional[str | Path | dict] = None,
+) -> EngineeringModel:
+    """Phase D：多文件 DWG 按 view_type 真合并（走 merge_view_coordinates）。
+
+    与 merge_tower_models 的 ID 前缀拼接不同：保留各文件 view_type/局部坐标，
+    供 finalize_tower_model(merge=True) 做三视图线性解耦。
+
+    Phase A2 硬边界：传入 layer_map_path 时，只有 overlay 声明为
+    elevation/plan/section（front/side 视为 elevation 历史名）且带 axes 的
+    图纸才参与空间合并；module_panel / node_detail / index / title 一律跳过，
+    绝不把大样/模块页当立面叠坐标。未传 layer_map_path 时保留旧行为。
+    """
+    from .tower_spec import sheet_is_spatial_mergeable
+
+    merged = EngineeringModel(name="tower-cross-file-merged")
+    view_kinds: set = set()
+    beat_by_sheet: Dict[str, Any] = {}
+    source_files: List[str] = []
+    skipped_sheets: List[str] = []
+    # P0-2/P1-1（2026-09-03 审计）：聚合各册 evidence_layer 普查——
+    # 此前合并丢弃 per-sheet drawing_file（只透传节拍锚点），
+    # observations 普查与 drawing_file→dim 观测的 DAG 边全部丢失，
+    # 最终 model.json 只剩 tower_symmetry 后写的 hypotheses。
+    _ev_census: Dict[str, Dict[str, int]] = {}
+
+    for model in models:
+        stem = _model_stem(model) or model.name
+        if layer_map_path is not None and not sheet_is_spatial_mergeable(
+            stem, overlay=layer_map_path
+        ):
+            skipped_sheets.append(stem)
+            continue
+        source_files.append(stem)
+        prefix = f"{stem}__"
+        df = model.components.get("drawing_file")
+        if df:
+            vk = df.properties.get("view_kinds") or []
+            view_kinds.update(vk)
+            # P2.1：透传该册 DIMENSION 节拍锚点到合并模型（供
+            # merge_view_coordinates 的分位数归一化替换为节拍分段映射）
+            _ba = df.properties.get("dimension_beat_anchors")
+            if isinstance(_ba, dict) and _ba.get("vy") and _ba.get("z"):
+                beat_by_sheet[stem] = _ba
+            # P0-2：evidence_layer 普查跨册累加（observations/hypotheses
+            # 各子键计数求和；hypotheses 后面由 tower_symmetry 重写最终值）
+            _el = df.properties.get("evidence_layer") or {}
+            if isinstance(_el, dict):
+                for _k, _sub in _el.items():
+                    if not isinstance(_sub, dict):
+                        # Bug B（2026-09-03）：字符串型留痕键
+                        # （dim_scale_calibration_skipped_reason）透传到
+                        # 合并模型——静默消失违背「未声明则跳过并留痕」。
+                        if (isinstance(_sub, str)
+                                and _k.endswith("_skipped_reason")):
+                            _reasons = _ev_census.setdefault(_k, {})
+                            _reasons[stem] = _sub
+                        continue
+                    _bucket = _ev_census.setdefault(str(_k), {})
+                    for _kk, _vv in _sub.items():
+                        if isinstance(_vv, int):
+                            _bucket[str(_kk)] = _bucket.get(str(_kk), 0) + _vv
+
+        for cid, comp in model.components.items():
+            if comp.kind == "drawing_file":
+                continue
+            new_id = f"{prefix}{cid}"
+            props = dict(comp.properties)
+            props.setdefault("source_file", stem)
+            props.setdefault("drawing_view", stem)
+            merged.add_component(type(comp)(
+                id=new_id,
+                name=f"[{stem}] {comp.name}",
+                kind=comp.kind,
+                source=comp.source,
+                properties=props,
+                tags=list(comp.tags),
+            ))
+
+        for did, dim in model.dimensions.items():
+            merged.add_dimension(Dimension(
+                id=f"{prefix}{did}",
+                name=dim.name,
+                value=dim.value,
+                unit=dim.unit,
+                origin=dim.origin,
+                source=dim.source,
+                applies_to=(f"{prefix}{dim.applies_to}" if dim.applies_to else None),
+                status=dim.status,
+            ))
+
+    # 杆件 from/to 节点引用按来源文件重指
+    for model in models:
+        stem = _model_stem(model) or model.name
+        prefix = f"{stem}__"
+        for cid, comp in model.components.items():
+            if comp.kind != "tower_bar":
+                continue
+            new_bar = merged.components.get(f"{prefix}{cid}")
+            if not new_bar:
+                continue
+            for end in ("from_node", "to_node"):
+                nid = comp.properties.get(end)
+                if nid and f"{prefix}{nid}" in merged.components:
+                    new_bar.properties[end] = f"{prefix}{nid}"
+
+    # P0 架构对齐（2026-09-03 审计）：跨文件合并保留依赖边（前缀重指）。
+    # 此前 dependencies 不随合并迁移——证据层（杆 → obs 观测）与
+    # 镜像杆（→front）的 DAG 边在合并模型里全部丢失。
+    # P1-1 特例：源节点是 per-sheet drawing_file 时不加前缀——组件循环
+    # 跳过了 drawing_file（不复制 per-sheet 实例），前缀重指会指向
+    # 不存在的 {stem}__drawing_file。统一挂到合并模型的 drawing_file：
+    # 「改任一册 DIM 标注 → 合并标定结果 stale」的传播链由此接通。
+    for model in models:
+        stem = _model_stem(model) or model.name
+        prefix = f"{stem}__"
+        _ids = set(model.components) | set(model.dimensions)
+        for node, ups in model.dependencies.items():
+            if not ups:
+                continue
+            new_node = (
+                "drawing_file" if node == "drawing_file"
+                else (f"{prefix}{node}" if node in _ids else node)
+            )
+            new_ups = {f"{prefix}{u}" if u in _ids else u for u in ups}
+            merged.dependencies.setdefault(new_node, set()).update(new_ups)
+
+    # 合并 drawing_file：指向主立面 stem（供 view_regions 查找 overlay）
+    primary = source_files[0] if source_files else "cross_file"
+    for stem in source_files:
+        regions = []
+        if layer_map_path:
+            from .tower_spec import view_regions, should_use_cross_file_merge
+            regions = view_regions(stem, overlay=layer_map_path)
+        if any(r.get("kind") == "front" for r in regions):
+            primary = stem
+            break
+
+    _merged_df_props: Dict[str, Any] = {
+            "drawing_view": primary,
+            "path": primary,
+            "view_mode": "cross_file_multi_view",
+            "view_kinds": sorted(view_kinds),
+            "source_files": source_files,
+            "merge_method": "merge_view_coordinates",
+            # Phase A2：被空间合并边界剔除的图纸（大样/模块页/目录等）
+            "spatial_merge_skipped_sheets": skipped_sheets,
+            "spatial_merge_filter": "elevation|plan|section" if layer_map_path is not None else "none",
+    }
+    if beat_by_sheet:
+        # P2.1：各册 DIMENSION 节拍锚点（key = stem/drawing_view）
+        _merged_df_props["dimension_beat_anchors_by_sheet"] = beat_by_sheet
+    if _ev_census:
+        # P0-2：跨册聚合的证据层普查（observations 计数 + 早期
+        # hypotheses 阶段值；tower_symmetry 稍后 merge 覆写最终值）
+        _merged_df_props["evidence_layer"] = _ev_census
+    merged.add_component(Component(
+        id="drawing_file",
+        name="跨文件合并",
+        kind="drawing_file",
+        properties=_merged_df_props,
+    ))
+    return merged
+
+
+def cross_file_batch(
+    input_dir: str | Path,
+    out_dir: str | Path,
+    layer_map_path: Optional[str | Path] = None,
+    bom_path: Optional[str | Path] = None,
+) -> Dict[str, Any]:
+    """Phase D：闲鱼/国网多 DWG 分文件批量 intake + 真 3D 视图合并。
+
+    立面/平面分文件各自带 view_regions 时，走 merge_cross_file_views +
+    finalize_tower_model(merge=True)，而非 ID 前缀假合并。
+    """
+    from ..intake.tower_pipeline import finalize_tower_model
+    from ..io import save_model
+
+    from .tower_spec import cross_file_merge_stems
+
+    batch = intake_tower_batch(input_dir, out_dir, layer_map_path=layer_map_path, merge=False)
+    merge_stems = cross_file_merge_stems(layer_map_path)
+    models: List[EngineeringModel] = []
+    # P1-4：直接复用 intake_tower_batch 返回的内存模型 models_by_stem，
+    # 禁止再次调用 extract_tower_from_dxf（每张 DXF 只解析一次）。
+    for stem, model in batch.get("models_by_stem", {}).items():
+        if merge_stems and stem not in merge_stems:
+            continue
+        models.append(model)
+
+    merge_report: Dict[str, Any] = {
+        "mode": "cross_file_view",
+        "files": len(models),
+        "merge_stems": sorted(merge_stems) if merge_stems else None,
+        "batch_files": len(batch["files"]),
+    }
+    model_path: Optional[str] = None
+    if models:
+        merged = merge_cross_file_views(models, layer_map_path=layer_map_path)
+        merged = finalize_tower_model(
+            merged, bom_path=bom_path, merge=True, layer_map_path=layer_map_path,
+        )
+        # P3 修复：cross_file_batch 与 deliver_project 路径对齐——当 overlay 启用
+        # enable_4_face_expansion 时，单立面 front 节点经四向镜像展开得到正确 y
+        # （GT 半宽由 use_gt_half_width 权威给出），替代旧的 synthetic_side。
+        # 阶段1.1'：四面展开前先跑来源段门禁（fail-closed）——剔除跨段污染杆
+        # （06 段节点被映射进 04 段 Z 范围的 484 根 dz>8m 由此而来），避免
+        # 污染被镜像复制 4 倍。
+        from .tower_views import enforce_source_segment_gate
+        seg_gate = enforce_source_segment_gate(merged, overlay=layer_map_path)
+        merge_report["segment_gate"] = {
+            k: v for k, v in seg_gate.items() if k != "removed_ids"
+        }
+        merge_report["segment_gate_removed_ids"] = seg_gate["removed_ids"]
+        # P2.4j：侧立面横杆直读（side_horiz_synth）——在四面展开前追加
+        # （展开会重写 front 节点为四面镜像节点，hw 锥拟合需用展开前节点）。
+        # P3-7（2026-09-04）修复死路径：原代码引用未定义名 dxf_paths
+        # （intake_tower_batch 的局部变量，此处不可见），NameError 被
+        # except: pass 静默吞掉——side_horiz_synth 在 cross_file_batch
+        # 路径从未执行过。改为从 batch["files"] 的 dxf 字段取真实路径；
+        # 异常不再静默，落 merge_report 供审计。
+        try:
+            from .tower_views import side_horiz_synth
+            _dxf_by_stem = {}
+            for _f in batch.get("files", []):
+                _dp = _f.get("dxf")
+                if _dp and _f.get("file"):
+                    _dxf_by_stem[str(_f["file"])] = str(_dp)
+            if _dxf_by_stem:
+                _n_h = side_horiz_synth(merged, layer_map_path, _dxf_by_stem)
+                if _n_h:
+                    merge_report["side_horiz_synth"] = _n_h
+        except Exception as _exc_sh:  # noqa: BLE001 —— 单步失败不炸整批，但必须留痕
+            merge_report["side_horiz_synth_error"] = repr(_exc_sh)
+        from .tower_symmetry import expand_4_face_symmetry_model
+        expanded = expand_4_face_symmetry_model(merged, overlay=layer_map_path)
+        merged = expanded if expanded is not None else merged
+        # P2.4b：side 直读杆注入（expand 之后、save 之前；与 delivery.py
+        # 同一开关 side_read_promotion，默认开）。
+        try:
+            from .tower_spec import load_tower_spec
+            _spec = load_tower_spec(layer_map_path) if layer_map_path else {}
+        except Exception:
+            _spec = {}
+        if _spec.get("side_read_promotion", True):
+            try:
+                from .tower_views import apply_side_reads
+                _n_side = apply_side_reads(merged)
+                if _n_side:
+                    merge_report["side_reads_injected"] = _n_side
+            except Exception:
+                pass
+        model_path = (Path(out_dir) / "model.json").as_posix()
+        save_model(merged, model_path)
+        merge_report["view_mode"] = (
+            merged.components.get("drawing_file") or Component(
+                id="drawing_file", name="", kind="drawing_file", properties={},
+            )
+        ).properties.get("view_mode")
+        merge_report["bars"] = sum(
+            1 for c in merged.components.values() if c.kind == "tower_bar"
+        )
+        merge_report["nodes_solved"] = sum(
+            1 for c in merged.components.values()
+            if c.kind == "tower_node" and c.properties.get("solve_status") == "solved"
+        )
+        merge_report["nodes_derived_y"] = sum(
+            1 for c in merged.components.values()
+            if c.kind == "tower_node"
+            and c.properties.get("y_origin") == "z_peer_interpolate"
+        )
+        merge_report["gussets_anchored"] = sum(
+            1 for c in merged.components.values()
+            if c.kind == "gusset_plate"
+            and c.properties.get("solve_status") == "verified"
+            and c.properties.get("polygon_global")
+        )
+        df = merged.components.get("drawing_file")
+        if df is not None:
+            merge_report["y_synthetic_side"] = df.properties.get("y_synthetic_side", 0)
+            merge_report["synthetic_side_nodes"] = df.properties.get("synthetic_side_nodes", 0)
+            merge_report["nodes_derived_y"] = sum(
+                1 for c in merged.components.values()
+                if c.kind == "tower_node"
+                and c.properties.get("y_origin") == "z_peer_interpolate"
+            )
+
+    cross_dup = cross_file_bar_id_report(models) if models else {}
+    report_path = Path(out_dir) / "batch_report.json"
+    report = {
+        "ok": batch["ok"],
+        "mode": "cross_file_batch",
+        "files": batch["files"],
+        "layer_report": batch["layer_report"],
+        "cross_file_bar_id_dup": cross_dup,
+        "merge_report": merge_report,
+        "model_path": model_path,
+    }
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        **batch,
+        "model_path": model_path,
+        "merge_report": merge_report,
+        "batch_report": report_path.as_posix(),
+        "cross_file_bar_id_dup": cross_dup,
+    }
+
+
+def merge_tower_models(models: List[EngineeringModel]) -> EngineeringModel:
+    """合并多个图纸文件模型（B7 单文件无法 --merge 的替代路径）。
+
+    规则：
+        * 图纸上下文组件按来源文件各自保留
+        * tower_node / tower_bar 加 source_file 前缀避免 ID 冲突，
+          并写入 drawing_view = 来源文件 stem
+        * 坐标不臆造：已有 x/y 保留，z 缺失保持 None（placeholder）
+        * 规则与依赖在调用方 finalize 阶段重新注入
+
+    P0-5 说明：这不是 110kV 式三视图解耦，只是多文件 ID 前缀拼接；
+    跨文件同一物理杆件的 3D 合并需立面/平面分文件各自带 view_regions，
+    走 merge_view_coordinates，而非靠本函数假装合 3D。
+    """
+    merged = EngineeringModel(name="tower-batch-merged")
+
+    # 第一遍：组件与尺寸全部前缀重指
+    for i, model in enumerate(models, start=1):
+        stem = model.name.removeprefix("tower-") if model.name.startswith("tower-") else model.name
+        prefix = f"f{i:02d}_"
+
+        for cid, comp in model.components.items():
+            new_id = f"{prefix}{cid}"
+            props = dict(comp.properties)
+            props.setdefault("drawing_view", stem)
+            props.setdefault("source_file", stem)
+            merged.add_component(type(comp)(
+                id=new_id,
+                name=f"[{stem}] {comp.name}",
+                kind=comp.kind,
+                source=comp.source,
+                properties=props,
+                tags=list(comp.tags),
+            ))
+
+        for did, dim in model.dimensions.items():
+            merged.add_dimension(Dimension(
+                id=f"{prefix}{did}",
+                name=dim.name,
+                value=dim.value,
+                unit=dim.unit,
+                origin=dim.origin,
+                source=dim.source,
+                applies_to=(f"{prefix}{dim.applies_to}" if dim.applies_to else None),
+                status=dim.status,
+            ))
+
+        for node, ups in model.dependencies.items():
+            new_node = f"{prefix}{node}" if node in model.components or node in model.dimensions else node
+            new_ups = {f"{prefix}{u}" if u in model.components or u in model.dimensions else u for u in ups}
+            merged.dependencies.setdefault(new_node, set()).update(new_ups)
+
+    # 第二遍：杆件 from/to 节点引用按各自来源文件重指
+    for model_index, model in enumerate(models, start=1):
+        prefix = f"f{model_index:02d}_"
+        for cid, comp in model.components.items():
+            if comp.kind != "tower_bar":
+                continue
+            new_bar = merged.components[f"{prefix}{cid}"]
+            for end in ("from_node", "to_node"):
+                nid = comp.properties.get(end)
+                if nid and nid in model.components:
+                    new_bar.properties[end] = f"{prefix}{nid}"
+    return merged

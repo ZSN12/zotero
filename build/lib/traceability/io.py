@@ -156,12 +156,8 @@ def validate_references(model: EngineeringModel) -> list[str]:
             if s not in comp_ids:
                 problems.append(f"杆件 '{cid}' 的 projection_refs.source_component_id '{s}' 悬空")
 
-    # P3-7（2026-09-04）：all_nodes 提出循环外——旧代码在依赖图循环内
-    # 每次迭代重建全集合（O(n²) 热点，万级杆件可感知）。循环体不修改
-    # 模型，集合在整个校验期间不变。
-    _all_nodes = model.all_nodes()
     for node, upstreams in model.dependencies.items():
-        all_nodes = _all_nodes
+        all_nodes = model.all_nodes()
         if node not in all_nodes:
             problems.append(f"依赖图节点 '{node}' 不是任何已知对象")
         for up in upstreams:

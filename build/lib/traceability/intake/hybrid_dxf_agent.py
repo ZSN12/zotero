@@ -404,17 +404,11 @@ def _extract_dxf_text_labels(
         bar_id = _extract_bar_label(str(text or ""), bar_id_re)
         if not bar_id:
             continue
-        # P3-7（2026-09-04）单位混写修正：DXF TEXT 的插入点是图纸 mm，
-        # 旧代码写进 x_px/y_px（像素语义键）——跨源标签去重按像素距
-        # 比较时实际在比 mm，MLLM 像素标签与 DXF mm 标签的合并失效。
-        # 与 :243 的 P3-8 规范对齐：mm 值一律存 drawing_x/drawing_y +
-        # coord_space='drawing_mm'。_label_point 优先读 drawing_*，读取
-        # 侧无需改动。
         labels.append({
             "text": str(text).strip(),
             "bar_id": bar_id,
-            "drawing_x": round(float(ins.x), 2),
-            "drawing_y": round(float(ins.y), 2),
+            "x_px": round(float(ins.x), 2),
+            "y_px": round(float(ins.y), 2),
             "coord_space": "drawing_mm",
             "label_source": "dxf_text",
         })
@@ -698,28 +692,15 @@ def _vector_bars_not_covered(
 
 
 def _merge_label_lists(*groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """合并多源件号，按 (bar_id, round x, round y) 去重。
-
-    P3-7（2026-09-04）单位混写修正：坐标键优先取 drawing_x/drawing_y
-    （coord_space='drawing_mm'，DXF TEXT/已换算 OCR-MLLM 标签），回退
-    x_px/y_px（像素标签）。此前 DXF TEXT 把图纸 mm 存进 x_px，与像素
-    语义的 MLLM 标签直接拼 key 比较——跨源去重实际失效。现在统一
-    在 mm 空间去重（像素标签先经 px_to_drawing_xy 换算的调用方约定
-    不变；未换算的像素标签不参与跨源去重——与旧行为相比只会少误并，
-    不会误丢）。
-    """
+    """合并多源件号，按 (bar_id, round x, round y) 去重。"""
     seen: set = set()
     out: List[Dict[str, Any]] = []
     for group in groups:
         for lab in group:
-            if "drawing_x" in lab or "drawing_y" in lab:
-                kx, ky = lab.get("drawing_x", 0), lab.get("drawing_y", 0)
-            else:
-                kx, ky = lab.get("x_px", 0), lab.get("y_px", 0)
             key = (
                 str(lab.get("bar_id") or ""),
-                round(float(kx), 0),
-                round(float(ky), 0),
+                round(float(lab.get("x_px", 0)), 0),
+                round(float(lab.get("y_px", 0)), 0),
             )
             if key in seen:
                 continue
@@ -1126,8 +1107,7 @@ def run_hybrid_dxf_agent_pipeline(
                 for lab in ocr_labels:
                     px, py = float(lab["x_px"]), float(lab["y_px"])
                     dx, dy = px_to_drawing_xy(px, py, mapping)
-                    # P3-7：mm 值改存 drawing_*（像素键存 mm 属单位混写）
-                    lab["drawing_x"], lab["drawing_y"] = round(dx, 2), round(dy, 2)
+                    lab["x_px"], lab["y_px"] = round(dx, 2), round(dy, 2)
                     lab["coord_space"] = "drawing_mm"
             except Exception:
                 ocr_labels = []
@@ -1177,8 +1157,7 @@ def run_hybrid_dxf_agent_pipeline(
                 for lab in ocr_labels:
                     px, py = float(lab["x_px"]), float(lab["y_px"])
                     dx, dy = px_to_drawing_xy(px, py, mapping)
-                    # P3-7：mm 值改存 drawing_*（像素键存 mm 属单位混写）
-                    lab["drawing_x"], lab["drawing_y"] = round(dx, 2), round(dy, 2)
+                    lab["x_px"], lab["y_px"] = round(dx, 2), round(dy, 2)
                     lab["coord_space"] = "drawing_mm"
                 if ocr_labels:
                     mllm_labels = ocr_labels
