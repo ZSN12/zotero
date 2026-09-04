@@ -151,12 +151,19 @@ if __name__ == "__main__":
 class BeatAnchorTest(unittest.TestCase):
     def test_beat_anchors_join_grid_as_anchor(self):
         """尺寸节拍（第三证据源）入锚骨架，w2 级、marker 优先级更高。"""
+        # 7760 距 marker 8100 为 340 > 300 → 独立成层
         levels, records = vote_level_grid(
-            {}, {"S1": [8000.0]}, {"S1": 7000.0},
+            {}, {"S1": [8100.0]}, {"S1": 7000.0},
             beat_anchors={"S1": [7400.0, 7760.0]})
-        self.assertEqual(levels, [7000.0, 7400.0, 7760.0, 8000.0])
+        self.assertEqual(levels, [7000.0, 7400.0, 7760.0, 8100.0])
         beats = [r for r in records if r["kind"] == "beat"]
         self.assertEqual(len(beats), 2)
+        # marker 300 内的 beat 并入 marker 层（代表值取 marker）
+        levels2, recs2 = vote_level_grid(
+            {}, {"S1": [8000.0]}, {"S1": 7000.0},
+            beat_anchors={"S1": [7400.0, 7760.0]})
+        self.assertEqual(levels2, [7000.0, 7400.0, 8000.0])
+        self.assertEqual(len([r for r in recs2 if r["kind"] == "beat"]), 1)
 
     def test_beat_anchors_from_cross_file_filters_degenerate(self):
         """n_beats 退化（region_span_linear 端点两值）不投票。"""
