@@ -145,6 +145,7 @@ def expand_4_face_symmetry_model(
     snap_tol: Optional[float] = None,
     weld_corner_legs: bool = True,
     add_diaphragms: bool = True,
+    sheets_dir: Optional[Path] = None,
 ) -> EngineeringModel:
     """Phase 2：把模型里的单立面杆件展开为四面封闭空间网架（原地改写）。
 
@@ -1390,7 +1391,41 @@ def expand_4_face_symmetry_model(
         # 平台层（GT (14000,17000) 腿跨 16000）。z-only 设计常数注入，
         # 与 use_gt_platform_levels 同纪律。开关 leg_chain_stitch_break_terminal。
         _break_lv = None
-        if bool(spec.get("leg_chain_stitch_break_terminal", False)) and level_source == "gt":
+        # P2 D2a（2026-09-05）：断链层来源可切换为 LevelGridSolver 投票网格
+        # （leg_chain_stitch_break_source="level_grid"）——DXF 证据自推，
+        # 无 GT 表。默认走原 GT 表路径（研究对照口径不变）。
+        _break_src = str(spec.get("leg_chain_stitch_break_source") or "gt")
+        if (bool(spec.get("leg_chain_stitch_break_terminal", False))
+                and _break_src == "level_grid" and sheets_dir is not None):
+            from ..solve.level_grid import (
+                beat_anchors_from_cross_file, grid_from_sheets_dir)
+            _df_lg = model.components.get("drawing_file")
+            _cf_model = {
+                "components": {
+                    "df_lg": {
+                        "kind": "drawing_file",
+                        "properties": {
+                            "dimension_beat_anchors_by_sheet": (
+                                (_df_lg.properties or {}).get(
+                                    "dimension_beat_anchors_by_sheet")
+                                if _df_lg is not None else None),
+                        },
+                    },
+                },
+            } if (_df_lg is not None and (
+                _df_lg.properties or {}).get(
+                "dimension_beat_anchors_by_sheet")) else None
+            _levels, _records, _warnings = grid_from_sheets_dir(
+                sheets_dir, spec, cross_file_model=_cf_model)
+            _break_lv = [float(z) for z in _levels]
+            if _df_lg is not None:
+                _df_lg.properties["level_grid_report"] = {
+                    "n_levels": len(_levels),
+                    "levels": _levels,
+                    "source": "level_grid",
+                    "warnings": _warnings,
+                }
+        elif bool(spec.get("leg_chain_stitch_break_terminal", False)) and level_source == "gt":
             from ..debug.gt_profile import gt_diagonal_terminal_levels
             _break_lv = [float(z) for z in gt_diagonal_terminal_levels()]
             # 多塔泛化（2026-09-03）：overlay 覆写（z-only）。

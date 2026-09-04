@@ -670,7 +670,9 @@ def deliver_project(
                     "side_horiz_synth_error",
                     {"error": f"{type(_exc_sh).__name__}: {_exc_sh}"})
             print(f"[P2.4j] side_horiz_synth 失败：{_exc_sh!r}")
-        expand_4_face_symmetry_model(merged_model, layer_map_path)
+        expand_4_face_symmetry_model(
+            merged_model, layer_map_path,
+            sheets_dir=out_dir / "sheets")
         # P2.4b（JC1）：side 直读杆注入——merge_view_bars 冻结的 side_reads
         # （side 画线 y/z + 面平面 x）在此处以全新组件落地：face='l' 直读
         # （side_direct→recognized）+ face='r' 镜像孪生（side_mirror→

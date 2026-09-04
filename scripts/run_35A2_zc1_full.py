@@ -205,6 +205,9 @@ def main() -> int:
                         help="06 斜材解释择优模式（覆盖 overlay diagonal_topology_selection_mode）")
     parser.add_argument("--skip-sync", action="store_true",
                         help="跳过 demo 资产同步（A/B 跑批时使用）")
+    parser.add_argument("--break-source", choices=["gt", "level_grid"], default=None,
+                        help="P2 D2a：腿链断链层来源。level_grid=LevelGridSolver 投票网格"
+                             "（DXF 证据自推，无 GT 表）；默认 gt=原 GT 表（口径不变）")
     args = parser.parse_args()
 
     overlay = full_overlay()
@@ -251,11 +254,24 @@ def main() -> int:
 
     if args.selection_mode:
         overlay["diagonal_topology_selection_mode"] = args.selection_mode
+
+    if args.break_source == "level_grid":
+        overlay["leg_chain_stitch_break_source"] = "level_grid"
+        if not args.out_dir:
+            out_dir = REPO / "out/35A2-ZC1-lgrid"
+        args.skip_sync = True
+        print(f"断链层来源: level_grid（投票网格，无 GT 表）→ {out_dir}")
+    elif args.break_source == "gt":
+        overlay["leg_chain_stitch_break_source"] = "gt"
+        print("断链层来源: gt（原口径）")
+
+    if args.selection_mode or args.break_source:
         out_dir.mkdir(parents=True, exist_ok=True)
-        tmp_sel = out_dir / f"_overlay_sel_{args.selection_mode}.json"
+        tmp_sel = out_dir / "_overlay_ab.json"
         tmp_sel.write_text(json.dumps(overlay, ensure_ascii=False, indent=2), encoding="utf-8")
         overlay_path = tmp_sel
-        print(f"selection_mode: {args.selection_mode}")
+        if args.selection_mode:
+            print(f"selection_mode: {args.selection_mode}")
 
     spatial_stems = sorted(cross_file_merge_stems(overlay))
     print("JC1 全册 DXF 目录:", dxf_batch)
