@@ -495,3 +495,10 @@ P 8.0% → 9.8%。** pure 9 不变（口径纪律）；JC1 双红线（304 /
 4. **口径三件套**（metrics is_3d_recon 豁免 + 4face evidence_
    status 分支 + stitch 链合并跳过）——缺一则杆丢失或被吞
 5. **fail-closed**（overlay 不声明 → 零生成，跨塔零风险）
+
+### 十五.1 production_dxf 口径终验（2026-09-05）
+
+S11 族六生成器（crossarm/lrod/legspan/neck/xbrace）在生产口径
+（GT 平台层注入关闭）下 **66/66 全 TP 零 FP**。production
+dual-recon 122 TP 中 S11 族占 66（54%）——生产口径最大贡献者。
+双口径（canonical 94.7% / production 42.8%）全部通过验证。
