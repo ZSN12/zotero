@@ -98,6 +98,29 @@
     </div>
   </section>
 
+  <section class="block">
+    <h2>输入就是真实施工图 <span style="font-size:14px;color:var(--ink-dim)">（DXF 原册直渲 · 非示意图）</span></h2>
+    <p class="lead" style="margin-bottom:16px">
+      管线的输入是设计院交付的全册 DXF。下面两张是 35A1-JC1 的原始图纸渲染
+      （02 立面 · 06 塔身段）——线上演示里每根可追溯杆件都能翻回这样的图纸页，
+      高亮到实体级。
+    </p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <figure style="margin:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff">
+        <img src="assets/dxf-elevation-02.png" alt="35A1-JC1-02 立面图 DXF 渲染" style="width:100%;display:block"/>
+        <figcaption style="font-size:12.5px;color:var(--ink-dim);padding:8px 12px">02 册 · 全塔立面（>3600 个 DXF 实体）</figcaption>
+      </figure>
+      <figure style="margin:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff">
+        <img src="assets/dxf-plan-06.png" alt="35A1-JC1-06 塔身段结构图 DXF 渲染" style="width:100%;display:block"/>
+        <figcaption style="font-size:12.5px;color:var(--ink-dim);padding:8px 12px">06 册 · 塔身段结构（放样详图）</figcaption>
+      </figure>
+    </div>
+    <p class="footnote">
+      裁切图由 <code>scripts/export_site_crops.py</code> 从
+      <code>_dxf_scope</code> 原册直渲，可复核。
+    </p>
+  </section>
+
   <section class="block" style="border-bottom:none">
     <h2>三维交付交互 <span style="font-size:14px;color:var(--ink-dim)">（真实管线产物 · 非渲染示意图）</span></h2>
     <p class="lead" style="margin-bottom:16px">

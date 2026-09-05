@@ -208,6 +208,9 @@ def main() -> int:
     parser.add_argument("--break-source", choices=["gt", "level_grid"], default=None,
                         help="P2 D2a：腿链断链层来源。level_grid=LevelGridSolver 投票网格"
                              "（DXF 证据自推，无 GT 表）；默认 gt=原 GT 表（口径不变）")
+    parser.add_argument("--panel-source", choices=["gt", "level_grid", "dxf"], default=None,
+                        help="P2 D3：平台层来源。level_grid=marker 锚层（图纸证据，无 GT 表）；"
+                             "默认随 profile（canonical_assisted=gt / production_dxf=dxf）")
     args = parser.parse_args()
 
     overlay = full_overlay()
@@ -265,7 +268,19 @@ def main() -> int:
         overlay["leg_chain_stitch_break_source"] = "gt"
         print("断链层来源: gt（原口径）")
 
-    if args.selection_mode or args.break_source:
+    if args.panel_source:
+        # P2 D3（对齐 JC1 run 脚本）：平台层来源 A/B。level_grid 出独立
+        # 输出目录且不覆盖 demo 资产。
+        overlay["panel_level_source"] = args.panel_source
+        if args.panel_source == "level_grid":
+            if not args.out_dir:
+                out_dir = REPO / "out/35A2-ZC1-pgrid"
+            args.skip_sync = True
+            print(f"平台层来源: level_grid（marker 锚层，纯 DXF 下游）→ {out_dir}")
+        else:
+            print(f"平台层来源: {args.panel_source}")
+
+    if args.selection_mode or args.break_source or args.panel_source:
         out_dir.mkdir(parents=True, exist_ok=True)
         tmp_sel = out_dir / "_overlay_ab.json"
         tmp_sel.write_text(json.dumps(overlay, ensure_ascii=False, indent=2), encoding="utf-8")

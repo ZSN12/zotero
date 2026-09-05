@@ -12,6 +12,7 @@ opencv-python-headless>=4.8
 
 # MLLM Skill 契约（可选：未配置 OPENAI_API_KEY 时走 NullBackend）
 openai>=1.0
+httpx>=0.24        # openai 传递依赖；mllm_backend 显式 import，CI 需直装
 
 # GLB 实体导出（Phase 3，可选；未安装时 solve-tower --format glb 会提示安装）
 trimesh>=4.0

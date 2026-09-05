@@ -1,6 +1,7 @@
 import inspect, json, struct, unittest
 from pathlib import Path
 import numpy as np
+import pytest
 import trimesh
 
 from traceability.connection.bolt_mesh import bolt_assembly_meshes, bolt_holes_global, bolt_hole_meshes
@@ -9,7 +10,12 @@ from scripts.generate_assembly import _groups, build
 ROOT = Path(__file__).resolve().parents[1]
 SHEET = ROOT / 'web/demo/35A1-JC1/latest_deliver/sheets/35A1-JC1-03.json'
 
+# latest_deliver 是运行产物（不入库）：CI 上没有真实 03 详图页，
+# 与 test_detail_sample/test_lod_samples 同纪律 skipUnless 保护。
+_NEEDS_SHEET = pytest.mark.skipif(not SHEET.exists(), reason="真实 03 详图页未同步（latest_deliver 不入库）")
 
+
+@_NEEDS_SHEET
 def test_real_sheet_groups_and_bolts():
     groups = _groups(SHEET)
     assert len(groups) == 16
@@ -17,6 +23,7 @@ def test_real_sheet_groups_and_bolts():
     assert all(len(g['holes']) > 0 for g in groups)
 
 
+@_NEEDS_SHEET
 def test_assembly_parts_and_layer_order():
     groups = _groups(SHEET)
     rng = np.random.default_rng(35)
@@ -35,6 +42,7 @@ def test_legacy_signatures_unchanged():
     assert str(inspect.signature(bolt_hole_meshes)) == "(model: 'EngineeringModel')"
 
 
+@_NEEDS_SHEET
 def test_degraded_export_and_glb_material_normals(tmp_path):
     report = build(tmp_path, SHEET, fallback_dir=None)   # T5：关闭回退 → 真降级路径
     assert report['bolt_count'] == 56
