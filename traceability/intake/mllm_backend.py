@@ -233,7 +233,7 @@ class MLLMBackend:
         # agent-vision：本地 ezdxf 规则提取（0 API 调用，最快）。
         # antigravity-ocx：经本地 opencodex relay（OAuth 免 client key），
         # 无显式 api_key 也算可用。
-        if self.provider in ("agent-vision", "antigravity-ocx"):
+        if self.provider in ("agent-vision", "antigravity-ocx", "glm-relay"):
             return True
         return bool(self.api_key)
 
@@ -272,24 +272,35 @@ class MLLMBackend:
                     "image_url": {"url": f"data:image/png;base64,{image_b64}"},
                 })
 
-            # P1：优先 response_format=json_object；仅当服务端明确不支持时才回退，
-            # 避免网络/超时错误被误判为「格式不支持」而重复调用（浪费时间与配额）。
-            try:
-                resp = client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                )
-            except Exception as exc:
-                if not _is_response_format_error(exc):
-                    raise
-                resp = client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                )
+            raw = None
+            # 本地 opencodex relay（antigravity-ocx / glm-relay）非流式请求有
+            # ~600s 硬超时：长 JSON 生成超时即 502。stream 分块保持连接活跃，
+            # 可越过该墙。
+            if getattr(self, "provider", "") in ("antigravity-ocx", "glm-relay"):
+                # antigravity-ocx relay 专有：通过 stream 聚合结果，防止 relay 502
+                stream = client.chat.completions.create(model=self.model, messages=messages, stream=True)
+                chunks = []
+                for c in stream:
+                    if c.choices and c.choices[0].delta.content:
+                        chunks.append(c.choices[0].delta.content)
+                raw = "".join(chunks)
+            else:
+                try:
+                    resp = client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                    )
+                except Exception as exc:
+                    if not _is_response_format_error(exc):
+                        raise
+                    resp = client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                    )
+                raw = resp.choices[0].message.content or "{}"
 
             meta["elapsed_s"] = round(_time.time() - t0, 2)
-            raw = resp.choices[0].message.content or "{}"
             meta["raw_length"] = len(raw)
             raw = _extract_json_text(raw)
             parsed = json.loads(raw)
@@ -399,20 +410,33 @@ class MLLMBackend:
                     "image_url": {"url": f"data:image/png;base64,{image_b64}"},
                 })
 
-            try:
-                resp = client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                )
-            except Exception as exc:
-                if not _is_response_format_error(exc):
-                    raise
-                resp = client.chat.completions.create(model=self.model, messages=messages)
+            raw = None
+            # 本地 opencodex relay（antigravity-ocx / glm-relay）非流式请求有
+            # ~600s 硬超时：长 JSON 生成超时即 502。stream 分块保持连接活跃，
+            # 可越过该墙。
+            if getattr(self, "provider", "") in ("antigravity-ocx", "glm-relay"):
+                # antigravity-ocx relay 专有：通过 stream 聚合结果，防止 relay 502
+                stream = client.chat.completions.create(model=self.model, messages=messages, stream=True)
+                chunks = []
+                for c in stream:
+                    if c.choices and c.choices[0].delta.content:
+                        chunks.append(c.choices[0].delta.content)
+                raw = "".join(chunks)
+            else:
+                try:
+                    resp = client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                    )
+                except Exception as exc:
+                    if not _is_response_format_error(exc):
+                        raise
+                    resp = client.chat.completions.create(model=self.model, messages=messages)
+                raw = resp.choices[0].message.content or "{}"
 
             meta["elapsed_s"] = round(_time.time() - t0, 2)
             meta["duration_ms"] = round((_time.time() - t0) * 1000, 2)
-            raw = resp.choices[0].message.content or "{}"
             meta["raw_length"] = len(raw)
             parsed = json.loads(_extract_json_text(raw))
             if schema is not None:
@@ -440,7 +464,8 @@ class MLLMBackend:
         # 大图件号 OCR 默认 300s；连接 30s。可用 MLLM_TIMEOUT 覆盖。
         timeout_s = float(os.environ.get("MLLM_TIMEOUT") or "300")
         connect_s = float(os.environ.get("MLLM_CONNECT_TIMEOUT") or "30")
-        proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or None
+        is_local = "127.0.0.1" in str(self.base_url) or "localhost" in str(self.base_url)
+        proxy = None if is_local else (os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or None)
         http_client = httpx.Client(
             timeout=httpx.Timeout(timeout_s, connect=connect_s),
             proxy=proxy,
