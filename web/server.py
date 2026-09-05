@@ -333,8 +333,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path == "/" or path == "/index.html":
+        if path in ("/full.html", "/full"):
+            # 旧全链 Demo（上传图纸→跑链→GLB）。品牌站上线后从根路径
+            # 降级到此入口（2026-09-04）。
             return self._send(200, (ROOT / "index.html").read_bytes(), "text/html; charset=utf-8")
+        if path == "/" or path == "/index.html":
+            # 品牌站页面全是相对路径资产（site.css 等），根路径直接内嵌
+            # 会让资产 404 裸奔成无样式 HTML——302 到 /site/ 才能落位。
+            self.send_response(302)
+            self.send_header("Location", "/site/index.html")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if path in ("/app.js", "/styles.css"):
             f = ROOT / path.lstrip("/")
             ctype = "application/javascript" if path.endswith(".js") else "text/css"
