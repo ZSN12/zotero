@@ -41,3 +41,4 @@ build/
 !web/demo/**/trace/
 web/demo/**/trace/*.glb.tmp
 !web/demo/**/trace/*.glb
+!web/demo/**/trace/*.json
