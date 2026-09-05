@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>图纸↔3D 联动追溯 — Engineering Traceability</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #10141c; overflow: hidden;
+               font: 13px/1.5 ui-sans-serif, system-ui, "PingFang SC"; color: #dfe6f0; }
+  #wrap { display: flex; height: 100%; }
+  #left  { flex: 1 1 52%; position: relative; min-width: 320px; }
+  #divid { flex: 0 0 4px; background: #232c3b; cursor: col-resize; }
+  #right { flex: 1 1 48%; position: relative; background: #0c1017; min-width: 320px;
+           display: flex; flex-direction: column; }
+  #tag { position: fixed; left: 14px; top: 12px; z-index: 5; background: rgba(8,10,14,.78);
+         padding: 8px 14px; border-radius: 8px; }
+  #hint { position: fixed; left: 14px; bottom: 12px; z-index: 5; color: #71809a;
+          background: rgba(8,10,14,.6); padding: 6px 12px; border-radius: 8px; }
+  #sheetbar { display: flex; gap: 6px; padding: 10px 12px; flex-wrap: wrap;
+              border-bottom: 1px solid #1c2432; align-items: center; }
+  #sheetbar button { background: #18202e; color: #aebacd; border: 1px solid #2a3547;
+                     border-radius: 7px; padding: 4px 12px; cursor: pointer; font: inherit; }
+  #sheetbar button.on { background: #2c4a86; color: #fff; border-color: #3f6ac4; }
+  #sheetbar .tower-btn { background: #1f2a3d; color: #cdd8ea; font-weight: 600; }
+  #sheetbar .tower-btn.on { background: #7fb0ff; color: #0d1015; border-color: #9cc3ff; }
+  #sheetbar .stat { margin-left: auto; color: #71809a; }
+  #svghost { flex: 1; overflow: hidden; position: relative; }
+  #svghost svg { width: 100%; height: 100%; display: block; cursor: grab; }
+  #card { position: absolute; right: 14px; top: 14px; width: 300px; background: rgba(10,14,22,.92);
+          border: 1px solid #26314a; border-radius: 10px; padding: 12px 14px; display: none; z-index: 4; }
+  #card h4 { margin: 0 0 6px; color: #ffd479; font-size: 14px; }
+  #card table { width: 100%; border-collapse: collapse; }
+  #card td { padding: 2px 0; vertical-align: top; }
+  #card td:first-child { color: #71809a; width: 76px; }
+  #card .src { color: #8ee6a8; word-break: break-all; font-size: 12px; }
+  svg .hl-bar { stroke: #ffd479 !important; stroke-width: 3 !important; }
+  svg .hl-node { fill: #ff7d6e !important; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="wrap">
+  <div id="left">
+    <div id="tag">3D 加载中…</div>
+    <div id="hint">左侧：点杆件 → 右侧图纸高亮对应实线 · 右侧：点黄色高亮线 → 3D 定位杆件</div>
+  </div>
+  <div id="divid" title="拖动调整分栏"></div>
+  <div id="right">
+    <div id="sheetbar"></div>
+    <div id="svghost"></div>
+    <div id="card"></div>
+  </div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// 塔配置：全部走同一管线产物（latest_deliver + trace SVG/overlay），
+// 新增塔 = 追加一项 + 生成该塔 trace 资产，页面零改动。
+const TOWERS = {
+  '35A1-JC1': { label: '35A1-JC1 酒杯型转角塔', sheets: ['02', '04', '05', '06', '07'] },
+  '35A2-ZC1': { label: '35A2-ZC1 干字型直线塔', sheets: ['05', '07', '08', '09', '10', '12'] },
+};
+let tower = '35A1-JC1';
+const BASE = () => `/demo/${tower}`;
+const DELIVER = () => `${BASE()}/latest_deliver`;
+const TRACE = () => `${BASE()}/trace`;
+
+// ---------- 左：3D（skeleton.glb：一根杆一个 mesh，extras.component_id ↔ model.json） ----------
+const left = document.getElementById('left');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x10141c);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+left.appendChild(renderer.domElement);
+const camera = new THREE.PerspectiveCamera(40, 1, 10, 600000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xbfd4ee, 0x1a1f28, 1.1));
+const key = new THREE.DirectionalLight(0xffffff, 1.8); key.position.set(1, 1.6, 0.8).multiplyScalar(60000);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x88aaff, 0.8); rim.position.set(-1.2, 0.6, -1).multiplyScalar(60000);
+scene.add(rim);
+scene.add(new THREE.GridHelper(120000, 60, 0x2b3850, 0x1a2230));
+
+const ROLE_COLORS = { LEG: 0x86b6ff, DIAG: 0xffcf6e, HORIZ: 0x7fe39c, CROSS: 0x7fe39c };
+// 识别杆（有图纸实体）实色、补全杆压暗降透明——官网式「密而清晰」的层次来自此
+const DIM_ALPHA = 0.22;
+const matCache = new Map();     // key: role|traced|dim → material
+function barMat(role, traced, dim) {
+  const k = `${role}|${traced ? 1 : 0}|${dim ? 1 : 0}`;
+  if (!matCache.has(k)) {
+    const base = ROLE_COLORS[role] || 0x9aa7b8;
+    const c = new THREE.Color(base);
+    if (!traced) c.lerp(new THREE.Color(0x2a3446), dim ? 0.55 : 0.35);   // 补全杆向背景色收
+    matCache.set(k, new THREE.MeshStandardMaterial({
+      color: c, metalness: 0.3, roughness: 0.62,
+      transparent: !traced, opacity: !traced ? (dim ? DIM_ALPHA : 0.5) : 1,
+      depthWrite: traced,
+    }));
+  }
+  return matCache.get(k);
+}
+const id2mesh = new Map();      // model.json component_id → mesh
+const meshById = new Map();     // mesh.uuid → {cid, props, src}
+const tracedMeshes = [];        // 有图纸实体的杆（「仅图纸实体」开关用）
+const synthMeshes = [];         // 补全杆
+let towerModel = null;          // 当前塔根节点（切塔时从场景移除）
+let selected = null;
+let onlyTraced = false;
+
+const pickColor = new THREE.Color(0xff5f4e);
+const raycaster = new THREE.Raycaster();
+raycaster.params.Line.threshold = 0;
+
+function fit(obj) {
+  const box = new THREE.Box3().setFromObject(obj);
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  const H = box.max.y;
+  const fov = camera.fov * Math.PI / 180;
+  const dist = (sphere.radius / Math.tan(fov / 2)) * 1.08;
+  controls.target.set(0, H * 0.46, 0);
+  camera.position.copy(controls.target).addScaledVector(new THREE.Vector3(0.62, 0.34, 0.72).normalize(), dist);
+  // 雾化景深：远侧杆融入背景，近侧清晰——「密而清晰」的关键
+  scene.fog = new THREE.Fog(0x10141c, dist * 0.85, dist * 2.6);
+  controls.update();
+}
+
+function resize() {
+  const w = left.clientWidth, h = left.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+
+async function loadModel(modelJson, gltf) {
+  const model = gltf.scene;
+  model.rotation.x = -Math.PI / 2;              // 工程 Z-up → three Y-up
+  const box = new THREE.Box3().setFromObject(model);
+  const center = box.getCenter(new THREE.Vector3());
+  model.position.set(-center.x, -box.min.y, -center.z);
+  const ev0 = new Map();
+  for (const [cid, comp] of Object.entries(modelJson.components)) {
+    if (comp.kind === 'tower_bar') ev0.set(cid, comp);
+  }
+  model.traverse((o) => {
+    if (!o.isMesh) return;
+    const ext = o.userData || {};
+    const cid = ext.component_id || '';
+    if (!cid) { o.material = barMat('LEG', false, false); return; }
+    const comp = ev0.get(cid);
+    const role = ext.role || comp?.properties?.role || 'LEG';
+    const traced = !!(comp?.properties?.projection_refs?.length);
+    o.material = barMat(role, traced, false);
+    (traced ? tracedMeshes : synthMeshes).push(o);
+    id2mesh.set(cid, o);
+  });
+  towerModel = model;
+  scene.add(model);
+  fit(model);
+  resize();
+
+  // 证据索引：component_id → 属性（含 projection_refs → sheet）
+  const ev = new Map();
+  const h2cid = new Map();   // CLE handle → 塔级杆 id（图纸↔3D 联接键）
+  for (const [cid, comp] of Object.entries(modelJson.components)) {
+    if (comp.kind !== 'tower_bar') continue;
+    ev.set(cid, comp);
+    for (const r of (comp.properties?.projection_refs || [])) {
+      if (r.source_component_id && !h2cid.has(r.source_component_id)) h2cid.set(r.source_component_id, cid);
+    }
+  }
+  window.__ev = ev; window.__h2cid = h2cid;
+  const nTraced = [...ev.values()].filter((c) => c.properties?.projection_refs?.length).length;
+  document.getElementById('tag').textContent =
+    `${tower} · 3D ${id2mesh.size} 杆 / 图纸 ${TOWERS[tower].sheets.length} 张 · 可追溯 ${nTraced} · 点杆追溯`;
+  return ev;
+}
+
+// ---------- 右：图纸 SVG ----------
+const svghost = document.getElementById('svghost');
+const card = document.getElementById('card');
+const sheetBar = document.getElementById('sheetbar');
+let overlay = null, curSheet = null, hlEls = [];
+const overlayByTower = {};   // tower → Promise<overlay.json 解析结果>
+function overlayP() {
+  if (!overlayByTower[tower]) overlayByTower[tower] = fetch(`${TRACE()}/overlay.json`).then((r) => r.json());
+  return overlayByTower[tower];
+}
+
+function curSheets() { return TOWERS[tower].sheets.map((s) => `${tower}-${s}`); }
+
+function addSheetButtons() {
+  // 塔型切换（左端）
+  const towerWrap = document.createElement('span');
+  towerWrap.style.cssText = 'display:flex;gap:6px;margin-right:10px;padding-right:10px;border-right:1px solid #2a3547';
+  for (const [tid, cfg] of Object.entries(TOWERS)) {
+    const b = document.createElement('button');
+    b.className = 'tower-btn'; b.id = `tower-${tid}`;
+    b.textContent = tid; b.title = cfg.label;
+    b.onclick = () => switchTower(tid);
+    towerWrap.appendChild(b);
+  }
+  sheetBar.appendChild(towerWrap);
+  // 图纸按钮（随塔重建）
+  const sheetWrap = document.createElement('span');
+  sheetWrap.id = 'sheetwrap';
+  sheetWrap.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;align-items:center';
+  sheetBar.appendChild(sheetWrap);
+  addSheetButtonsForTower();
+  // 3D 显示模式：全部（识别实/补全虚）↔ 仅图纸实体
+  const bt = document.createElement('button');
+  bt.id = 'btn-traced';
+  bt.textContent = '☑ 仅图纸实体';
+  bt.onclick = () => { onlyTraced = !onlyTraced; bt.textContent = (onlyTraced ? '☐' : '☑') + ' 仅图纸实体'; applyOnlyTraced(); };
+  const bwrap = document.createElement('span');
+  bwrap.style.cssText = 'margin-left:auto;display:flex;gap:6px;align-items:center';
+  bwrap.appendChild(bt);
+  const stat = document.createElement('span');
+  stat.className = 'stat'; stat.id = 'sheetstat';
+  stat.style.marginLeft = '12px';
+  sheetBar.appendChild(bwrap);
+  sheetBar.appendChild(stat);
+}
+
+function addSheetButtonsForTower() {
+  const wrap = document.getElementById('sheetwrap');
+  wrap.innerHTML = '';
+  curSheets().forEach((sid) => {
+    const b = document.createElement('button');
+    b.className = 'sheet-btn';
+    b.textContent = '图 ' + sid.slice(tower.length + 1);
+    b.onclick = () => showSheet(sid);
+    wrap.appendChild(b);
+  });
+}
+
+let sheetSeq = 0;   // showSheet 并发防护：旧请求晚到不允许覆盖新状态
+async function showSheet(sid) {
+  const seq = ++sheetSeq;
+  curSheet = sid;
+  sheetBar.querySelectorAll('.sheet-btn').forEach((b, i) => b.classList.toggle('on', curSheets()[i] === sid));
+  const [svgText, ovAll] = await Promise.all([
+    fetch(`${TRACE()}/${sid}.svg`).then((r) => r.text()),
+    overlayP(),
+  ]);
+  if (seq !== sheetSeq) return;   // 过期响应丢弃
+  overlay = ovAll[sid] || {};
+  svghost.innerHTML = svgText;
+  const svg = svghost.querySelector('svg');
+  enablePanZoom(svg);
+  // overlay 折线注入 <g id="hl">
+  const hl = svg.querySelector('#hl');
+  hl.innerHTML = '';
+  hlEls = [];
+  for (const [cid, o] of Object.entries(overlay)) {
+    const pts = o.pts.map((p) => p.join(',')).join(' ');
+    const pl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    pl.setAttribute('points', pts);
+    pl.setAttribute('fill', 'none');
+    pl.setAttribute('stroke', 'rgba(255,212,121,0.14)');
+    pl.setAttribute('stroke-width', '1');
+    pl.dataset.cid = cid;
+    pl.style.cursor = 'pointer';
+    pl.addEventListener('click', () => focus3D(cid));
+    pl.addEventListener('mouseenter', () => glowSVG(pl, true));
+    pl.addEventListener('mouseleave', () => glowSVG(pl, false));
+    hl.appendChild(pl);
+    hlEls.push(pl);
+  }
+  const stat = document.getElementById('sheetstat');
+  if (stat) stat.textContent = `${sid} · 可追溯杆 ${hlEls.length}`;
+}
+
+// SVG pan/zoom（滚轮缩放 + 拖拽平移；origin 固定左上角，translate/scale 才是线性对应）
+function enablePanZoom(svg) {
+  svg.style.transformOrigin = '0 0';
+  let scale = 1, tx = 0, ty = 0, pan = null;
+  const apply = () => { svg.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`; };
+  svg.onwheel = (e) => {
+    e.preventDefault();
+    const r = svg.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const k = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    tx = mx - k * (mx - tx); ty = my - k * (my - ty);
+    scale *= k; apply();
+  };
+  svg.onmousedown = (e) => { pan = { x: e.clientX - tx, y: e.clientY - ty }; };
+  svg.onmousemove = (e) => { if (pan) { tx = e.clientX - pan.x; ty = e.clientY - pan.y; apply(); } };
+  svg.onmouseup = svg.onmouseleave = () => { pan = null; };
+}
+
+function glowSVG(el, on) {
+  el.setAttribute('stroke', on ? '#ffd479' : 'rgba(255,212,121,0.14)');
+  el.setAttribute('stroke-width', on ? 3 : 1);
+}
+
+// 「仅图纸实体」开关：只渲染有 projection_refs 的杆（识别态），其余隐藏
+function applyOnlyTraced() {
+  const ev = window.__ev;
+  for (const o of tracedMeshes) {
+    const comp = ev.get(o.userData.component_id);
+    o.material = barMat(o.userData.role || comp?.properties?.role || 'LEG', true, false);
+    o.visible = true;
+  }
+  for (const o of synthMeshes) {
+    o.visible = !onlyTraced;
+    if (!o.visible) continue;
+    const comp = ev.get(o.userData.component_id);
+    const role = o.userData.role || comp?.properties?.role || 'LEG';
+    o.material = barMat(role, false, false);   // 正常态：半透明压暗
+  }
+  if (onlyTraced && selected && !selected.mesh.visible) clearSel3D();
+  document.getElementById('btn-traced')?.classList.toggle('on', onlyTraced);
+}
+function clearSel3D() {
+  if (selected) selected.mesh.material.emissive && selected.mesh.material.emissive.setHex(0);
+  selected = null;
+  card.style.display = 'none';
+  clearSVGHighlight();
+}
+
+// ---------- 联动 ----------
+function barEvidence(cid) {
+  const comp = window.__ev && window.__ev.get(cid);
+  if (!comp) return null;
+  const p = comp.properties || {};
+  const ref = (p.projection_refs || []).find((r) => r.sheet_id) || null;
+  const s = comp.source || {};
+  return {
+    bar_id: p.bar_id || '—',
+    section: p.section || '—',
+    role: p.role || '—',
+    origin: p.geometry_origin || '—',
+    length_mm: p.length_mm || null,
+    sheet: ref ? ref.sheet_id : null,
+    handle: ref ? ref.source_component_id : (s.detail || '').match(/handle=([A-Za-z0-9_#]+)/)?.[1] || null,
+    detail: s.detail || '',
+    confidence: s.confidence,
+  };
+}
+
+// 联接键：CLE handle（3D 杆 projection_refs 与图纸 overlay 同源）
+function highlightByHandle(handle, pan) {
+  if (!handle) return false;
+  const el = hlEls.find((x) => (overlay[x.dataset.cid] || {}).handle === handle);
+  if (!el) return false;
+  el.classList.add('hl-bar');
+  el.setAttribute('stroke', '#ffd479');
+  el.setAttribute('stroke-width', 3);
+  if (pan) zoomToLine(el);
+  return true;
+}
+
+function showCard(cid, ev) {
+  const originCn = {
+    dxf_geom: '直读 DXF', leg_synth: '主腿合成', diag_synth: '斜材合成',
+    marker_synth: '短划合成', diag_complete: '斜材补全', leg_chain_stitch: '腿链缝合',
+    derived_4face: '四面重建', derived_parametric_base: '参数化补全',
+    diaphragm_reconstructed: '横隔重建', terminal_pair_gen: '端对生成',
+    panel_template_completion: '节间模板补全', crossarm_truss_completion: '横担补全',
+    boundary_leg_bridge: '边界腿桥接', side_direct: '侧视直读', side_mirror: '侧视镜像',
+  }[ev.origin] || ev.origin;
+  card.style.display = 'block';
+  card.innerHTML =
+    `<h4>件号 ${ev.bar_id} · ${ev.role}</h4><table>` +
+    `<tr><td>截面</td><td>${ev.section}</td></tr>` +
+    `<tr><td>几何来源</td><td>${originCn}</td></tr>` +
+    (ev.sheet ? `<tr><td>来源图纸</td><td class="src">${ev.sheet} · ${ev.handle || ''}</td></tr>` : '') +
+    (ev.confidence != null ? `<tr><td>置信度</td><td>${ev.confidence}</td></tr>` : '') +
+    `</table>` +
+    (ev.sheet
+      ? `<div style="margin-top:8px"><button id="goto" style="background:#2c4a86;color:#fff;border:0;border-radius:7px;padding:4px 12px;cursor:pointer;font:inherit">在图纸上查看 →</button></div>`
+      : `<div style="margin-top:8px;color:#71809a">参数化补全杆件：无对应图纸实体（诚实分色）</div>`);
+  const goto = document.getElementById('goto');
+  if (goto) goto.onclick = () => { showSheet(ev.sheet); highlightSVG(cid, true); };
+}
+
+// 3D 点杆 → 图纸高亮
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  const m = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  raycaster.setFromCamera(m, camera);
+  const meshes = [...id2mesh.values()];
+  const hit = raycaster.intersectObjects(meshes, false)[0];
+  if (!hit) return;
+  select3D(hit.object);
+});
+
+function select3D(mesh, scroll) {
+  if (selected) selected.mesh.material.emissive && selected.mesh.material.emissive.setHex(0);
+  selected = { cid: mesh.userData.component_id, mesh };
+  mesh.material.emissive && mesh.material.emissive.setHex(0x7a2a10);
+  const ev = barEvidence(selected.cid);
+  if (ev) showCard(selected.cid, ev);
+  clearSVGHighlight();
+  if (ev && ev.sheet) {
+    if (curSheet !== ev.sheet) showSheet(ev.sheet).then(() => highlightByHandle(ev.handle, true));
+    else highlightByHandle(ev.handle, true);
+  }
+}
+
+function clearSVGHighlight() {
+  hlEls.forEach((el) => { el.classList.remove('hl-bar'); glowSVG(el, false); });
+}
+
+function highlightSVG(cid, pan) {
+  const el = hlEls.find((x) => x.dataset.cid === cid);
+  if (!el) return;
+  el.classList.add('hl-bar');
+  el.setAttribute('stroke', '#ffd479');
+  el.setAttribute('stroke-width', 3);
+  if (pan) zoomToLine(el);
+}
+
+// 图纸点黄线 → 3D 定位（sheet 级 cid 经 handle 映射回塔级杆）
+function focus3D(sheetCid) {
+  const handle = (overlay[sheetCid] || {}).handle;
+  const cid = (handle && window.__h2cid.get(handle)) || sheetCid;
+  const mesh = id2mesh.get(cid);
+  if (mesh) {
+    controls.target.copy(mesh.getWorldPosition(new THREE.Vector3()));
+    camera.position.sub(controls.target).setLength(22000).add(controls.target);
+    controls.update();
+    select3D(mesh, false);
+  }
+}
+
+function zoomToLine(el) {
+  const svg = svghost.querySelector('svg');
+  const host = svghost.getBoundingClientRect();       // 宿主未变换矩形
+  const vb = svg.viewBox.baseVal;
+  const fit = Math.min(host.width / vb.width, host.height / vb.height);
+  const ox = (host.width - vb.width * fit) / 2;       // preserveAspectRatio 留白
+  const oy = (host.height - vb.height * fit) / 2;
+  const pts = el.getAttribute('points').trim().split(/\s+/).map((s) => s.split(',').map(Number));
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  // viewBox 坐标 → 未变换元素像素
+  const px = (cx - vb.x) * fit + ox, py = (cy - vb.y) * fit + oy;
+  const seg = Math.max(...xs) - Math.min(...xs), segy = Math.max(...ys) - Math.min(...ys);
+  const segPx = Math.max(Math.hypot(seg, segy) * fit, 60);
+  const scale = Math.max(0.6, Math.min(30, (Math.min(host.width, host.height) * 0.45) / segPx));
+  svg.style.transform = `translate(${host.width / 2 - px * scale}px, ${host.height / 2 - py * scale}px) scale(${scale})`;
+}
+
+// ---------- 分栏拖动 ----------
+const divid = document.getElementById('divid');
+divid.onmousedown = (e) => {
+  e.preventDefault();
+  const move = (ev) => {
+    const total = innerWidth;
+    const lp = Math.min(total * 0.75, Math.max(total * 0.25, ev.clientX));
+    left.style.flex = `0 0 ${lp}px`;
+    right_Flex(lp);
+    resize();
+  };
+  const up = () => { removeEventListener('mousemove', move); removeEventListener('mousemove', up); };
+  addEventListener('mousemove', move); addEventListener('mousemove', up);
+};
+function right_Flex() {}
+
+new ResizeObserver(resize).observe(left);
+resize();
+
+// ---------- 启动 / 切塔 ----------
+addSheetButtons();
+async function loadTower(tid) {
+  tower = tid;
+  // 清 3D 场景旧塔与状态
+  if (towerModel) { scene.remove(towerModel); towerModel = null; }
+  id2mesh.clear(); tracedMeshes.length = 0; synthMeshes.length = 0;
+  clearSel3D();
+  // 图纸按钮重建 + 状态栏
+  addSheetButtonsForTower();
+  curSheet = null;
+  document.getElementById('sheetstat').textContent = '加载中…';
+  sheetBar.querySelectorAll('.tower-btn').forEach((b) => b.classList.toggle('on', b.id === `tower-${tid}`));
+  const [modelJson, gltf] = await Promise.all([
+    fetch(`${DELIVER()}/model.json`).then((r) => r.json()),
+    new GLTFLoader().loadAsync(`${DELIVER()}/skeleton.glb`),
+  ]);
+  const ev = await loadModel(modelJson, gltf);
+  applyOnlyTraced();
+  await showSheet(curSheets()[0]);
+  return ev;
+}
+async function switchTower(tid) {
+  if (tid === tower || document.getElementById('tag').dataset.busy) return;
+  document.getElementById('tag').dataset.busy = '1';
+  document.getElementById('tag').textContent = `${tid} 加载中…`;
+  try { await loadTower(tid); } catch (e) {
+    document.getElementById('tag').textContent = `${tid} 加载失败：${e && e.message || e}`;
+  } finally { delete document.getElementById('tag').dataset.busy; }
+}
+(async () => {
+  try {
+    await loadTower('35A1-JC1');
+  } catch (e) {
+    const why = location.protocol === 'file:'
+      ? '本页通过 file:// 直接打开，浏览器会拦截模型/图纸请求。请用本地服务打开：'
+      : '资源加载失败（' + (e && e.message || e) + '）。请确认本地服务在跑，然后打开：';
+    document.getElementById('tag').innerHTML =
+      why + '<br><code>python3 -m http.server 8000 --directory web</code> → <a style="color:#7fb0ff" href="http://127.0.0.1:8000/site/trace.html">http://127.0.0.1:8000/site/trace.html</a>';
+  }
+})();
+addEventListener('resize', resize);
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+
+// 测试钩子（亦供控制台演示）：__trace.select(cid) / __trace.focus(cid) / __trace.tower(id)
+window.__trace = {
+  select(cid) { const m = id2mesh.get(cid); if (m) select3D(m); return !!m; },
+  focus: (cid) => focus3D(cid),
+  barsWithSheet: () => [...window.__ev.values()].filter((c) => c.properties?.projection_refs?.length).map((c) => c.id),
+  tower: (tid) => switchTower(tid),
+  current: () => tower,
+};
+</script>
+</body>
+</html>
