@@ -32,8 +32,7 @@ jobs:
           # 全链 Demo（/full.html）依赖本地 Python 服务，静态托管不发布，
           # 首页页脚改为指向仓库。
           rm -f _pages/site/demo.html
-          cat > _pages/.nojekyll <<'EOF'
-EOF
+          touch _pages/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _pages
