@@ -112,7 +112,9 @@ const tracedMeshes = [];        // 有图纸实体的杆（「仅图纸实体」
 const synthMeshes = [];         // 补全杆
 let towerModel = null;          // 当前塔根节点（切塔时从场景移除）
 let selected = null;
-let onlyTraced = false;
+// 默认「仅图纸实体」：每根可见杆都必须有 projection_refs（图纸证据）。
+// 补全杆（panel_template/diag_synth 等无证据类）只在用户显式关闭开关时显示。
+let onlyTraced = true;
 
 const pickColor = new THREE.Color(0xff5f4e);
 const raycaster = new THREE.Raycaster();
@@ -173,7 +175,7 @@ async function loadModel(modelJson, gltf) {
   window.__ev = ev; window.__h2cid = h2cid;
   const nTraced = [...ev.values()].filter((c) => c.projection_refs?.length).length;
   document.getElementById('tag').textContent =
-    `${tower} · 3D ${id2mesh.size} 杆 / 图纸 ${TOWERS[tower].sheets.length} 张 · 可追溯 ${nTraced} · 点杆追溯`;
+    `${tower} · 图纸实体 ${nTraced} 杆（另有补全 ${id2mesh.size - nTraced} 杆，默认隐藏） / 图纸 ${TOWERS[tower].sheets.length} 张 · 点杆追溯`;
   return ev;
 }
 
@@ -208,11 +210,11 @@ function addSheetButtons() {
   sheetWrap.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;align-items:center';
   sheetBar.appendChild(sheetWrap);
   addSheetButtonsForTower();
-  // 3D 显示模式：全部（识别实/补全虚）↔ 仅图纸实体
+  // 3D 显示模式：仅图纸实体（默认，证据杆）↔ 全部（补全杆半透明追加）
   const bt = document.createElement('button');
   bt.id = 'btn-traced';
   bt.textContent = '☑ 仅图纸实体';
-  bt.onclick = () => { onlyTraced = !onlyTraced; bt.textContent = (onlyTraced ? '☐' : '☑') + ' 仅图纸实体'; applyOnlyTraced(); };
+  bt.onclick = () => { onlyTraced = !onlyTraced; bt.textContent = (onlyTraced ? '☑' : '☐') + ' 仅图纸实体'; applyOnlyTraced(); };
   const bwrap = document.createElement('span');
   bwrap.style.cssText = 'margin-left:auto;display:flex;gap:6px;align-items:center';
   bwrap.appendChild(bt);
