@@ -1595,6 +1595,10 @@ def expand_4_face_symmetry_model(
             horiz_z_tol_mm=float(spec.get("collinear_stitch_horiz_z_tol_mm", 80.0)),
             horiz_center_tol_mm=float(
                 spec.get("collinear_stitch_horiz_center_tol_mm", 300.0)),
+            # 2026-09-05 A/B 实验：投影合并长度打分（修复 maxpair 对
+            # 重叠型近共线对的系统性高估/误杀）。overlay 显式开启。
+            score_by_proj_len=bool(
+                spec.get("collinear_stitch_score_by_proj_len", False)),
         )
         if _stitch_nodes:
             face_nodes = dict(face_nodes)

@@ -2900,6 +2900,13 @@ def complete_neck_braces_headless(
 
     generated = 0
     layers_report: List[dict] = []
+    # M5 修复：existing 只构建一次（原入参 bars），后续生成的杆
+    # 在发射点持续 append（见层循环内）。
+    existing: List[Tuple[Vec3, Vec3]] = [
+        (nodes.get(b.get("from")) if b.get("from") else None,
+         nodes.get(b.get("to")) if b.get("to") else None)
+        for b in bars]
+    existing = [(a, c) for a, c in existing if a is not None and c is not None]
     for layer in neck_layers:
         try:
             z_lo, z_mid, z_hi = float(layer[0]), float(layer[1]), float(layer[2])
@@ -2910,10 +2917,11 @@ def complete_neck_braces_headless(
         w_lo, w_mid, w_hi = _hw(z_lo), _hw(z_mid), _hw(z_hi)
         if min(w_lo, w_mid, w_hi) <= 50.0:
             continue
-        existing = [(nodes.get(b.get("from")) if b.get("from") else None,
-                     nodes.get(b.get("to")) if b.get("to") else None)
-                    for b in bars]
-        existing = [(a, c) for a, c in existing if a is not None and c is not None]
+        # 2026-09-05 代码审查 M5（实验 H 实锤）：existing 此前在
+        # 层循环内每层重建、且只看入参 bars——本轮前面层已生成的
+        # 杆对后续层不可见，重复层声明会双份生成（实测 16 杆含 8
+        # 对重复）。改为循环外构建一次 + 生成杆持续追加（与
+        # complete_crossarm_truss_headless 的 _emit 同构）。
         # K 撑：中站 (±w_mid, 0, z_mid)，上/下角站 (±w,±w, z)
         for sx in (1.0, -1.0):
             mid = _mk(sx * w_mid, 0.0, z_mid)
@@ -2925,6 +2933,7 @@ def complete_neck_braces_headless(
                     if _exists(p1, p2, existing):
                         continue
                     counter["n"] += 1
+                    existing.append((p1, p2))
                     new_bars.append({
                         "id": f"{id_prefix}_bar_{counter['n']}",
                         "from": f, "to": t,
@@ -3018,6 +3027,13 @@ def complete_skip_level_xbrace_headless(
 
     generated = 0
     layers_report: List[dict] = []
+    # 2026-09-05 代码审查 M5（与 neck 同构修复）：existing 循环外
+    # 构建一次，生成的杆持续追加，防重复层声明双份生成。
+    existing: List[Tuple[Vec3, Vec3]] = [
+        (nodes.get(b.get("from")) if b.get("from") else None,
+         nodes.get(b.get("to")) if b.get("to") else None)
+        for b in bars]
+    existing = [(a, c) for a, c in existing if a is not None and c is not None]
     for layer in xbrace_layers:
         try:
             z_lo, z_hi = float(layer[0]), float(layer[1])
@@ -3028,10 +3044,6 @@ def complete_skip_level_xbrace_headless(
         w_lo, w_hi = _hw(z_lo), _hw(z_hi)
         if w_lo <= 50.0 or w_hi <= 50.0:
             continue
-        existing = [(nodes.get(b.get("from")) if b.get("from") else None,
-                     nodes.get(b.get("to")) if b.get("to") else None)
-                    for b in bars]
-        existing = [(a, c) for a, c in existing if a is not None and c is not None]
         for sx in (1.0, -1.0):
             for sy in (1.0, -1.0):
                 a = _mk(sx * w_hi, sy * w_hi, z_hi)
@@ -3039,6 +3051,7 @@ def complete_skip_level_xbrace_headless(
                 p1, p2 = new_nodes[a], new_nodes[b_]
                 if _exists(p1, p2, existing):
                     continue
+                existing.append((p1, p2))
                 counter["n"] += 1
                 new_bars.append({
                     "id": f"{id_prefix}_bar_{counter['n']}",
@@ -4096,8 +4109,16 @@ def stitch_collinear_bars(
     horiz_z_tol_mm: float = 80.0,
     horiz_center_tol_mm: float = 300.0,
     cross_sheet_ok: bool = False,
+    score_by_proj_len: bool = False,
 ) -> Tuple[List[dict], Dict[str, object]]:
     """S4 贪心共线拼接：把断裂碎片杆拼回整杆（Phase 2 生产化）。
+
+    score_by_proj_len（2026-09-05 A/B 实验）：候选打分与长度门禁
+    改用「合并后投影长度」（与出栈时 L4248 投影极值同度量），
+    替代默认的「4 端点两两距离最大值」（maxpair）。maxpair 对
+    重叠/错位的近共线对 = 合并长 + 重叠量，会系统性抬高打分并把
+    重叠型有效对误杀在长度门禁外。A/B 实验开关，默认 False
+    （保持历史行为与数值连续性）。
 
     背景：模型杆件碎片化是召回率头号瓶颈——GT 杆长中位 2005mm，模型纯 DXF
     杆中位 ~900mm。一根 GT 杆被切成 2~3 段后端点误差天然达 1000mm 量级，
@@ -4235,15 +4256,29 @@ def stitch_collinear_bars(
             role_rejected[reason] = role_rejected.get(reason, 0) + 1
         return ok
 
+    def _proj_merge_len(ai: Vec3T, aj: Vec3T, bi: Vec3T, bj: Vec3T) -> float:
+        """A/B 实验：合并后投影长度（与出栈时投影极值同度量）。"""
+        axis = _unit3(_sub3(aj, ai)) or _unit3(_sub3(bj, bi))
+        if axis is None:
+            return 0.0
+        ts = [sum(p[k] * axis[k] for k in range(3))
+              for p in (ai, aj, bi, bj)]
+        return max(ts) - min(ts)
+
     pairs: List[Tuple[float, str, str]] = []
     for _fid, ids in by_face.items():
         for i in range(len(ids)):
             for j in range(i + 1, len(ids)):
                 if _pair_ok(ids[i], ids[j]):
-                    L = max(_dist3(cand[ids[i]][0], cand[ids[j]][0]),
-                            _dist3(cand[ids[i]][0], cand[ids[j]][1]),
-                            _dist3(cand[ids[i]][1], cand[ids[j]][0]),
-                            _dist3(cand[ids[i]][1], cand[ids[j]][1]))
+                    if score_by_proj_len:
+                        L = _proj_merge_len(
+                            cand[ids[i]][0], cand[ids[i]][1],
+                            cand[ids[j]][0], cand[ids[j]][1])
+                    else:
+                        L = max(_dist3(cand[ids[i]][0], cand[ids[j]][0]),
+                                _dist3(cand[ids[i]][0], cand[ids[j]][1]),
+                                _dist3(cand[ids[i]][1], cand[ids[j]][0]),
+                                _dist3(cand[ids[i]][1], cand[ids[j]][1]))
                     if L <= max_merged_len_mm:
                         pairs.append((abs(L - target_len_mm), ids[i], ids[j]))
     pairs.sort(key=lambda t: t[0])
@@ -4285,8 +4320,11 @@ def stitch_collinear_bars(
                 continue
             if active[nid][2] + ov[2] > max_segments:
                 continue
-            L2 = max(_dist3(p_s, ov[0]), _dist3(p_s, ov[1]),
-                     _dist3(p_e, ov[0]), _dist3(p_e, ov[1]))
+            if score_by_proj_len:
+                L2 = _proj_merge_len(p_s, p_e, ov[0], ov[1])
+            else:
+                L2 = max(_dist3(p_s, ov[0]), _dist3(p_s, ov[1]),
+                         _dist3(p_e, ov[0]), _dist3(p_e, ov[1]))
             if L2 > max_merged_len_mm:
                 continue
             pairs.append((abs(L2 - target_len_mm), nid, other))
