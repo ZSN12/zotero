@@ -67,7 +67,8 @@ const TOWERS = {
   '35A2-ZC1': { label: '35A2-ZC1 干字型直线塔', sheets: ['05', '07', '08', '09', '10', '12'] },
 };
 let tower = '35A1-JC1';
-const BASE = () => `/demo/${tower}`;
+// 相对路径：/site/trace.html 出发 → 本地 /demo/…、Pages /zotero/demo/… 两边通用
+const BASE = () => `../demo/${tower}`;
 const DELIVER = () => `${BASE()}/latest_deliver`;
 const TRACE = () => `${BASE()}/trace`;
 

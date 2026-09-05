@@ -31,7 +31,15 @@ jobs:
           cp -R web/demo/. _pages/demo/
           # 全链 Demo（/full.html）依赖本地 Python 服务，静态托管不发布，
           # 首页页脚改为指向仓库。
+          # demo.html 已删除（本地服务专属入口，公网断链）；此行兜底旧工作区。
           rm -f _pages/site/demo.html
+          # Pages 是子路径部署（/zotero/）：根入口做 meta 跳转到品牌站首页。
+          cat > _pages/index.html <<'HTML'
+          <!DOCTYPE html><meta charset="utf-8">
+          <title>Engineering Traceability</title>
+          <meta http-equiv="refresh" content="0; url=./site/index.html">
+          <p>Redirecting to <a href="./site/index.html">Engineering Traceability</a>…</p>
+          HTML
           touch _pages/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:

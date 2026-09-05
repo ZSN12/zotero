@@ -2,10 +2,14 @@
 
 2026-09-03 对标增量：品牌站从 0 到 5 页（首页/产品/演示/开源/关于）。
 测试钉住两件事：
-  * 结构：5 页齐备 + 站内互链有效 + 服务器路由（/site/*）可达；
+  * 结构：页面齐备 + 核心导航互链有效 + 服务器路由（/site/*）可达；
   * 诚实性：对外主口径数字只以「纯直读」语境出现，重建并集
     （99.7%）必须带辅助口径标注——把口径纪律钉进页面文案，
     防止品牌站退化成「拿重建数字冒充直读能力」的营销页。
+
+2026-09-05 导航收敛：主导航固定 5 项（index/product/trace/opensource/
+about）；demo/research/careers 为二级页（存在且必须被某页链接，但不进
+主导航）；trace.html 是全屏应用页，不挂导航，不参与互链断言。
 """
 from __future__ import annotations
 
@@ -16,21 +20,32 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SITE = REPO / "web" / "site"
 
-PAGES = ("index.html", "product.html", "demo.html", "research.html",
+PAGES = ("index.html", "product.html", "research.html",
          "opensource.html", "about.html", "careers.html")
+
+# 主导航 5 项：每一页都必须含这 5 个链接（trace.html 是应用页，除外）
+CORE_NAV = ("index.html", "product.html", "trace.html", "opensource.html",
+            "about.html")
 
 
 class BrandSiteStructureTest(unittest.TestCase):
-    def test_five_pages_exist_with_shared_css(self):
+    def test_pages_exist_with_shared_css_and_core_nav(self):
         for page in PAGES:
             p = SITE / page
             self.assertTrue(p.exists(), p)
             html = p.read_text(encoding="utf-8")
-            # 每页都挂共享样式 + 导航 5 链接
             self.assertIn('href="site.css"', html, f"{page} 缺 site.css")
-            for nav in PAGES:
+            for nav in CORE_NAV:
                 self.assertIn(nav, html, f"{page} 导航缺 {nav}")
         self.assertTrue((SITE / "site.css").exists())
+
+    def test_secondary_pages_are_linked(self):
+        """二级页（research/careers）不允许成为孤岛：
+        至少被一个页面链接。"""
+        all_html = "\n".join(
+            (SITE / p).read_text(encoding="utf-8") for p in PAGES)
+        for page in ("research.html", "careers.html"):
+            self.assertIn(f'href="{page}"', all_html, f"{page} 是孤岛页")
 
     def test_internal_links_resolve(self):
         """站内 href/src 指向的文件必须存在（防断链）。"""

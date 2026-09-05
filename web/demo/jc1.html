@@ -20,7 +20,7 @@
 <div id="info">
   <b>35A1-JC1</b> 国网官方典型设计完整塔（L0 CanonicalTower / GIM）<br>
   1071 根角钢构件 · 358 个空间节点 · 塔高 36.6 米 · 四面空间桁架 · 语义分层配色<br>
-  <a href="/">返回主控制台</a>
+  <a href="../site/index.html">返回主控制台</a>
 </div>
 <div id="viewer"></div>
 <script type="module">
@@ -52,7 +52,7 @@ scene.add(dir2);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 
-new GLTFLoader().load('/demo/35A1-JC1/gt_reference.glb', (gltf) => {
+new GLTFLoader().load('../demo/35A1-JC1/gt_reference.glb', (gltf) => {
   const edgeLines = [];
   gltf.scene.traverse((obj) => {
     if (obj.isMesh) {

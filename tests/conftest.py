@@ -10,12 +10,18 @@
 
 from __future__ import annotations
 
-import tempfile
+import sys
 from pathlib import Path
 
-import pytest
-
+# 裸 `pytest`（CI 用法）不会把仓库根加进 sys.path，rootdir 也非包安装；
+# 统一在 conftest 注入，测试文件无需各自 sys.path 补丁。
 REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+import tempfile
+
+import pytest
 GUOWANG_DIR = REPO / "examples" / "external" / "guowang_35A1"
 GUOWANG_OVERLAY = GUOWANG_DIR / "layer_overlay.json"
 
