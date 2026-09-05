@@ -42,3 +42,6 @@ build/
 web/demo/**/trace/*.glb.tmp
 !web/demo/**/trace/*.glb
 !web/demo/**/trace/*.json
+# jc1.html 演示塔（GT 参考模型，690KB）：trace.html 双塔主视图不受影响，
+# 此白名单只保证 demo 查看器在线上不黑屏。
+!web/demo/35A1-JC1/gt_reference.glb
