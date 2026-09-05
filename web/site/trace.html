@@ -142,18 +142,16 @@ async function loadModel(modelJson, gltf) {
   const box = new THREE.Box3().setFromObject(model);
   const center = box.getCenter(new THREE.Vector3());
   model.position.set(-center.x, -box.min.y, -center.z);
-  const ev0 = new Map();
-  for (const [cid, comp] of Object.entries(modelJson.components)) {
-    if (comp.kind === 'tower_bar') ev0.set(cid, comp);
-  }
+  // evidence.json：cid → {role, section, geometry_origin, bar_id, projection_refs, confidence}
+  const ev0 = new Map(Object.entries(modelJson));
   model.traverse((o) => {
     if (!o.isMesh) return;
     const ext = o.userData || {};
     const cid = ext.component_id || '';
     if (!cid) { o.material = barMat('LEG', false, false); return; }
     const comp = ev0.get(cid);
-    const role = ext.role || comp?.properties?.role || 'LEG';
-    const traced = !!(comp?.properties?.projection_refs?.length);
+    const role = ext.role || comp?.role || 'LEG';
+    const traced = !!(comp?.projection_refs?.length);
     o.material = barMat(role, traced, false);
     (traced ? tracedMeshes : synthMeshes).push(o);
     id2mesh.set(cid, o);
@@ -164,17 +162,15 @@ async function loadModel(modelJson, gltf) {
   resize();
 
   // 证据索引：component_id → 属性（含 projection_refs → sheet）
-  const ev = new Map();
+  const ev = ev0;
   const h2cid = new Map();   // CLE handle → 塔级杆 id（图纸↔3D 联接键）
-  for (const [cid, comp] of Object.entries(modelJson.components)) {
-    if (comp.kind !== 'tower_bar') continue;
-    ev.set(cid, comp);
-    for (const r of (comp.properties?.projection_refs || [])) {
+  for (const [cid, comp] of ev) {
+    for (const r of (comp.projection_refs || [])) {
       if (r.source_component_id && !h2cid.has(r.source_component_id)) h2cid.set(r.source_component_id, cid);
     }
   }
   window.__ev = ev; window.__h2cid = h2cid;
-  const nTraced = [...ev.values()].filter((c) => c.properties?.projection_refs?.length).length;
+  const nTraced = [...ev.values()].filter((c) => c.projection_refs?.length).length;
   document.getElementById('tag').textContent =
     `${tower} · 3D ${id2mesh.size} 杆 / 图纸 ${TOWERS[tower].sheets.length} 张 · 可追溯 ${nTraced} · 点杆追溯`;
   return ev;
@@ -303,14 +299,14 @@ function applyOnlyTraced() {
   const ev = window.__ev;
   for (const o of tracedMeshes) {
     const comp = ev.get(o.userData.component_id);
-    o.material = barMat(o.userData.role || comp?.properties?.role || 'LEG', true, false);
+    o.material = barMat(o.userData.role || comp?.role || 'LEG', true, false);
     o.visible = true;
   }
   for (const o of synthMeshes) {
     o.visible = !onlyTraced;
     if (!o.visible) continue;
     const comp = ev.get(o.userData.component_id);
-    const role = o.userData.role || comp?.properties?.role || 'LEG';
+    const role = o.userData.role || comp?.role || 'LEG';
     o.material = barMat(role, false, false);   // 正常态：半透明压暗
   }
   if (onlyTraced && selected && !selected.mesh.visible) clearSel3D();
@@ -327,19 +323,16 @@ function clearSel3D() {
 function barEvidence(cid) {
   const comp = window.__ev && window.__ev.get(cid);
   if (!comp) return null;
-  const p = comp.properties || {};
+  const p = comp;
   const ref = (p.projection_refs || []).find((r) => r.sheet_id) || null;
-  const s = comp.source || {};
   return {
     bar_id: p.bar_id || '—',
     section: p.section || '—',
     role: p.role || '—',
     origin: p.geometry_origin || '—',
-    length_mm: p.length_mm || null,
     sheet: ref ? ref.sheet_id : null,
-    handle: ref ? ref.source_component_id : (s.detail || '').match(/handle=([A-Za-z0-9_#]+)/)?.[1] || null,
-    detail: s.detail || '',
-    confidence: s.confidence,
+    handle: ref ? ref.source_component_id : null,
+    confidence: p.confidence,
   };
 }
 
@@ -482,8 +475,8 @@ async function loadTower(tid) {
   document.getElementById('sheetstat').textContent = '加载中…';
   sheetBar.querySelectorAll('.tower-btn').forEach((b) => b.classList.toggle('on', b.id === `tower-${tid}`));
   const [modelJson, gltf] = await Promise.all([
-    fetch(`${DELIVER()}/model.json`).then((r) => r.json()),
-    new GLTFLoader().loadAsync(`${DELIVER()}/skeleton.glb`),
+    fetch(`${TRACE()}/evidence.json`).then((r) => r.json()),
+    new GLTFLoader().loadAsync(`${TRACE()}/tower.glb`),
   ]);
   const ev = await loadModel(modelJson, gltf);
   applyOnlyTraced();
@@ -503,10 +496,12 @@ async function switchTower(tid) {
     await loadTower('35A1-JC1');
   } catch (e) {
     const why = location.protocol === 'file:'
-      ? '本页通过 file:// 直接打开，浏览器会拦截模型/图纸请求。请用本地服务打开：'
-      : '资源加载失败（' + (e && e.message || e) + '）。请确认本地服务在跑，然后打开：';
-    document.getElementById('tag').innerHTML =
-      why + '<br><code>python3 -m http.server 8000 --directory web</code> → <a style="color:#7fb0ff" href="http://127.0.0.1:8000/site/trace.html">http://127.0.0.1:8000/site/trace.html</a>';
+      ? '本页通过 file:// 直接打开，浏览器会拦截模型/图纸请求。请通过 http(s) 访问：'
+      : '资源加载失败（' + (e && e.message || e) + '）。';
+    document.getElementById('tag').innerHTML = why +
+      (location.protocol === 'file:'
+        ? '<br>在线版：zsn12.github.io/zotero/site/trace.html'
+        : '<br>请刷新重试，或确认 trace/ 资产目录可访问。');
   }
 })();
 addEventListener('resize', resize);
@@ -516,7 +511,7 @@ renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, came
 window.__trace = {
   select(cid) { const m = id2mesh.get(cid); if (m) select3D(m); return !!m; },
   focus: (cid) => focus3D(cid),
-  barsWithSheet: () => [...window.__ev.values()].filter((c) => c.properties?.projection_refs?.length).map((c) => c.id),
+  barsWithSheet: () => [...window.__ev.entries()].filter(([, c]) => c.projection_refs?.length).map(([cid]) => cid),
   tower: (tid) => switchTower(tid),
   current: () => tower,
 };

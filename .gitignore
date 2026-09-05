@@ -16,9 +16,6 @@ out/
 web/demo/**/*.glb
 web/demo/**/*.json
 web/demo/**/latest_deliver/
-# 联动追溯页数据例外：overlay.json 是页面必需的静态数据
-!web/demo/**/trace/overlay.json
-!web/demo/**/trace/index.json
 
 # 35A1-JC1 单塔运行产物目录（canonical/skeleton/detail_atlas glb + index.html）
 web/demo/35A1-JC1-hybrid/
@@ -38,3 +35,9 @@ tools/oda-file-converter/tmp-input/
 # 备份文件
 *.bak
 build/
+
+# 联动追溯页：整目录白名单（SVG/overlay/演示 GLB 都是页面必需静态资产）；
+# 运行产物仍由前面的 latest_deliver/ 与 *.glb 规则拦截。
+!web/demo/**/trace/
+web/demo/**/trace/*.glb.tmp
+!web/demo/**/trace/*.glb

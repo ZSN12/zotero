@@ -208,7 +208,7 @@ if (stage) {
     [/HORIZ|CROSS/i, 0x8ee6a8],
   ];
   const matCache = {};
-  new GLTFLoader().load('/demo/35A1-JC1/latest_deliver/canonical.glb', (gltf) => {
+  new GLTFLoader().load('/demo/35A1-JC1/trace/canonical.glb', (gltf) => {
     const model = gltf.scene;
     model.name = 'tower';
     const bbox = new THREE.Box3().setFromObject(model);
@@ -231,11 +231,9 @@ if (stage) {
     fit();
   }, undefined, () => {
     const why = location.protocol === 'file:'
-      ? '本页通过 file:// 直接打开，浏览器会拦截模型请求。请用本地服务打开：'
-      : '模型加载失败，请确认本地服务在跑，然后打开：';
-    loading.innerHTML = why +
-      '<br><code>python3 -m http.server 8000 --directory web</code>' +
-      ' → <a style="color:#7fb0ff" href="http://127.0.0.1:8000/site/product.html">http://127.0.0.1:8000/site/product.html</a>';
+      ? '本页通过 file:// 直接打开，浏览器会拦截模型请求。请通过 http(s) 访问本页。'
+      : '模型加载失败，请刷新重试。';
+    loading.innerHTML = why;
   });
 
   const grid = new THREE.GridHelper(60000, 60, 0x2c3646, 0x1c232e);

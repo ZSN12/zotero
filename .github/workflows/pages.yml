@@ -1,0 +1,48 @@
+name: pages
+
+# 产品站 + 3D 演示静态发布：只发布 web/site（品牌站/联动追溯页）与
+# web/demo 里的静态资产（trace SVG/overlay/演示 GLB）。引擎源码不出仓库
+# 的展示口径在 workflow 里保证：发布工件只从这两个目录挑文件。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site
+        run: |
+          mkdir -p _pages/site _pages/demo
+          cp -R web/site/. _pages/site/
+          # 只带静态演示资产：trace 联动数据 + 独立查看器页面；latest_deliver
+          # 等运行产物不入库，天然不会被拷贝。
+          cp -R web/demo/. _pages/demo/
+          # 全链 Demo（/full.html）依赖本地 Python 服务，静态托管不发布，
+          # 首页页脚改为指向仓库。
+          rm -f _pages/site/demo.html
+          cat > _pages/.nojekyll <<'EOF'
+EOF
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _pages
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
