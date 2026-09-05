@@ -251,12 +251,15 @@ def grid_from_sheets_dir(
     for stem, regs in (overlay.get("view_regions") or {}).items():
         if not isinstance(regs, list):
             continue
+        # 2026-09-05 代码审查 L5：break 只应在「已取到正 datum」后发生——
+        # 旧位置（首个带 z_offset 的 region 即 break）在首个 region 为
+        # 0.0 占位时直接终止，后续已标定 region 被丢弃、整册不投票。
         for r in regs:
             if isinstance(r, dict) and r.get("z_offset") is not None:
                 z = float(r["z_offset"])
                 if z > 0:  # datum=0.0 是未标定册占位（如 JC1-40 基础详图）
                     z_offsets[stem] = z
-                break  # 同册多 region（front/side）datum 一致，取首个非空
+                    break  # 同册多 region（front/side）datum 一致，取首个非零
     marker_levels: Dict[str, List[float]] = {}
     for stem, cfg in (overlay.get("centerline_extract") or {}).items():
         if isinstance(cfg, dict):

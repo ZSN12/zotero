@@ -1836,10 +1836,15 @@ def complete_k_fan_braces(
         if w <= 0 or zj < 6000:
             continue
         # 现有水平环计数（该层水平杆数）
+        # 2026-09-05 代码审查 H1：nodes.get() 可能返回 None（上游
+        # stitch/repair 允许悬空端点引用）——同函数其余节点访问
+        # 均有判空，唯此处遗漏；pe=None 会让整个 S8 补全阶段
+        # TypeError 崩溃（静默丢失 K-fan/X-panel 补全）。
         _n_horiz = sum(
             1 for b in bars
-            for pe in (nodes.get(b.get("from")), nodes.get(b.get("to")))
-            if _is_mid(pe) and abs(float(pe[2]) - zj) < 200.0)
+            for pe in (nodes.get(b.get("from")) if b.get("from") else None,
+                       nodes.get(b.get("to")) if b.get("to") else None)
+            if pe is not None and _is_mid(pe) and abs(float(pe[2]) - zj) < 200.0)
         if _n_horiz < 8:
             continue
         mids = ((0.0, w), (0.0, -w), (w, 0.0), (-w, 0.0))
@@ -2136,7 +2141,11 @@ def complete_crossarm_truss(
                 continue
             wide.append((z, r))
     if len(wide) < 2:
-        return nodes, bars, {"generated": 0, "layers": [], "reason": "no_wide_node_evidence"}
+        # 2026-09-05 代码审查 L1：补 n_wide_nodes=0——与下方同族
+        # 返回键形一致，防下游 report["n_wide_nodes"] KeyError。
+        return nodes, bars, {
+            "generated": 0, "layers": [], "n_wide_nodes": len(wide),
+            "reason": "no_wide_node_evidence"}
 
     wide.sort(key=lambda wr: wr[0])
     # z 簇：间隙 >300mm 分簇（下弦层与中折层差 ~440mm，须分开）
@@ -3908,6 +3917,9 @@ def prune_short_stub_bars(
             return str(v)
         return None
 
+    # 2026-09-05 代码审查 M4：真实收敛轮数（此前写死 max_rounds）。
+    # max_rounds=0 时循环不执行、_round 未定义——预置 -1（+1 后为 0）。
+    _round = -1
     for _round in range(max_rounds):
         deg: Dict[str, int] = {}
         for b in new_bars:
@@ -3948,9 +3960,14 @@ def prune_short_stub_bars(
         referenced = {b["from"] for b in new_bars} | {b["to"] for b in new_bars}
         new_nodes = {nid: pos for nid, pos in new_nodes.items() if nid in referenced}
 
+    # 2026-09-05 代码审查 M4：报告真实收敛轮数（此前写死
+    # max_rounds，审计口径失真）；break 时 _round 是最后执行轮
+    # （0-based），+1 得实际轮数；跑满不 break 时为 max_rounds。
+    rounds_used = min(_round + 1, max_rounds) if max_rounds > 0 else 0
+
     return new_nodes, new_bars, {
         "pruned_bars": pruned,
-        "pruned_rounds": max_rounds,
+        "pruned_rounds": rounds_used,
         "pruned_label_ids": pruned_labels,
     }
 
@@ -4560,10 +4577,11 @@ def stitch_leg_chains(
             # 度数保护：链中段节点若有外部杆挂接（度数>2），在处断开
             segs: List[List[dict]] = []
             seg: List[dict] = [chain[0]]
-            for b in chain[1:]:
-                lo, hi = _endpoints_low_high(chain[chain.index(b) - 1])
-                # 前段顶节点
-                prev_top = _endpoints_low_high(chain[chain.index(b) - 1])[1]
+            # 2026-09-05 代码审查 M3：chain.index(b) 按对象查找——
+            # id 重复时永远返回首条（错位断链）且 O(n²)；同表达式
+            # 还被计算了两次、lo/hi 从未使用。改枚举下标一次取全。
+            for _ci, b in enumerate(chain[1:], start=1):
+                prev_top = _endpoints_low_high(chain[_ci - 1])[1]
                 if node_deg.get(prev_top, 0) > 2:
                     segs.append(seg)
                     seg = [b]
@@ -4586,6 +4604,11 @@ def stitch_leg_chains(
                                     if f.get("bar_id") and not str(f.get("bar_id")).startswith("UNLABELED")})
                 nb = dict(src)
                 nb.pop("bar_id", None)
+                # 2026-09-05 代码审查 L3：剔除入口阶段（legs.append
+                # 的 dict(b, _a=..., _c=...)）遗留的临时坐标键——
+                # 且是合并时刻的陈旧值，进输出会污染 schema/BOM 核验。
+                nb.pop("_a", None)
+                nb.pop("_c", None)
                 if _src_bids:
                     nb["source_bar_ids"] = _src_bids
                 nb.update({

@@ -123,7 +123,10 @@ def _generate_tip_platform(
         new_bars.append({
             "id": f"tip_plat_{z_platform:.0f}_{idx:02d}",
             "from": a, "to": b,
-            "role": "DIAG" if idx >= 8 else "DIAG",
+            # 2026-09-05 代码审查 L2：原 "DIAG" if idx >= 8 else "DIAG"
+            # 是死三目（两分支同值）——外框 8 根水平杆被误标 DIAG，
+            # 污染 metrics_by_role 与 classify_members。
+            "role": "DIAG" if idx >= 8 else "HORIZ",
             "geometry_class": "reconstructed",
             "geometry_origin": "terminal_pair_gen",
             "level_source": level_source_label,
@@ -172,8 +175,15 @@ def expand_4_face_symmetry_model(
         try:
             from .tower_spec import load_tower_spec
             spec = load_tower_spec(overlay)
-        except Exception:
-            spec = {}
+        except Exception as _exc_ov:
+            # 2026-09-05 代码审查 H1：overlay 解析失败不得静默吞——
+            # 旧行为是 spec={} 照常「成功」展开（平台层位/S11 全族/
+            # snap 参数全失效、无任何痕迹）。留 stderr + spec 标记，
+            # 让报告链可归因。
+            sys.stderr.write(
+                "[tower_symmetry] overlay 加载失败，按空配置展开："
+                f"{_exc_ov!r}\n")
+            spec = {"_overlay_load_error": repr(_exc_ov)}
     if snap_tol is None:
         snap_tol = float(spec.get("snap_tol_mm", 80.0))
     # GT 权威半宽（阶段 0.2 GT 隔离）：仅当 overlay 显式 use_gt_half_width=true
@@ -417,7 +427,20 @@ def expand_4_face_symmetry_model(
     if bool(spec.get("bridge_boundary_legs", True)):
         from ..solve.tower_geometry import bridge_segment_boundary_legs
         _bbl_bounds = spec.get("bridge_boundary_z") or []
-        if not _bbl_bounds and overlay is not None:
+        if not _bbl_bounds:
+            # 2026-09-05 代码审查 M3：优先用 spec（load_tower_spec 深合并
+            # 结果）里现成的 view_regions——旧路径从磁盘重读 overlay JSON，
+            # dict overlay（合法入参）必失败后落到 JC1 专属硬编码边界
+            # [12000,17000,24000,30000]（塔常数外溢）。
+            _zs = set()
+            for _regs in (spec.get("view_regions") or {}).values():
+                for _r in _regs or []:
+                    _zo = _r.get("z_offset") if isinstance(_r, dict) else None
+                    if _zo is not None:
+                        _zs.add(float(_zo))
+            if _zs:
+                _bbl_bounds = sorted(_zs)
+        if not _bbl_bounds and overlay is not None and not isinstance(overlay, dict):
             try:
                 import json as _json
                 from pathlib import Path as _Path
@@ -431,15 +454,25 @@ def expand_4_face_symmetry_model(
                 _bbl_bounds = sorted(_zs)
             except Exception:
                 _bbl_bounds = []
-        snapped_nodes, snapped_bars, _bbl_rep = bridge_segment_boundary_legs(
-            snapped_nodes, snapped_bars, boundaries=_bbl_bounds or [12000.0, 17000.0, 24000.0, 30000.0],
-        )
+        if not _bbl_bounds:
+            sys.stderr.write(
+                "[tower_symmetry] bridge_boundary_legs：未能推导分册边界"
+                "（bridge_boundary_z/view_regions 均缺）——跳过搭桥而非"
+                "套用 JC1 专属默认边界（旧硬编码 [12000,17000,24000,30000]"
+                " 已废弃，防塔常数外溢）\n")
+            _bbl_rep = {"skipped": "no_boundary_evidence"}
+        else:
+            snapped_nodes, snapped_bars, _bbl_rep = bridge_segment_boundary_legs(
+                snapped_nodes, snapped_bars, boundaries=_bbl_bounds,
+            )
         df_bbl = model.components.get("drawing_file")
         if df_bbl is not None:
             df_bbl.properties["boundary_leg_bridge_report"] = {
                 "bridged": int(_bbl_rep.get("bridged", 0)),
                 "boundaries": _bbl_rep.get("boundaries") or [],
                 "details": _bbl_rep.get("details") or [],
+                # 2026-09-05 M3：边界证据缺失时的跳过留痕（不套 JC1 默认）。
+                "skipped": _bbl_rep.get("skipped"),
             }
 
     # 阶段 5.6：悬空断裂收尾（P3 真实性治理，门禁 genuine_dangling<=4 目标）。
@@ -936,6 +969,11 @@ def expand_4_face_symmetry_model(
     #      level_source 跟随平台层来源）并撤下被替代的原始投影杆。
     # 实测（2026-08-31 离线）：64 生成 / 56 TP@500（88%）。
     # 保守默认关闭，须 overlay 显式开启（diagonal_topology_reconstruct=true）。
+    # 2026-09-05 代码审查 B1：_dt_rep 必须预置——kfan_completion 块
+    # （默认 True）无条件读取它，而赋值只发生在 DT 分支内；DT 关 ×
+    # kfan 开的合法组合（新塔 overlay 只抄层位没抄 DT 键）会
+    # UnboundLocalError 崩掉整个 expand_4_face_symmetry_model。
+    _dt_rep: dict = {}
     if bool(spec.get("diagonal_topology_reconstruct", False)):
         from ..solve.diagonal_topology import (
             reconstruct_diagonal_sheets,
@@ -1781,9 +1819,17 @@ def expand_4_face_symmetry_model(
 
     new_bar_ids: List[str] = []
     for b in face_bars:
-        bid = str(b.get("bar_id") or b["id"])
-        n = bar_id_count[bid]
-        bar_id_count[bid] = n + 1
+        # 2026-09-05 代码审查 H2：无真实图纸件号的杆（kfan/tps/
+        # diaphragm/S10/S11/底段等生成器产物，杆 dict 只带合成 id）
+        # 不得把合成 id 冒充 bar_id 写进交付——曾在 ZC1 交付里造成
+        # 2052 个幻影件号进 physical_bar_counts/BOM 比对池（对照
+        # stitch_collinear_bars 的 nb.pop("bar_id") 纪律）。bar_id
+        # 仅在图纸证据真实存在时保留。
+        bid = b.get("bar_id")
+        if bid is not None:
+            bid = str(bid)
+        _count_key = bid if bid is not None else str(b["id"])
+        bar_id_count[_count_key] += 1
         comp_id = f"4f_{b['id']}"
 
         # 证据链：优先保留 solve 层透传的来源元数据；否则回退到原始组件 meta。

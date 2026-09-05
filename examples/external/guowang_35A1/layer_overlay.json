@@ -1,5 +1,6 @@
 {
   "$comment": "35A1-JC1 全册 overlay：cross_file 仅 02 立面 + 35C2 基础平面；详图页标 detail 不参与 3D merge",
+  "_doc_leg_synth_spans_mm": "P2.2 腿杆层位重参数化通道（git 52585ca/40b6055）：各册 leg_synth span 表 [z_lo, z_hi] 为 z-only 设计常数（x/y 由画线证据定位），合成腿杆 geometry_origin=leg_synth 且计入 A2-pure 口径（metrics._bar_caliber_class）。version.json gt_injected.surfaces 登记为「表驱动合成腿杆计入 pure」——pure ≠ 全直读，含本通道。",
   "bar_layers": [
     "1",
     "2",

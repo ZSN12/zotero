@@ -1138,6 +1138,12 @@ def _bar_caliber_class(p: Dict[str, Any]) -> str:
     origin = str(p.get("geometry_origin") or "")
     # P1.2：centerline_extract 主路径的合并/合成横杆仍是「图纸直读」语义，
     # 不应因 collinear_stitch 或 marker_synth 被降 reconstructed 层。
+    # 2026-09-05 代码审查 B1 澄清：leg_synth 的 z 端点来自 overlay 的
+    # per-sheet leg_synth_spans_mm 跨段表（z-only 设计常数，P2.2 公开
+    # 提分通道 git 52585ca/40b6055），x/y 仍由图纸画线证据定位——本
+    # 判定维持其 pure 归属（历史口径连续性），但该通道已在
+    # versioning.gt_injected.surfaces 登记为「表驱动合成腿杆计入 pure」，
+    # 口径披露与判定保持一致可查。
     if str(p.get("source_extractor") or "") == "centerline_extract":
         face = p.get("face")
         if face in (None, "f") and origin in (

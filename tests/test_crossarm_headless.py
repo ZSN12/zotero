@@ -266,3 +266,45 @@ def test_versioning_registers_s11_declarations(tmp_path, monkeypatch):
     assert "skip_level_xbrace_layers" in _active
     assert "lightning_rod_layers" not in _active  # 未声明不登记
     assert "neck_brace_layers" not in _active
+
+
+def test_k_fan_dangling_endpoint_no_crash():
+    """H1（2026-09-05 代码审查）：S8 证据统计对悬空端点解引用崩溃。
+
+    上游 stitch/repair 允许 from/to 引用缺失节点；complete_k_fan_braces
+    的 _n_horiz 统计此前未判空，任一杆悬空即 TypeError，整个 S8
+    补全阶段静默丢失。
+    """
+    from traceability.solve.tower_geometry import complete_k_fan_braces
+    nodes = {"n1": (0.0, 100.0, 7000.0), "n2": (100.0, 0.0, 7000.0),
+             "n3": (0.0, -100.0, 7000.0), "n4": (-100.0, 0.0, 7000.0),
+             "n5": (0.0, 100.0, 7500.0), "n6": (100.0, 0.0, 7500.0),
+             "n7": (0.0, -100.0, 7500.0), "n8": (-100.0, 0.0, 7500.0)}
+    bars = [{"id": f"h{i}", "from": a, "to": b, "role": "HORIZ"}
+            for i, (a, b) in enumerate(
+                (("n1", "n2"), ("n2", "n3"), ("n3", "n4"), ("n4", "n1"),
+                 ("n5", "n6"), ("n6", "n7"), ("n7", "n8"), ("n8", "n5")))]
+    bars.append({"id": "dangling", "from": "nX_missing", "to": "n1",
+                 "role": "DIAG"})
+    _n, _b, rep = complete_k_fan_braces(
+        dict(nodes), bars, lambda z: 100.0, [7000.0, 7500.0])
+    assert "generated" in rep  # 不崩即通过
+
+
+def test_leg_chain_stitch_no_leaky_internal_keys():
+    """L3：腿链合成杆不得泄漏 _a/_c 临时坐标键。"""
+    from traceability.solve.tower_geometry import stitch_leg_chains
+    nodes = {}
+    bars = []
+    z = 0.0
+    for i in range(4):
+        a, b = f"a{i}", f"a{i+1}"
+        nodes[a] = (100.0, 100.0, z)
+        nodes[b] = (100.0, 100.0, z + 500.0)
+        bars.append({"id": f"leg{i}", "from": a, "to": b,
+                     "role": "LEG", "face": "f"})
+        z += 500.0
+    out, rep = stitch_leg_chains(dict(nodes), [dict(b) for b in bars])
+    synth = [b for b in out if str(b.get("geometry_origin")) == "leg_chain_stitch"]
+    for b in synth:
+        assert "_a" not in b and "_c" not in b, f"泄漏内部键: {sorted(b.keys())}"

@@ -242,6 +242,29 @@ def collect_version_info(out_dir: Path, repo_root: Path,
                     _active[_ovk] = (
                         f"{len(_ovv)} layer-group(s), z-only grid-picked"
                         " (S11 declarative completion)")
+            # 2026-09-05 代码审查 B1（披露缺口）：centerline_extract 的
+            # per-sheet leg_synth_spans_mm（05/06/07/04/02 五册的腿杆
+            # 跨段 z 表）是 P2.2 公开提分通道（git 52585ca/40b6055），
+            # 且 _bar_caliber_class 把 leg_synth 杆判入 pure 池——
+            # 「表驱动合成腿杆计入 pure」必须在注入披露里可查，否则
+            # version.json 读者无从知道 pure 口径含该通道。
+            _ce = _ov.get("centerline_extract")
+            if isinstance(_ce, dict):
+                _ls_sheets = sorted(
+                    _s for _s, _c in _ce.items()
+                    if isinstance(_c, dict)
+                    and isinstance(_c.get("leg_synth_spans_mm"), list)
+                    and _c["leg_synth_spans_mm"])
+                if _ls_sheets:
+                    _n_spans = sum(
+                        len(_c["leg_synth_spans_mm"])
+                        for _s, _c in _ce.items()
+                        if isinstance(_c, dict)
+                        and isinstance(_c.get("leg_synth_spans_mm"), list))
+                    _active["leg_synth_spans_mm"] = (
+                        f"{_n_spans} spans across {len(_ls_sheets)} sheets "
+                        f"({', '.join(_ls_sheets)}) — 表驱动合成腿杆，"
+                        "计入 pure 口径（metrics._bar_caliber_class）")
             if _active:
                 info["gt_injected"] = {
                     "surfaces": _active,
@@ -249,8 +272,13 @@ def collect_version_info(out_dir: Path, repo_root: Path,
                              "含 level_source=gt 的跑批为 level-assisted 口径，"
                              "与纯直读口径（A2-dual-view-pure）区分呈报。"),
                 }
-        except (ValueError, OSError):
-            pass
+        except (ValueError, OSError) as _exc_disc:
+            # 2026-09-05 代码审查 M4：披露链 fail-open 改留痕——
+            # overlay 解析失败时 gt_injected 整块消失曾是静默行为，
+            # 现在显式落 error 字段，门禁/审计可见（缺失≠无注入）。
+            info["gt_injected_error"] = (
+                f"overlay 披露解析失败：{_exc_disc!r} —— "
+                "本跑批的注入面披露缺失，不代表无注入")
 
     model_path = out_dir / "model.json"
     if model_path.exists():

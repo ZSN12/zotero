@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>塔型选美 · Tower Audition</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #10141c; overflow: hidden; }
+  #tag { position: fixed; left: 14px; top: 12px; z-index: 2; background: rgba(8,10,14,.72);
+         color: #dfe6f0; padding: 8px 14px; border-radius: 8px; font: 14px system-ui; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="tag">loading…</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const params = new URLSearchParams(location.search);
+const glb = params.get('glb') || '/demo/35A1-JC1/latest_deliver/canonical.glb';
+const up = params.get('up') || 'z';           // z = 工程坐标（导出未转），y = 已转换
+const mode = params.get('color') || 'role';   // role = 角色分色 / steel = 钢材单色
+document.getElementById('tag').textContent = decodeURIComponent(glb) + (up === 'z' ? ' (z-up fix)' : ' (y-up raw)');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x10141c);
+scene.fog = new THREE.Fog(0x10141c, 150000, 600000);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 10, 500000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// 三点布光：天光 + 主光 + 逆光轮廓
+scene.add(new THREE.HemisphereLight(0xbfd4ee, 0x1a1f28, 1.05));
+const key = new THREE.DirectionalLight(0xffffff, 1.9); key.position.set(1, 1.6, 0.8).multiplyScalar(60000);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x88aaff, 0.9); rim.position.set(-1.2, 0.6, -1).multiplyScalar(60000);
+scene.add(rim);
+
+// 地面：细网格 + 淡渐变圆盘
+const grid = new THREE.GridHelper(120000, 60, 0x2b3850, 0x1a2230);
+scene.add(grid);
+
+const ROLE_COLORS = [
+  [/LEG/i, 0x86b6ff], [/DIAG/i, 0xffcf6e],
+  [/HORIZ|CROSS/i, 0x7fe39c],
+];
+new GLTFLoader().load(glb, (gltf) => {
+  const model = gltf.scene;
+  if (up === 'z') model.rotation.x = -Math.PI / 2;   // 工程 Z-up → three Y-up
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  // 归一化到原点上方
+  model.position.set(-center.x, -box.min.y, -center.z);
+  const steel = new THREE.MeshStandardMaterial({ color: 0xc8d2de, metalness: 0.5, roughness: 0.42 });
+  const lineSteel = new THREE.LineBasicMaterial({ color: 0xc8d2de });
+  const lineByRole = {};
+  model.traverse((o) => {
+    const isLine = o.isLine || o.isLineSegments;
+    if (!o.isMesh && !isLine) return;
+    const roleOf = (o.userData && (o.userData.role || o.userData.kind || o.name)) || '';
+    if (mode !== 'role') { o.material = isLine ? lineSteel : steel; return; }
+    let color = 0xb9c4d4;
+    for (const [re, c] of ROLE_COLORS) if (re.test(String(roleOf))) { color = c; break; }
+    if (isLine) {
+      o.material = lineByRole[color] || (lineByRole[color] = new THREE.LineBasicMaterial({ color }));
+    } else {
+      const m = new THREE.MeshStandardMaterial({ color, metalness: 0.35, roughness: 0.55 });
+      if (!o.geometry.attributes.normal) m.flatShading = true;   // 无法线网格：免全黑
+      o.material = m;
+    }
+  });
+  scene.add(model);
+  if (params.get('debug')) {
+    let nMesh = 0, nLine = 0, noNormal = 0, mats = new Set();
+    model.traverse((o) => {
+      if (o.isMesh) { nMesh++; if (!o.geometry.attributes.normal) noNormal++; }
+      if (o.isLine || o.isLineSegments) nLine++;
+      if (o.material) mats.add((o.material.type || '?') + ':' + (o.material.color ? o.material.color.getHexString() : ''));
+    });
+    document.getElementById('tag').textContent +=
+      ` · mesh=${nMesh} line=${nLine} noNormal=${noNormal} mats=[${[...mats].slice(0,4).join('|')}]`;
+  }
+  // 相机自动取景：包围球拟合（任意塔型不裁头不裁脚）
+  const box2 = new THREE.Box3().setFromObject(model);
+  const sphere = box2.getBoundingSphere(new THREE.Sphere());
+  const H = box2.max.y;
+  const fov = camera.fov * Math.PI / 180;
+  const dist = (sphere.radius / Math.tan(fov / 2)) * 1.22;
+  const dir = new THREE.Vector3(0.62, 0.34, 0.72).normalize();
+  controls.target.copy(sphere.center).y = H * 0.46;
+  camera.position.copy(controls.target).addScaledVector(dir, dist);
+  controls.update();
+  document.getElementById('tag').textContent += ` · ${box2.max.x - box2.min.x}×${box2.max.z - box2.min.z}×${H}mm`.replace(/\.\d+/g, '');
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+</script>
+</body>
+</html>
