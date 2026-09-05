@@ -12,12 +12,10 @@
   <span class="brand">Engineering<span class="dot">·</span>Traceability</span>
   <a href="index.html">首页</a>
   <a href="product.html" class="active">产品能力</a>
-  <a href="demo.html">在线演示</a>
-  <a href="research.html">研究</a>
+  <a href="trace.html">在线演示</a>
   <a href="opensource.html">开源</a>
   <a href="about.html">关于</a>
-  <a href="careers.html">参与</a>
-  <a class="cta" href="/">进入 Demo →</a>
+  <a class="cta" href="trace.html">进入 3D 追溯 →</a>
 </nav>
 
 <div class="wrap">
@@ -132,7 +130,7 @@
   <div class="wrap">
     <div style="color:var(--ink-dim)">
       <a href="index.html">← 返回首页</a> ·
-      <a href="demo.html">在线演示 →</a>
+      <a href="trace.html">在线演示 →</a>
     </div>
   </div>
 </footer>
@@ -174,6 +172,7 @@ if (stage) {
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
   const camera = new THREE.PerspectiveCamera(45, W() / H(), 10, 100000);
+  camera.up.set(0, 0, 1);   // GLB 为工程 Z-up，避免塔躺倒
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
@@ -187,13 +186,21 @@ if (stage) {
   controls.addEventListener('end', () => {
     idleTimer = setTimeout(() => { controls.autoRotate = true; }, 3000);
   });
-  const home = () => {
-    camera.position.set(26000, 22000, 34000);
-    controls.target.set(0, 16000, 0);
+  // 包围球取景（拟合任意塔型，不裁头不穿模）
+  const fit = () => {
+    const model = scene.getObjectByName('tower');
+    if (!model) { camera.position.set(26000, 22000, 34000); controls.target.set(0, 0, 16000); controls.update(); return; }
+    const box = new THREE.Box3().setFromObject(model);
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    const fov = (camera.fov * Math.PI) / 180;
+    const dist = (sphere.radius / Math.tan(fov / 2)) * 1.22;
+    const dir = new THREE.Vector3(1, 0.85, 0.55).normalize();
+    camera.position.copy(sphere.center).addScaledVector(dir, dist);
+    controls.target.copy(sphere.center);
     controls.update();
   };
-  home();
-  renderer.domElement.addEventListener('dblclick', home);
+  fit();
+  renderer.domElement.addEventListener('dblclick', fit);
 
   // 角色配色（与全功能查看器一致：腿蓝/斜黄/横绿）
   const ROLE_COLORS = [
@@ -203,6 +210,7 @@ if (stage) {
   const matCache = {};
   new GLTFLoader().load('/demo/35A1-JC1/latest_deliver/canonical.glb', (gltf) => {
     const model = gltf.scene;
+    model.name = 'tower';
     const bbox = new THREE.Box3().setFromObject(model);
     const cz = (bbox.min.z + bbox.max.z) / 2;
     model.position.set(-(bbox.min.x + bbox.max.x) / 2, -(bbox.min.y + bbox.max.y) / 2, -cz);
@@ -213,15 +221,25 @@ if (stage) {
       for (const [re, c] of ROLE_COLORS) if (re.test(String(role))) { color = c; break; }
       const key = String(color);
       matCache[key] = matCache[key] || new THREE.MeshStandardMaterial({
-        color, metalness: 0.35, roughness: 0.55 });
+        color, metalness: 0.35, roughness: 0.55,
+        flatShading: !o.geometry.attributes.normal,   // 无法线 GLB 防全黑
+      });
       o.material = matCache[key];
     });
     scene.add(model);
     loading.remove();
+    fit();
+  }, undefined, () => {
+    const why = location.protocol === 'file:'
+      ? '本页通过 file:// 直接打开，浏览器会拦截模型请求。请用本地服务打开：'
+      : '模型加载失败，请确认本地服务在跑，然后打开：';
+    loading.innerHTML = why +
+      '<br><code>python3 -m http.server 8000 --directory web</code>' +
+      ' → <a style="color:#7fb0ff" href="http://127.0.0.1:8000/site/product.html">http://127.0.0.1:8000/site/product.html</a>';
   });
 
   const grid = new THREE.GridHelper(60000, 60, 0x2c3646, 0x1c232e);
-  grid.position.y = 0;
+  grid.rotation.x = Math.PI / 2;   // Z-up 世界：地面 = XY 平面
   scene.add(grid);
 
   new ResizeObserver(() => {

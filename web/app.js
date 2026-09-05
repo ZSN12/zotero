@@ -5,7 +5,6 @@ let evidenceImg = null;
 let evidenceBounds = null;
 let highlightedBarId = null;
 let barMeshMap = new Map();   // mesh uuid -> bar component id
-let barEdgeMap = new Map();  // mesh uuid -> 发光线框 LineSegments
 let barIdList = [];           // 与 GLB mesh 顺序对齐
 let moduleFilter = null;      // M1~M6 模块过滤（null=显示全部）
 let currentModelPath = null;
@@ -91,8 +90,6 @@ function applyModuleFilter() {
       visible = mid === moduleFilter || String(mid).indexOf(moduleFilter) >= 0;
     }
     obj.visible = visible;
-    const edge = barEdgeMap.get(obj.uuid);
-    if (edge) edge.visible = visible;
   });
 }
 
@@ -152,37 +149,39 @@ function loadGlb(url) {
           meshIdx += 1;
         });
       }
-      // Phase 4：翡翠绿高反光角钢材质 + 边缘发光线框
+      // 翡翠绿角钢材质：实心金属感（半透明+逐杆发光边框在 3000+ 杆时糊成线团，废弃）
+      const matCache = new Map();
+      const jadeMat = (flat) => {
+        const k = flat ? 'flat' : 'std';
+        if (!matCache.has(k)) matCache.set(k, new THREE.MeshStandardMaterial({
+          color: 0x34d399, metalness: 0.5, roughness: 0.38,
+          flatShading: flat,
+        }));
+        return matCache.get(k);
+      };
       gltf.scene.traverse((obj) => {
         if (!obj.isMesh) return;
-        if (Array.isArray(obj.material)) {
-          obj.material = obj.material.map(() => new THREE.MeshStandardMaterial({
-            color: 0x34d399, metalness: 0.85, roughness: 0.25,
-            transparent: true, opacity: 0.92,
-          }));
-        } else if (obj.material) {
-          obj.material = new THREE.MeshStandardMaterial({
-            color: 0x34d399, metalness: 0.85, roughness: 0.25,
-            transparent: true, opacity: 0.92,
-          });
-        }
-        const edges = new THREE.EdgesGeometry(obj.geometry, 15);
-        const line = new THREE.LineSegments(
-          edges,
-          new THREE.LineBasicMaterial({ color: 0x6ee7b7, transparent: true, opacity: 0.55 }),
-        );
-        line.userData.barId = obj.userData.barId;
-        line.userData.isEdgeLine = true;
-        obj.add(line);
-        barEdgeMap.set(obj.uuid, line);
+        const flat = !obj.geometry.attributes.normal;
+        obj.material = Array.isArray(obj.material)
+          ? obj.material.map(() => jadeMat(flat))
+          : jadeMat(flat);
       });
       applyModuleFilter();
+      // 包围球取景：细高塔不再把相机怼进塔身（旧对角线法实测穿模）
       const box = new THREE.Box3().setFromObject(gltf.scene);
-      const c = box.getCenter(new THREE.Vector3());
-      const s = box.getSize(new THREE.Vector3()).length() / 2 || 1;
-      camera.position.copy(c).add(new THREE.Vector3(s * 0.42, s * 0.32, s * 0.62));
-      controls.target.copy(c);
+      const sphere = box.getBoundingSphere(new THREE.Sphere());
+      const fov = (camera.fov * Math.PI) / 180;
+      const dist = (sphere.radius / Math.tan(fov / 2)) * 1.02;
+      const dir = new THREE.Vector3(1, 0.85, 0.5).normalize(); // 3/4 俯视（Z-up）
+      camera.position.copy(sphere.center).addScaledVector(dir, dist);
+      controls.target.copy(sphere.center);
       controls.update();
+      const grid = new THREE.GridHelper(Math.ceil(sphere.radius * 4 / 10) * 10, 20, 0x22304a, 0x18202f);
+      grid.rotation.x = Math.PI / 2;   // Z-up 世界：地面 = XY 平面
+      grid.name = 'ground';
+      const oldGrid = scene.getObjectByName('ground');
+      if (oldGrid) scene.remove(oldGrid);
+      scene.add(grid);
       scene.add(gltf.scene);
     }, undefined, (err) => {
       $('status').textContent += '\nGLB 加载失败：' + err;
@@ -303,13 +302,22 @@ async function exportGlb() {
   }
 }
 
+let highlightMat = null;   // 杆件高亮材质（懒建；材质已共享缓存，禁止逐 mesh 改 emissive）
 function highlightBar3D(barId) {
   if (!scene) return;
   scene.traverse((obj) => {
     if (!obj.isMesh) return;
     const match = obj.userData?.barId === barId;
-    if (obj.material && obj.material.emissive) {
-      obj.material.emissive.setHex(match ? 0xffd54f : 0x000000);
+    if (!obj.material) return;
+    if (match) {
+      if (!obj.userData.baseMat) obj.userData.baseMat = obj.material;
+      if (!highlightMat) highlightMat = new THREE.MeshStandardMaterial({
+        color: 0x34d399, emissive: 0xffd54f, emissiveIntensity: 0.95,
+        metalness: 0.5, roughness: 0.38,
+      });
+      obj.material = highlightMat;
+    } else if (obj.userData.baseMat) {
+      obj.material = obj.userData.baseMat;
     }
   });
 }

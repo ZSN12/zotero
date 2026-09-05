@@ -12,12 +12,10 @@
   <span class="brand">Engineering<span class="dot">·</span>Traceability</span>
   <a href="index.html">首页</a>
   <a href="product.html">产品能力</a>
-  <a href="demo.html" class="active">在线演示</a>
-  <a href="research.html">研究</a>
+  <a href="trace.html" class="active">在线演示</a>
   <a href="opensource.html">开源</a>
   <a href="about.html">关于</a>
-  <a href="careers.html">参与</a>
-  <a class="cta" href="/">进入 Demo →</a>
+  <a class="cta" href="trace.html">进入 3D 追溯 →</a>
 </nav>
 
 <div class="wrap">
@@ -34,7 +32,7 @@
   <section class="block">
     <h2>① 交互式全链 Demo（推荐）</h2>
     <div class="card">
-      <h3><a href="/">铁塔工程追溯 Demo →</a></h3>
+      <h3><a href="/full.html">铁塔工程追溯 Demo →</a></h3>
       <p style="color:var(--ink-dim);font-size:14.5px;margin-top:8px">
         上传 DXF → 全链跑批（intake → 编译 → 验证 → 求解）→ three.js
         3D 展示。点任意杆件看证据卡：SourceRef（哪张图哪个实体）、
@@ -50,7 +48,20 @@
   </section>
 
   <section class="block">
-    <h2>② 全屏 3D 查看器</h2>
+    <h2>② 图纸 ↔ 3D 联动追溯</h2>
+    <div class="card">
+      <h3><a href="/site/trace.html">左 3D · 右图纸 →</a></h3>
+      <p style="color:var(--ink-dim);font-size:14.5px;margin-top:8px">
+        点任意 3D 杆件，右侧自动翻到来源图纸并放大高亮对应实体线；
+        点图纸上的黄色高亮线，3D 相机反向定位杆件。证据卡带件号、
+        截面、几何来源与置信度——参数化补全的杆件明示「无对应图纸实体」。
+        国网 35A1-JC1，1007/3823 根杆可直溯到 DXF 实体级。
+      </p>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>③ 全屏 3D 查看器</h2>
     <div class="card">
       <h3><a href="/demo/jc1.html">JC1 全屏查看器 →</a></h3>
       <p style="color:var(--ink-dim);font-size:14.5px;margin-top:8px">
@@ -61,7 +72,7 @@
   </section>
 
   <section class="block">
-    <h2>③ 命令行复现（30 秒）</h2>
+    <h2>④ 命令行复现（30 秒）</h2>
     <pre>git clone https://github.com/ZSN12/engineering-trace.git
 cd engineering-trace
 pip install -r requirements.txt -r requirements-tower.txt
