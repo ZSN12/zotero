@@ -2288,6 +2288,56 @@ def expand_4_face_symmetry_model(
         strip_ratio=float(spec.get("bar_id_mismatch_strip_ratio", 2.5)),
         suspect_ratio=float(spec.get("bar_id_mismatch_suspect_ratio", 1.03)),
     )
+
+    # P6（2026-09-06 ZC1 A1 根因修复）：观测存在性 orphan 收录。
+    # 根因：单件加工图版式（如 35A2-ZC1 各册）的件号文字贴着大样图线
+    # （距离 1~9 图面单位），但大样图不属于塔身 view_region——文字
+    # 在 tower_dxf 阶段曾挂上某杆（留下 bar_label 观测），后续空间
+    # 合并/剪枝把杆清除后 bar_id 随之蒸发，件号文字识别证据丢失。
+    # 离线实测 ZC1：178 个工程件号中 114 个「有观测、无挂杆、不在簿」。
+    # 登记簿语义本就是「件号识别成功、几何未入模」（与短斜材过滤/
+    # 残根剪除/错配剥离同语义）——这里补上「观测存在 → orphan」通道：
+    #   1. 扫描模型内全部 bar_label 观测的文字；
+    #   2. 形态核验（纯数字工程件号，排除 UNLABELED）；
+    #   3. 该件号不在任何存活 tower_bar.bar_id 中 → 收进登记簿。
+    # 纯确定性规则：不读 GT/BOM 真值、不生成几何；A1 预测集由评测器
+    # 的 bom_valid_orphan 过滤（无 BOM 件号不进预测），P 不受污染。
+    if bool(spec.get("orphan_collect_from_observations", True)):
+        _obs_labels: List[str] = []
+        _attached_now: set = set()
+        for c in model.components.values():
+            kind = str(c.kind or "")
+            props = c.properties or {}
+            if kind == "tower_bar":
+                _bid = str(props.get("bar_id") or "")
+                if _bid and not _bid.startswith("UNLABELED"):
+                    _attached_now.add(_bid)
+            elif kind == "observation":
+                if str(props.get("observation_kind") or "") != "bar_label":
+                    continue
+                _t = str(props.get("text") or "").strip()
+                if (
+                    _t.isdigit()
+                    and 100 <= int(_t) <= 9999
+                    and len(_t) <= 4
+                    and _t not in _attached_now
+                ):
+                    _obs_labels.append(_t)
+        if _obs_labels:
+            _df = model.components.get("drawing_file")
+            if _df is not None:
+                _orph = list(_df.properties.get("orphan_label_ids") or [])
+                _added = []
+                for lab in dict.fromkeys(_obs_labels):
+                    if lab not in _orph:
+                        _orph.append(lab)
+                        _added.append(lab)
+                _df.properties["orphan_label_ids"] = _orph
+                _df.properties["orphan_observation_collected"] = {
+                    "added": sorted(_added),
+                    "n_added": len(_added),
+                    "note": "bar_label 观测存在但无存活挂杆的件号（P6）",
+                }
     return model
 
 

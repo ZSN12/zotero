@@ -375,11 +375,16 @@ def main() -> int:
         print(f"  ⚠ [{rr.get('code')}] ({rr.get('stage')}) {rr.get('message')}")
 
     if GT_PATH.exists():
-        # JC2 无独立 BOM（首跑基线）——评测只跑几何口径
+        # P6（2026-09-06）：ZC1 材料表件号真值基准——用 anchored 解析器
+        # 从六册图纸提取的材料表（full_bom.json，纯图纸证据、无 GT 耦合）
+        # 转成的 master BOM csv，A1 件号评测与 JC1 同口径（--bom）。
+        bom_file = REPO / "examples/external/guowang_35A2_zc1/zc1_master_bom.csv"
         ev_cmd = [
             sys.executable, str(REPO / "scripts/evaluate_ground_truth.py"),
             str(GT_PATH), str(out_dir / "model.json"), "--view", "front",
         ]
+        if bom_file.exists():
+            ev_cmd.extend(["--bom", str(bom_file)])
         ev = subprocess.run(
             ev_cmd,
             capture_output=True, text=True,

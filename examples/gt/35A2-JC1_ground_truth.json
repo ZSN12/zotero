@@ -1,0 +1,3874 @@
+{
+ "name": "35A1-JC1 标准 30m 呼高单座独立铁塔 (计算文件 .NODE + GIM .mod)",
+ "source": "/Users/zsn/Downloads/输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)/GIM/35A2/35A2-JC1/35A2-JC1-GIM输出/MOD/35A2-JC1.mod",
+ "nodes": {
+  "100": [
+   200.0,
+   -200.0,
+   40200.0
+  ],
+  "101": [
+   -200.0,
+   -200.0,
+   40200.0
+  ],
+  "102": [
+   200.0,
+   200.0,
+   40200.0
+  ],
+  "103": [
+   -200.0,
+   200.0,
+   40200.0
+  ],
+  "110": [
+   0.0,
+   -200.0,
+   40200.0
+  ],
+  "112": [
+   0.0,
+   200.0,
+   40200.0
+  ],
+  "120": [
+   200.0,
+   0.0,
+   40200.0
+  ],
+  "121": [
+   -200.0,
+   0.0,
+   40200.0
+  ],
+  "200": [
+   237.5,
+   -237.5,
+   39700.0
+  ],
+  "201": [
+   -237.5,
+   -237.5,
+   39700.0
+  ],
+  "202": [
+   237.5,
+   237.5,
+   39700.0
+  ],
+  "203": [
+   -237.5,
+   237.5,
+   39700.0
+  ],
+  "220": [
+   282.5,
+   -282.5,
+   39100.0
+  ],
+  "221": [
+   -282.5,
+   -282.5,
+   39100.0
+  ],
+  "222": [
+   282.5,
+   282.5,
+   39100.0
+  ],
+  "223": [
+   -282.5,
+   282.5,
+   39100.0
+  ],
+  "240": [
+   327.5,
+   -327.5,
+   38500.0
+  ],
+  "241": [
+   -327.5,
+   -327.5,
+   38500.0
+  ],
+  "242": [
+   327.5,
+   327.5,
+   38500.0
+  ],
+  "243": [
+   -327.5,
+   327.5,
+   38500.0
+  ],
+  "300": [
+   380.0,
+   -380.0,
+   37800.0
+  ],
+  "301": [
+   -380.0,
+   -380.0,
+   37800.0
+  ],
+  "302": [
+   380.0,
+   380.0,
+   37800.0
+  ],
+  "303": [
+   -380.0,
+   380.0,
+   37800.0
+  ],
+  "320": [
+   1140.0,
+   -340.0,
+   37450.0
+  ],
+  "322": [
+   1140.0,
+   340.0,
+   37450.0
+  ],
+  "350": [
+   1900.0,
+   -300.0,
+   37100.0
+  ],
+  "352": [
+   1900.0,
+   300.0,
+   37100.0
+  ],
+  "370": [
+   1166.25,
+   -366.25,
+   37100.0
+  ],
+  "372": [
+   1166.25,
+   366.25,
+   37100.0
+  ],
+  "400": [
+   432.5,
+   -432.5,
+   37100.0
+  ],
+  "401": [
+   -432.5,
+   -432.5,
+   37100.0
+  ],
+  "402": [
+   432.5,
+   432.5,
+   37100.0
+  ],
+  "403": [
+   -432.5,
+   432.5,
+   37100.0
+  ],
+  "500": [
+   492.5,
+   -492.5,
+   36300.0
+  ],
+  "501": [
+   -492.5,
+   -492.5,
+   36300.0
+  ],
+  "502": [
+   492.5,
+   492.5,
+   36300.0
+  ],
+  "503": [
+   -492.5,
+   492.5,
+   36300.0
+  ],
+  "600": [
+   575.0,
+   -575.0,
+   35200.0
+  ],
+  "601": [
+   -575.0,
+   -575.0,
+   35200.0
+  ],
+  "602": [
+   575.0,
+   575.0,
+   35200.0
+  ],
+  "603": [
+   -575.0,
+   575.0,
+   35200.0
+  ],
+  "700": [
+   665.0,
+   -665.0,
+   34000.0
+  ],
+  "701": [
+   -665.0,
+   -665.0,
+   34000.0
+  ],
+  "702": [
+   665.0,
+   665.0,
+   34000.0
+  ],
+  "703": [
+   -665.0,
+   665.0,
+   34000.0
+  ],
+  "720": [
+   1557.5,
+   -507.5,
+   33500.0
+  ],
+  "721": [
+   -1557.5,
+   -507.5,
+   33500.0
+  ],
+  "722": [
+   1557.5,
+   507.5,
+   33500.0
+  ],
+  "723": [
+   -1557.5,
+   507.5,
+   33500.0
+  ],
+  "750": [
+   2450.0,
+   -350.0,
+   33000.0
+  ],
+  "751": [
+   -2450.0,
+   -350.0,
+   33000.0
+  ],
+  "752": [
+   2450.0,
+   350.0,
+   33000.0
+  ],
+  "753": [
+   -2450.0,
+   350.0,
+   33000.0
+  ],
+  "770": [
+   1595.0,
+   -545.0,
+   33000.0
+  ],
+  "771": [
+   -1595.0,
+   -545.0,
+   33000.0
+  ],
+  "772": [
+   1595.0,
+   545.0,
+   33000.0
+  ],
+  "773": [
+   -1595.0,
+   545.0,
+   33000.0
+  ],
+  "800": [
+   740.0,
+   -740.0,
+   33000.0
+  ],
+  "801": [
+   -740.0,
+   -740.0,
+   33000.0
+  ],
+  "802": [
+   740.0,
+   740.0,
+   33000.0
+  ],
+  "803": [
+   -740.0,
+   740.0,
+   33000.0
+  ],
+  "810": [
+   0.0,
+   -740.0,
+   33000.0
+  ],
+  "812": [
+   0.0,
+   740.0,
+   33000.0
+  ],
+  "820": [
+   740.0,
+   0.0,
+   33000.0
+  ],
+  "821": [
+   -740.0,
+   0.0,
+   33000.0
+  ],
+  "900": [
+   807.5,
+   -807.5,
+   32100.0
+  ],
+  "901": [
+   -807.5,
+   -807.5,
+   32100.0
+  ],
+  "902": [
+   807.5,
+   807.5,
+   32100.0
+  ],
+  "903": [
+   -807.5,
+   807.5,
+   32100.0
+  ],
+  "950": [
+   905.0,
+   -905.0,
+   30800.0
+  ],
+  "951": [
+   -905.0,
+   -905.0,
+   30800.0
+  ],
+  "952": [
+   905.0,
+   905.0,
+   30800.0
+  ],
+  "953": [
+   -905.0,
+   905.0,
+   30800.0
+  ],
+  "1000": [
+   1032.5,
+   -1032.5,
+   29100.0
+  ],
+  "1001": [
+   -1032.5,
+   -1032.5,
+   29100.0
+  ],
+  "1002": [
+   1032.5,
+   1032.5,
+   29100.0
+  ],
+  "1003": [
+   -1032.5,
+   1032.5,
+   29100.0
+  ],
+  "1100": [
+   1190.0,
+   -1190.0,
+   27000.0
+  ],
+  "1101": [
+   -1190.0,
+   -1190.0,
+   27000.0
+  ],
+  "1102": [
+   1190.0,
+   1190.0,
+   27000.0
+  ],
+  "1103": [
+   -1190.0,
+   1190.0,
+   27000.0
+  ],
+  "1800": [
+   1377.5,
+   -1377.5,
+   24500.0
+  ],
+  "1801": [
+   -1377.5,
+   -1377.5,
+   24500.0
+  ],
+  "1802": [
+   1377.5,
+   1377.5,
+   24500.0
+  ],
+  "1803": [
+   -1377.5,
+   1377.5,
+   24500.0
+  ],
+  "2000": [
+   1355.0,
+   -1355.0,
+   24800.0
+  ],
+  "2001": [
+   -1355.0,
+   -1355.0,
+   24800.0
+  ],
+  "2002": [
+   1355.0,
+   1355.0,
+   24800.0
+  ],
+  "2003": [
+   -1355.0,
+   1355.0,
+   24800.0
+  ],
+  "1150": [
+   1347.5,
+   -1347.5,
+   24900.0
+  ],
+  "1151": [
+   -1347.5,
+   -1347.5,
+   24900.0
+  ],
+  "1152": [
+   1347.5,
+   1347.5,
+   24900.0
+  ],
+  "1153": [
+   -1347.5,
+   1347.5,
+   24900.0
+  ],
+  "1200": [
+   1437.5,
+   -1437.5,
+   23700.0
+  ],
+  "1201": [
+   -1437.5,
+   -1437.5,
+   23700.0
+  ],
+  "1202": [
+   1437.5,
+   1437.5,
+   23700.0
+  ],
+  "1203": [
+   -1437.5,
+   1437.5,
+   23700.0
+  ],
+  "1210": [
+   0.0,
+   -1437.5,
+   23700.0
+  ],
+  "1212": [
+   0.0,
+   1437.5,
+   23700.0
+  ],
+  "1220": [
+   1437.5,
+   0.0,
+   23700.0
+  ],
+  "1221": [
+   -1437.5,
+   0.0,
+   23700.0
+  ],
+  "1230": [
+   718.75,
+   -718.75,
+   23700.0
+  ],
+  "1231": [
+   -718.75,
+   -718.75,
+   23700.0
+  ],
+  "1232": [
+   718.75,
+   718.75,
+   23700.0
+  ],
+  "1233": [
+   -718.75,
+   718.75,
+   23700.0
+  ],
+  "1300": [
+   1535.0,
+   -1535.0,
+   22400.0
+  ],
+  "1301": [
+   -1535.0,
+   -1535.0,
+   22400.0
+  ],
+  "1302": [
+   1535.0,
+   1535.0,
+   22400.0
+  ],
+  "1303": [
+   -1535.0,
+   1535.0,
+   22400.0
+  ],
+  "1400": [
+   1715.0,
+   -1715.0,
+   20000.0
+  ],
+  "1401": [
+   -1715.0,
+   -1715.0,
+   20000.0
+  ],
+  "1402": [
+   1715.0,
+   1715.0,
+   20000.0
+  ],
+  "1403": [
+   -1715.0,
+   1715.0,
+   20000.0
+  ],
+  "2800": [
+   1977.5,
+   -1977.5,
+   16500.0
+  ],
+  "2801": [
+   -1977.5,
+   -1977.5,
+   16500.0
+  ],
+  "2802": [
+   1977.5,
+   1977.5,
+   16500.0
+  ],
+  "2803": [
+   -1977.5,
+   1977.5,
+   16500.0
+  ],
+  "2820": [
+   2127.5,
+   -2127.5,
+   14500.0
+  ],
+  "2821": [
+   -2127.5,
+   -2127.5,
+   14500.0
+  ],
+  "2920": [
+   2390.0,
+   -2390.0,
+   11000.0
+  ],
+  "2921": [
+   -2390.0,
+   -2390.0,
+   11000.0
+  ],
+  "3100": [
+   2277.5,
+   -2277.5,
+   12500.0
+  ],
+  "3101": [
+   -2277.5,
+   -2277.5,
+   12500.0
+  ],
+  "3102": [
+   2277.5,
+   2277.5,
+   12500.0
+  ],
+  "3103": [
+   -2277.5,
+   2277.5,
+   12500.0
+  ],
+  "3200": [
+   2540.0,
+   -2540.0,
+   9000.0
+  ],
+  "3201": [
+   -2540.0,
+   -2540.0,
+   9000.0
+  ],
+  "3202": [
+   2540.0,
+   2540.0,
+   9000.0
+  ],
+  "3203": [
+   -2540.0,
+   2540.0,
+   9000.0
+  ],
+  "1500": [
+   1902.5,
+   -1902.5,
+   17500.0
+  ],
+  "1501": [
+   -1902.5,
+   -1902.5,
+   17500.0
+  ],
+  "1502": [
+   1902.5,
+   1902.5,
+   17500.0
+  ],
+  "1503": [
+   -1902.5,
+   1902.5,
+   17500.0
+  ],
+  "1600": [
+   2090.0,
+   -2090.0,
+   15000.0
+  ],
+  "1601": [
+   -2090.0,
+   -2090.0,
+   15000.0
+  ],
+  "1602": [
+   2090.0,
+   2090.0,
+   15000.0
+  ],
+  "1603": [
+   -2090.0,
+   2090.0,
+   15000.0
+  ]
+ },
+ "bars": [
+  {
+   "id": "PM_0001",
+   "from": "700",
+   "to": "800",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0002",
+   "from": "800",
+   "to": "900",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0003",
+   "from": "900",
+   "to": "950",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0004",
+   "from": "950",
+   "to": "1000",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0005",
+   "from": "1000",
+   "to": "1100",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0006",
+   "from": "750",
+   "to": "770",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0007",
+   "from": "770",
+   "to": "800",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0008",
+   "from": "700",
+   "to": "720",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0009",
+   "from": "720",
+   "to": "750",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0010",
+   "from": "100",
+   "to": "200",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0011",
+   "from": "200",
+   "to": "220",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0012",
+   "from": "220",
+   "to": "240",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0013",
+   "from": "240",
+   "to": "300",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0014",
+   "from": "300",
+   "to": "400",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0015",
+   "from": "400",
+   "to": "500",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0016",
+   "from": "500",
+   "to": "600",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0017",
+   "from": "600",
+   "to": "700",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0018",
+   "from": "350",
+   "to": "370",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0019",
+   "from": "370",
+   "to": "400",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0020",
+   "from": "300",
+   "to": "320",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0021",
+   "from": "320",
+   "to": "350",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0022",
+   "from": "1800",
+   "to": "1801",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 2
+  },
+  {
+   "id": "PM_0023",
+   "from": "701",
+   "to": "801",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0024",
+   "from": "801",
+   "to": "901",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0025",
+   "from": "901",
+   "to": "951",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0026",
+   "from": "951",
+   "to": "1001",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0027",
+   "from": "1001",
+   "to": "1101",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0028",
+   "from": "702",
+   "to": "802",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0029",
+   "from": "802",
+   "to": "902",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0030",
+   "from": "902",
+   "to": "952",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0031",
+   "from": "952",
+   "to": "1002",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0032",
+   "from": "1002",
+   "to": "1102",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0033",
+   "from": "703",
+   "to": "803",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0034",
+   "from": "803",
+   "to": "903",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0035",
+   "from": "903",
+   "to": "953",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0036",
+   "from": "953",
+   "to": "1003",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0037",
+   "from": "1003",
+   "to": "1103",
+   "section": "L90X6",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0038",
+   "from": "751",
+   "to": "771",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0039",
+   "from": "771",
+   "to": "801",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0040",
+   "from": "752",
+   "to": "772",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0041",
+   "from": "772",
+   "to": "802",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0042",
+   "from": "753",
+   "to": "773",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0043",
+   "from": "773",
+   "to": "803",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0044",
+   "from": "701",
+   "to": "721",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0045",
+   "from": "721",
+   "to": "751",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0046",
+   "from": "702",
+   "to": "722",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0047",
+   "from": "722",
+   "to": "752",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0048",
+   "from": "703",
+   "to": "723",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0049",
+   "from": "723",
+   "to": "753",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0050",
+   "from": "101",
+   "to": "201",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0051",
+   "from": "201",
+   "to": "221",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0052",
+   "from": "221",
+   "to": "241",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0053",
+   "from": "241",
+   "to": "301",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0054",
+   "from": "301",
+   "to": "401",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0055",
+   "from": "401",
+   "to": "501",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0056",
+   "from": "501",
+   "to": "601",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0057",
+   "from": "601",
+   "to": "701",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0058",
+   "from": "102",
+   "to": "202",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0059",
+   "from": "202",
+   "to": "222",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0060",
+   "from": "222",
+   "to": "242",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0061",
+   "from": "242",
+   "to": "302",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0062",
+   "from": "302",
+   "to": "402",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0063",
+   "from": "402",
+   "to": "502",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0064",
+   "from": "502",
+   "to": "602",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0065",
+   "from": "602",
+   "to": "702",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0066",
+   "from": "103",
+   "to": "203",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0067",
+   "from": "203",
+   "to": "223",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0068",
+   "from": "223",
+   "to": "243",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0069",
+   "from": "243",
+   "to": "303",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0070",
+   "from": "303",
+   "to": "403",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0071",
+   "from": "403",
+   "to": "503",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0072",
+   "from": "503",
+   "to": "603",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0073",
+   "from": "603",
+   "to": "703",
+   "section": "L75X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0074",
+   "from": "352",
+   "to": "372",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0075",
+   "from": "372",
+   "to": "402",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0076",
+   "from": "302",
+   "to": "322",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0077",
+   "from": "322",
+   "to": "352",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0078",
+   "from": "100",
+   "to": "110",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0079",
+   "from": "101",
+   "to": "110",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0080",
+   "from": "102",
+   "to": "112",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0081",
+   "from": "103",
+   "to": "112",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0082",
+   "from": "110",
+   "to": "112",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0083",
+   "from": "100",
+   "to": "120",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0084",
+   "from": "101",
+   "to": "121",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0085",
+   "from": "102",
+   "to": "120",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0086",
+   "from": "103",
+   "to": "121",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0087",
+   "from": "110",
+   "to": "120",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0088",
+   "from": "110",
+   "to": "121",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0089",
+   "from": "112",
+   "to": "120",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0090",
+   "from": "112",
+   "to": "121",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0091",
+   "from": "110",
+   "to": "200",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0092",
+   "from": "110",
+   "to": "201",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0093",
+   "from": "112",
+   "to": "202",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0094",
+   "from": "112",
+   "to": "203",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0095",
+   "from": "120",
+   "to": "200",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0096",
+   "from": "121",
+   "to": "201",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0097",
+   "from": "120",
+   "to": "202",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0098",
+   "from": "121",
+   "to": "203",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0099",
+   "from": "200",
+   "to": "221",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0100",
+   "from": "201",
+   "to": "220",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0101",
+   "from": "202",
+   "to": "223",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0102",
+   "from": "203",
+   "to": "222",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0103",
+   "from": "200",
+   "to": "222",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0104",
+   "from": "201",
+   "to": "223",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0105",
+   "from": "202",
+   "to": "220",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0106",
+   "from": "203",
+   "to": "221",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0107",
+   "from": "220",
+   "to": "241",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0108",
+   "from": "221",
+   "to": "240",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0109",
+   "from": "222",
+   "to": "243",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0110",
+   "from": "223",
+   "to": "242",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0111",
+   "from": "220",
+   "to": "242",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0112",
+   "from": "221",
+   "to": "243",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0113",
+   "from": "222",
+   "to": "240",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0114",
+   "from": "223",
+   "to": "241",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0115",
+   "from": "240",
+   "to": "301",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0116",
+   "from": "241",
+   "to": "300",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0117",
+   "from": "242",
+   "to": "303",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0118",
+   "from": "243",
+   "to": "302",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0119",
+   "from": "300",
+   "to": "301",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0120",
+   "from": "303",
+   "to": "302",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0121",
+   "from": "240",
+   "to": "302",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0122",
+   "from": "241",
+   "to": "303",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0123",
+   "from": "242",
+   "to": "300",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0124",
+   "from": "243",
+   "to": "301",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0125",
+   "from": "300",
+   "to": "302",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0126",
+   "from": "301",
+   "to": "303",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0127",
+   "from": "320",
+   "to": "322",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0128",
+   "from": "350",
+   "to": "352",
+   "section": "L63X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0129",
+   "from": "350",
+   "to": "372",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0130",
+   "from": "352",
+   "to": "370",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0131",
+   "from": "300",
+   "to": "401",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0132",
+   "from": "301",
+   "to": "400",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0133",
+   "from": "302",
+   "to": "403",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0134",
+   "from": "303",
+   "to": "402",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0135",
+   "from": "400",
+   "to": "401",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0136",
+   "from": "403",
+   "to": "402",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0137",
+   "from": "300",
+   "to": "402",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0138",
+   "from": "301",
+   "to": "403",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0139",
+   "from": "302",
+   "to": "400",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0140",
+   "from": "303",
+   "to": "401",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0141",
+   "from": "370",
+   "to": "402",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0142",
+   "from": "372",
+   "to": "400",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0143",
+   "from": "400",
+   "to": "402",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0144",
+   "from": "401",
+   "to": "403",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0145",
+   "from": "400",
+   "to": "501",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0146",
+   "from": "401",
+   "to": "500",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0147",
+   "from": "402",
+   "to": "503",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0148",
+   "from": "403",
+   "to": "502",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0149",
+   "from": "500",
+   "to": "501",
+   "section": "L63X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0150",
+   "from": "503",
+   "to": "502",
+   "section": "L63X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0151",
+   "from": "400",
+   "to": "502",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0152",
+   "from": "401",
+   "to": "503",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0153",
+   "from": "402",
+   "to": "500",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0154",
+   "from": "403",
+   "to": "501",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0155",
+   "from": "500",
+   "to": "502",
+   "section": "L63X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0156",
+   "from": "501",
+   "to": "503",
+   "section": "L63X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0157",
+   "from": "500",
+   "to": "503",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0158",
+   "from": "501",
+   "to": "502",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0159",
+   "from": "500",
+   "to": "601",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0160",
+   "from": "501",
+   "to": "600",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0161",
+   "from": "502",
+   "to": "603",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0162",
+   "from": "503",
+   "to": "602",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0163",
+   "from": "500",
+   "to": "602",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0164",
+   "from": "501",
+   "to": "603",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0165",
+   "from": "502",
+   "to": "600",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0166",
+   "from": "503",
+   "to": "601",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0167",
+   "from": "600",
+   "to": "701",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0168",
+   "from": "601",
+   "to": "700",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0169",
+   "from": "602",
+   "to": "703",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0170",
+   "from": "603",
+   "to": "702",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0171",
+   "from": "700",
+   "to": "701",
+   "section": "L45X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0172",
+   "from": "703",
+   "to": "702",
+   "section": "L45X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0173",
+   "from": "600",
+   "to": "702",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0174",
+   "from": "601",
+   "to": "703",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0175",
+   "from": "602",
+   "to": "700",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0176",
+   "from": "603",
+   "to": "701",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0177",
+   "from": "700",
+   "to": "702",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0178",
+   "from": "701",
+   "to": "703",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0179",
+   "from": "700",
+   "to": "703",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0180",
+   "from": "701",
+   "to": "702",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0181",
+   "from": "700",
+   "to": "722",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0182",
+   "from": "701",
+   "to": "723",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0183",
+   "from": "702",
+   "to": "720",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0184",
+   "from": "703",
+   "to": "721",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0185",
+   "from": "720",
+   "to": "722",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0186",
+   "from": "721",
+   "to": "723",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0187",
+   "from": "750",
+   "to": "752",
+   "section": "L63X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0188",
+   "from": "751",
+   "to": "753",
+   "section": "L63X5",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0189",
+   "from": "720",
+   "to": "770",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0190",
+   "from": "721",
+   "to": "771",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0191",
+   "from": "722",
+   "to": "772",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0192",
+   "from": "723",
+   "to": "773",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0193",
+   "from": "750",
+   "to": "772",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0194",
+   "from": "751",
+   "to": "773",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0195",
+   "from": "752",
+   "to": "770",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0196",
+   "from": "753",
+   "to": "771",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0197",
+   "from": "720",
+   "to": "800",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0198",
+   "from": "721",
+   "to": "801",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0199",
+   "from": "722",
+   "to": "802",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0200",
+   "from": "723",
+   "to": "803",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0201",
+   "from": "700",
+   "to": "801",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0202",
+   "from": "701",
+   "to": "800",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0203",
+   "from": "702",
+   "to": "803",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0204",
+   "from": "703",
+   "to": "802",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0205",
+   "from": "700",
+   "to": "802",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0206",
+   "from": "701",
+   "to": "803",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0207",
+   "from": "702",
+   "to": "800",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0208",
+   "from": "703",
+   "to": "801",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0209",
+   "from": "770",
+   "to": "802",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0210",
+   "from": "771",
+   "to": "803",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0211",
+   "from": "772",
+   "to": "800",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0212",
+   "from": "773",
+   "to": "801",
+   "section": "L40X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0213",
+   "from": "800",
+   "to": "810",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0214",
+   "from": "801",
+   "to": "810",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0215",
+   "from": "802",
+   "to": "812",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0216",
+   "from": "803",
+   "to": "812",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0217",
+   "from": "810",
+   "to": "812",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0218",
+   "from": "800",
+   "to": "820",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0219",
+   "from": "801",
+   "to": "821",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0220",
+   "from": "802",
+   "to": "820",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0221",
+   "from": "803",
+   "to": "821",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0222",
+   "from": "810",
+   "to": "820",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0223",
+   "from": "810",
+   "to": "821",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0224",
+   "from": "812",
+   "to": "820",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0225",
+   "from": "812",
+   "to": "821",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0226",
+   "from": "820",
+   "to": "821",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0227",
+   "from": "810",
+   "to": "900",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0228",
+   "from": "810",
+   "to": "901",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0229",
+   "from": "812",
+   "to": "902",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0230",
+   "from": "812",
+   "to": "903",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0231",
+   "from": "820",
+   "to": "900",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0232",
+   "from": "821",
+   "to": "901",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0233",
+   "from": "820",
+   "to": "902",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0234",
+   "from": "821",
+   "to": "903",
+   "section": "L56X5",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0235",
+   "from": "900",
+   "to": "951",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0236",
+   "from": "901",
+   "to": "950",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0237",
+   "from": "902",
+   "to": "953",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0238",
+   "from": "903",
+   "to": "952",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0239",
+   "from": "900",
+   "to": "952",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0240",
+   "from": "901",
+   "to": "953",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0241",
+   "from": "902",
+   "to": "950",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0242",
+   "from": "903",
+   "to": "951",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0243",
+   "from": "950",
+   "to": "1001",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0244",
+   "from": "951",
+   "to": "1000",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0245",
+   "from": "952",
+   "to": "1003",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0246",
+   "from": "953",
+   "to": "1002",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0247",
+   "from": "950",
+   "to": "1002",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0248",
+   "from": "951",
+   "to": "1003",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0249",
+   "from": "952",
+   "to": "1000",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0250",
+   "from": "953",
+   "to": "1001",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0251",
+   "from": "1000",
+   "to": "1101",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0252",
+   "from": "1001",
+   "to": "1100",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0253",
+   "from": "1002",
+   "to": "1103",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0254",
+   "from": "1003",
+   "to": "1102",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0255",
+   "from": "1000",
+   "to": "1102",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0256",
+   "from": "1001",
+   "to": "1103",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0257",
+   "from": "1002",
+   "to": "1100",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0258",
+   "from": "1003",
+   "to": "1101",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0259",
+   "from": "1100",
+   "to": "1800",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0260",
+   "from": "1101",
+   "to": "1801",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0261",
+   "from": "1102",
+   "to": "1802",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0262",
+   "from": "1103",
+   "to": "1803",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0263",
+   "from": "1100",
+   "to": "1801",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0264",
+   "from": "1101",
+   "to": "1800",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0265",
+   "from": "1102",
+   "to": "1803",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0266",
+   "from": "1103",
+   "to": "1802",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0267",
+   "from": "1100",
+   "to": "1802",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0268",
+   "from": "1101",
+   "to": "1803",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0269",
+   "from": "1102",
+   "to": "1800",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0270",
+   "from": "1103",
+   "to": "1801",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0271",
+   "from": "1100",
+   "to": "2000",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0272",
+   "from": "1101",
+   "to": "2001",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0273",
+   "from": "1102",
+   "to": "2002",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0274",
+   "from": "1103",
+   "to": "2003",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0275",
+   "from": "1100",
+   "to": "2001",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0276",
+   "from": "1101",
+   "to": "2000",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0277",
+   "from": "1102",
+   "to": "2003",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0278",
+   "from": "1103",
+   "to": "2002",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0279",
+   "from": "1100",
+   "to": "2002",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0280",
+   "from": "1101",
+   "to": "2003",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0281",
+   "from": "1102",
+   "to": "2000",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0282",
+   "from": "1103",
+   "to": "2001",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0283",
+   "from": "1100",
+   "to": "1150",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0284",
+   "from": "1150",
+   "to": "1200",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0285",
+   "from": "1200",
+   "to": "1300",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0286",
+   "from": "1300",
+   "to": "1400",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0287",
+   "from": "1200",
+   "to": "1220",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0288",
+   "from": "1220",
+   "to": "1202",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0289",
+   "from": "1200",
+   "to": "1210",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0290",
+   "from": "1210",
+   "to": "1201",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0291",
+   "from": "1101",
+   "to": "1151",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0292",
+   "from": "1151",
+   "to": "1201",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0293",
+   "from": "1201",
+   "to": "1301",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0294",
+   "from": "1301",
+   "to": "1401",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0295",
+   "from": "1102",
+   "to": "1152",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0296",
+   "from": "1152",
+   "to": "1202",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0297",
+   "from": "1202",
+   "to": "1302",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0298",
+   "from": "1302",
+   "to": "1402",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0299",
+   "from": "1103",
+   "to": "1153",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0300",
+   "from": "1153",
+   "to": "1203",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0301",
+   "from": "1203",
+   "to": "1303",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0302",
+   "from": "1303",
+   "to": "1403",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0303",
+   "from": "1201",
+   "to": "1221",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0304",
+   "from": "1221",
+   "to": "1203",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0305",
+   "from": "1202",
+   "to": "1212",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0306",
+   "from": "1212",
+   "to": "1203",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0307",
+   "from": "1100",
+   "to": "1151",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0308",
+   "from": "1101",
+   "to": "1150",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0309",
+   "from": "1102",
+   "to": "1153",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0310",
+   "from": "1103",
+   "to": "1152",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0311",
+   "from": "1100",
+   "to": "1152",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0312",
+   "from": "1101",
+   "to": "1153",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0313",
+   "from": "1102",
+   "to": "1150",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0314",
+   "from": "1103",
+   "to": "1151",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0315",
+   "from": "1150",
+   "to": "1210",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0316",
+   "from": "1151",
+   "to": "1210",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0317",
+   "from": "1152",
+   "to": "1212",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0318",
+   "from": "1153",
+   "to": "1212",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0319",
+   "from": "1150",
+   "to": "1220",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0320",
+   "from": "1151",
+   "to": "1221",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0321",
+   "from": "1152",
+   "to": "1220",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0322",
+   "from": "1153",
+   "to": "1221",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0323",
+   "from": "1200",
+   "to": "1230",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0324",
+   "from": "1201",
+   "to": "1231",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0325",
+   "from": "1202",
+   "to": "1232",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0326",
+   "from": "1203",
+   "to": "1233",
+   "section": "L40X3",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0327",
+   "from": "1210",
+   "to": "1230",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0328",
+   "from": "1210",
+   "to": "1231",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0329",
+   "from": "1212",
+   "to": "1232",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0330",
+   "from": "1212",
+   "to": "1233",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0331",
+   "from": "1220",
+   "to": "1230",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0332",
+   "from": "1221",
+   "to": "1231",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0333",
+   "from": "1220",
+   "to": "1232",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0334",
+   "from": "1221",
+   "to": "1233",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0335",
+   "from": "1230",
+   "to": "1232",
+   "section": "L45X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0336",
+   "from": "1231",
+   "to": "1233",
+   "section": "L45X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0337",
+   "from": "1210",
+   "to": "1300",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0338",
+   "from": "1210",
+   "to": "1301",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0339",
+   "from": "1212",
+   "to": "1302",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0340",
+   "from": "1212",
+   "to": "1303",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0341",
+   "from": "1220",
+   "to": "1300",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0342",
+   "from": "1221",
+   "to": "1301",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0343",
+   "from": "1220",
+   "to": "1302",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0344",
+   "from": "1221",
+   "to": "1303",
+   "section": "L50X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0345",
+   "from": "1300",
+   "to": "1401",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0346",
+   "from": "1301",
+   "to": "1400",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0347",
+   "from": "1302",
+   "to": "1403",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0348",
+   "from": "1303",
+   "to": "1402",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0349",
+   "from": "1300",
+   "to": "1402",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0350",
+   "from": "1301",
+   "to": "1403",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0351",
+   "from": "1302",
+   "to": "1400",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0352",
+   "from": "1303",
+   "to": "1401",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0353",
+   "from": "1400",
+   "to": "2800",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0354",
+   "from": "2800",
+   "to": "2820",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0355",
+   "from": "1401",
+   "to": "2801",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0356",
+   "from": "2801",
+   "to": "2821",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0357",
+   "from": "1402",
+   "to": "2802",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0358",
+   "from": "1403",
+   "to": "2803",
+   "section": "L100X7",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0359",
+   "from": "1400",
+   "to": "2801",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0360",
+   "from": "1401",
+   "to": "2800",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0361",
+   "from": "1402",
+   "to": "2803",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0362",
+   "from": "1403",
+   "to": "2802",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0363",
+   "from": "1400",
+   "to": "2802",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0364",
+   "from": "1401",
+   "to": "2803",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0365",
+   "from": "1402",
+   "to": "2800",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0366",
+   "from": "1403",
+   "to": "2801",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0367",
+   "from": "2820",
+   "to": "2920",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0368",
+   "from": "2821",
+   "to": "2921",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0369",
+   "from": "3100",
+   "to": "3200",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0370",
+   "from": "3101",
+   "to": "3201",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0371",
+   "from": "3102",
+   "to": "3202",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0372",
+   "from": "3103",
+   "to": "3203",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0373",
+   "from": "1400",
+   "to": "1500",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0374",
+   "from": "1500",
+   "to": "1600",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0375",
+   "from": "1401",
+   "to": "1501",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0376",
+   "from": "1501",
+   "to": "1601",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0377",
+   "from": "1402",
+   "to": "1502",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0378",
+   "from": "1502",
+   "to": "1602",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0379",
+   "from": "1403",
+   "to": "1503",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0380",
+   "from": "1503",
+   "to": "1603",
+   "section": "L100X8",
+   "material": "Q345",
+   "segments": 1
+  },
+  {
+   "id": "PM_0381",
+   "from": "1400",
+   "to": "1501",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0382",
+   "from": "1401",
+   "to": "1500",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0383",
+   "from": "1402",
+   "to": "1503",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0384",
+   "from": "1403",
+   "to": "1502",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0385",
+   "from": "1400",
+   "to": "1502",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0386",
+   "from": "1401",
+   "to": "1503",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0387",
+   "from": "1402",
+   "to": "1500",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0388",
+   "from": "1403",
+   "to": "1501",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0389",
+   "from": "1500",
+   "to": "1601",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0390",
+   "from": "1501",
+   "to": "1600",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0391",
+   "from": "1502",
+   "to": "1603",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0392",
+   "from": "1503",
+   "to": "1602",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0393",
+   "from": "1500",
+   "to": "1602",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0394",
+   "from": "1501",
+   "to": "1603",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0395",
+   "from": "1502",
+   "to": "1600",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  },
+  {
+   "id": "PM_0396",
+   "from": "1503",
+   "to": "1601",
+   "section": "L56X4",
+   "material": "Q235",
+   "segments": 1
+  }
+ ],
+ "stats": {
+  "nodes": 138,
+  "segments": 397,
+  "physical_bars": 396,
+  "single_tower_30m": true,
+  "dropped_orphan_nodes": 14,
+  "node_file": "/Users/zsn/Downloads/输电线路铁塔国网2019版35kV输电线路典型设计(计算+CAD+模型)/计算文件/35A/35A2/35A2-JC1/35A2-JC1.NODE"
+ }
+}
