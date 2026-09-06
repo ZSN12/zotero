@@ -74,6 +74,9 @@ _MINIATURE_SPAN_RATIO = 0.35
 # 塔形簇 aspect 带通：下限剔扁平网格（表格/平面），上限剔标注细长条
 # （JC1-03 次簇 28x164 aspect=5.9）。实测塔视图簇 aspect 1.0~3.6。
 _TOWER_CLUSTER_ASPECT = (0.9, 4.5)
+# 特征缓存版本：判据链改动（如 components 增加 bbox）时递增，
+# classify_batch_intents 对旧版本缓存按未命中处理（重算重写）。
+_FEAT_VERSION = 2
 
 
 @dataclass
@@ -216,8 +219,10 @@ def _sheet_line_features(dxf_path: Path) -> Dict[str, Any]:
                 continue
             xs = [c for i in idxs for c in (segs[i][0], segs[i][2])]
             ys = [c for i in idxs for c in (segs[i][1], segs[i][3])]
-            w = max(xs) - min(xs)
-            h = max(ys) - min(ys)
+            x0, x1 = min(xs), max(xs)
+            y0, y1 = min(ys), max(ys)
+            w = x1 - x0
+            h = y1 - y0
             max_span = max(max_span, w, h)
             # 纵向节拍：按 y 网格统计水平线（|dy| 小）出现层数。
             ys_of_horizontal = sorted({
@@ -236,10 +241,12 @@ def _sheet_line_features(dxf_path: Path) -> Dict[str, Any]:
                 "n": len(idxs), "w": round(w, 1), "h": round(h, 1),
                 "aspect": round(h / w, 3) if w > 1e-6 else None,
                 "h_beats": beats,
+                "bbox": [round(x0, 1), round(x1, 1), round(y0, 1), round(y1, 1)],
             })
         comps_out.sort(key=lambda c: -c["n"])
 
     return {
+        "feat_version": _FEAT_VERSION,
         "components": comps_out[:8],
         "max_span": round(max_span, 1),
         "n_line": n_line, "n_dim": n_dim,
@@ -620,13 +627,16 @@ def classify_batch_intents(
         mllm, "available", lambda: False)()
 
     # 第一遍：特征（带缓存）——几何佐证与兜底共用。
+    # 缓存版本不匹配（判据链/特征字段演进）按未命中处理，重算重写。
     feats_by_stem: Dict[str, Dict[str, Any]] = {}
     for p in dxf_paths:
         cp = cache_dir / f"{p.stem}__{_content_hash(p)}.json"
         if cp.exists():
             try:
-                feats_by_stem[p.stem] = json.loads(cp.read_text(encoding="utf-8"))
-                continue
+                cached = json.loads(cp.read_text(encoding="utf-8"))
+                if cached.get("feat_version") == _FEAT_VERSION:
+                    feats_by_stem[p.stem] = cached
+                    continue
             except Exception:
                 pass
         feats = _sheet_line_features(p)

@@ -370,6 +370,14 @@ def _build_hybrid_project(
     dxf_paths = ensure_dxf_batch(input_dir, dxf_dir)
     sheets_out = out_dir / "sheets"
 
+    # Phase 2c：意图注册（overlay 未声明的 stem 由 sheet_intent 四分类
+    # 补挂 view_regions）。失败不阻断（回退旧行为）。
+    try:
+        from ..intake.intent_router import register_sheet_intents
+        register_sheet_intents(dxf_paths, layer_map_path)
+    except Exception:
+        pass
+
     mllm = MLLMBackend()
     if not mllm.available():
         raise RuntimeError(
@@ -1473,6 +1481,14 @@ def deliver_project(
             mllm_provider=mllm_provider,
             mllm_model=mllm_model,
         )
+        # Phase 2c：意图路由审计块（elevation/plan/detail stem 分类结果，
+        # run_manifest 可复核「分类驱动管线选择」的判定留痕）。
+        try:
+            from ..intake.intent_router import registration_report
+            run_manifest["sheet_intent_routing"] = registration_report(
+                layer_map_path)
+        except Exception:
+            pass
         # 这两个文件都由本次运行写出（project_delivery.json 紧随其后落盘），
         # 不受 collect_outputs 存在性过滤的影响，如实列入。
         run_manifest["outputs"] = sorted(

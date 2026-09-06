@@ -102,10 +102,28 @@ def bar_id_patterns(default: List[str], overlay: Optional[str | Path | dict] = N
 
 
 def view_regions(stem: str, overlay: Optional[str | Path | dict] = None) -> List[dict]:
-    """某张图（按文件 stem）的视图区域定义列表。"""
+    """某张图（按文件 stem）的视图区域定义列表。
+
+    Phase 2c 单点接线：overlay 未声明该 stem（或声明缺 kind/axes——
+    Phase 2e 剥离实验产物）时，回退到意图路由（sheet_intent 四分类
+    合成的 regions；管线入口 register_sheet_intents 注册，进程内缓存）。
+    overlay 显式声明优先，意图只补缺省（红线零风险）。
+    """
     spec = load_tower_spec(overlay)
     regions = spec.get("view_regions", {}) or {}
-    return list(regions.get(stem, []) or [])
+    declared = list(regions.get(stem, []) or [])
+    has_intent_fields = any(
+        (r.get("kind") or r.get("axes")) for r in declared if isinstance(r, dict))
+    if declared and has_intent_fields:
+        return declared
+    try:
+        from .intent_router import intent_regions_for_stem
+        intent_regs = intent_regions_for_stem(stem, overlay)
+    except Exception:
+        intent_regs = []
+    if intent_regs:
+        return intent_regs
+    return declared
 
 
 def view_region(stem: str, kind: str, overlay: Optional[str | Path | dict] = None) -> Optional[dict]:

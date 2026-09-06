@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -47,6 +48,15 @@ def intake_tower_batch(
     dxf_dir = out_dir / "dxf"
     dxf_dir.mkdir(parents=True, exist_ok=True)
     dxf_paths = ensure_dxf_batch(input_dir, dxf_dir)
+
+    # Phase 2c：意图注册（overlay 未声明的 stem 由 sheet_intent 四分类
+    # 补挂 view_regions；幂等，进程内缓存）。分类失败不阻断 intake。
+    try:
+        from .intent_router import register_sheet_intents
+        register_sheet_intents(dxf_paths, layer_map_path)
+    except Exception as _exc:  # noqa: BLE001 — 意图缺省回退旧行为，不杀跑批
+        print(f"[intent_router] 意图注册跳过（{type(_exc).__name__}: {_exc}）",
+              file=sys.stderr)
 
     files: List[Dict[str, Any]] = []
     models: List[EngineeringModel] = []

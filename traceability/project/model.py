@@ -143,6 +143,14 @@ def build_project_from_directory(
     dxf_dir = out_dir / "dxf"
     dxf_paths = ensure_dxf_batch(input_dir, dxf_dir)
 
+    # Phase 2c：意图注册（overlay 未声明的 stem 由 sheet_intent 四分类
+    # 补挂 view_regions）。失败不阻断交付（回退旧行为）。
+    try:
+        from ..intake.intent_router import register_sheet_intents
+        register_sheet_intents(dxf_paths, layer_map_path)
+    except Exception:
+        pass
+
     project = ProjectModel(project_id=project_id, name=project_id)
     failures: List[Dict[str, str]] = []
     for dxf in sorted(dxf_paths):

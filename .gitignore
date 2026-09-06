@@ -48,3 +48,7 @@ web/demo/**/trace/*.glb.tmp
 
 # Sheet intent classification (Phase 2)：per-sheet 意图缓存不进库
 out/sheet_intent/
+
+# Phase 2e 剥离实验副本（scripts/run_phase2e_stripped.py 按需重新生成，
+# 必须与源 overlay 同目录以解析 overlay 相对引用如 full_bom.json）
+**/layer_overlay.phase2e-stripped.json
