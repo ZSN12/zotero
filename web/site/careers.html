@@ -78,7 +78,7 @@
       <tr><td>几何求解</td><td>Python（无重依赖）</td><td>四面展开 / 腿链缝合 / 层位投票</td></tr>
       <tr><td>验证</td><td>pytest + 五规则 Harness</td><td>700+ 用例；strict 导出阻断</td></tr>
       <tr><td>交付</td><td>GLB / model.json / version.json</td><td>three.js 查看器；SHA 指纹链</td></tr>
-      <tr><td>MLLM（可插拔）</td><td>多模态视觉链 · 模型无关插槽</td><td>只做件号识别（P 88.5%）/ 版面理解 / 构件语义判别；几何坐标永远来自矢量直读，不让模型画线</td></tr>
+      <tr><td>MLLM（可插拔）</td><td>多模态视觉链 · 模型无关插槽</td><td>只做件号识别（P 100%，BOM 白名单交叉核验）/ 版面理解 / 构件语义判别；几何坐标永远来自矢量直读，不让模型画线</td></tr>
     </table>
     <p class="footnote">
       刻意的架构选择：核心链路不依赖任何外部模型服务——离线可跑、
