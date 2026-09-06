@@ -313,6 +313,13 @@ def expand_4_face_symmetry_model(
     if bool(spec.get("close_face_intersections")):
         from ..solve.tower_geometry import close_face_intersections
         snap_inter_tol = float(spec.get("intersection_snap_tol_mm", 50.0))
+        # S1c（2026-09-06）：T 形打断末尾删除端点退化杆（from==to）时，
+        # 携带的真实图纸件号收进登记簿——打断拆分不丢 bar_id（子段继承
+        # 源杆溯源字段），故「打断后件号消失」= 退化杆被删，几何清噪、
+        # A1 证据不丢。实测（35A1-JC1 纯矢量）111/404/508 等件号在
+        # 此随几何静默消失。跨 bin 分段与全局直跑两条路径共用此差集。
+        _pre_cfi_labels = {
+            str(b.get("bar_id") or "") for b in work_bars if b.get("bar_id")}
         # 收集 Z 范围做分段打断
         zs = [pos[2] for pos in work_nodes.values()]
         if len(work_bars) > 300 and zs and max(zs) - min(zs) > 6000.0:
@@ -359,6 +366,12 @@ def expand_4_face_symmetry_model(
                 snap_tol=snap_inter_tol,
                 max_rounds=3,
             )
+        _post_cfi_labels = {
+            str(b.get("bar_id") or "") for b in work_bars if b.get("bar_id")}
+        for _lab in _pre_cfi_labels - _post_cfi_labels:
+            if _lab and not _lab.startswith("UNLABELED") and _lab != "None":
+                if _lab not in orphan_label_ids:
+                    orphan_label_ids.append(_lab)
 
     # Phase 1（可选）：斜材端点吸附到主腿工作线。
     # 系统重构：默认不启用 snap_diagonals_to_legs，因为它会把原本共享的
@@ -418,6 +431,11 @@ def expand_4_face_symmetry_model(
         snapped_nodes, snapped_bars, _stitch_rep = stitch_segment_boundaries(
             snapped_nodes, snapped_bars, boundary_tol_mm=stitch_tol,
         )
+        # S1c（2026-09-06）：边界缝合删除的退化/重叠重复杆若携带真实
+        # 图纸件号，收进登记簿——几何清噪，A1 证据不丢。实测（35A1-JC1
+        # 纯矢量）跨册缝合把 leg_synth/diag_synth 同件号多实例判为同
+        # key 重复删除，314/316/336/627 等件号随几何静默消失。
+        orphan_label_ids.extend(_stitch_rep.get("pruned_label_ids") or [])
 
     # 阶段 5.4：分册边界腿杆搭桥（P3 真实性治理）。多段立面各画各的段，
     # 边界 [12000,13000]/[17000,18000] 等处腿链断裂（GT 实测 96 根杆跨越
@@ -1605,6 +1623,10 @@ def expand_4_face_symmetry_model(
             face_nodes.update(_stitch_nodes)
         # 拼接后杆件集合变了，重新分类 role（新 stitch_* 杆也需要 role）
         roles = classify_members(face_nodes, face_bars)
+        # S1c（2026-09-06）：共线拼接把碎段合成新物理杆时剥掉 bar_id
+        # （BOM 核验不掺假），被剥源残段的件号收进登记簿——几何合并，
+        # A1 识别证据不丢。实测（35A1-JC1 纯矢量）111/404 在此消失。
+        orphan_label_ids.extend(_stitch_rep.get("merged_label_ids") or [])
         _df = model.components.get("drawing_file")
         if _df is not None:
             _df.properties["collinear_stitch_report"] = dict(_stitch_rep)
@@ -1674,6 +1696,9 @@ def expand_4_face_symmetry_model(
             break_levels=_break_lv,
         )
         roles = classify_members(face_nodes, face_bars)
+        # S1c（2026-09-06）：腿链合并同样剥 bar_id——被剥源杆件号收
+        # 登记簿（实测 508 在此消失）。
+        orphan_label_ids.extend(_lc_rep.get("merged_label_ids") or [])
         _df_lc = model.components.get("drawing_file")
         if _df_lc is not None:
             _df_lc.properties["leg_chain_stitch_report"] = dict(_lc_rep)

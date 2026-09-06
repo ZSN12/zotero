@@ -1659,6 +1659,13 @@ def _stitch_multisheet_boundary_nodes(
     bars = [c for c in components.values() if c.kind == "tower_bar"]
     seen_bar_pairs = set()
     bars_to_delete = set()
+    # S1c 件号登记簿（2026-09-06）：节点缝合产生的自环退化杆/重叠重复杆
+    # 若携带真实图纸件号，几何清除但 A1 识别证据不丢——与短斜材过滤/
+    # 残根剪除的 orphan_label_ids 同语义。实测（35A1-JC1 纯矢量）多册
+    # 边界缝合把 leg_synth/diag_synth 的同件号多实例判为重叠重复杆删除，
+    # 38 个 BOM 件号随几何静默消失（R 缺口的主因）。挂 drawing_file
+    # 供 BOM 白名单核验后并入 A1 预测集。
+    dropped_labels: List[str] = []
 
     for bar in bars:
         fn = bar.properties.get("from_node")
@@ -1680,9 +1687,26 @@ def _stitch_multisheet_boundary_nodes(
         else:
             seen_bar_pairs.add(pair_key)
 
+    for bar in bars:
+        if bar.id in bars_to_delete:
+            _bid = str(bar.properties.get("bar_id") or "")
+            if _bid and not _bid.startswith("UNLABELED") and _bid != "None":
+                if _bid not in dropped_labels:
+                    dropped_labels.append(_bid)
+
     for bid in bars_to_delete:
         if bid in components:
             del components[bid]
+
+    if dropped_labels:
+        df = components.get("drawing_file")
+        if df is not None:
+            orphans = list(df.properties.get("orphan_label_ids") or [])
+            for lab in dropped_labels:
+                if lab not in orphans:
+                    orphans.append(lab)
+            df.properties["orphan_label_ids"] = orphans
+            df.properties["boundary_stitch_dropped_labels"] = dropped_labels
 
 
 # --------------------------------------------------------------------------- #
@@ -2111,6 +2135,16 @@ def apply_side_reads(model: "EngineeringModel") -> int:
         # JC1 塔头 8-64mm 杆 58 根全 FP）无结构语义——真实角钢最小段
         # （GT 实测 ~300mm+）远大于此，全局丢弃。
         if ((x1 - x2) ** 2 + (y1 - y2) ** 2 + (z1 - z2) ** 2) ** 0.5 < 100.0:
+            # S1c（2026-09-06）：微碎段的图纸件号是 A1 识别证据——几何
+            # 清噪但证据不丢，收进 orphan_label_ids 登记簿（与短斜材
+            # 过滤同语义）。实测（35A1-JC1 纯矢量）151/153/159 的 side
+            # 读只有 7-27mm 画线（几何确属噪声），件号文字真实。
+            _frag_bid = str(r.get("bar_id") or "")
+            if _frag_bid and not _frag_bid.startswith("UNLABELED") and _frag_bid != "None":
+                _orphans = list(df.properties.get("orphan_label_ids") or [])
+                if _frag_bid not in _orphans:
+                    _orphans.append(_frag_bid)
+                    df.properties["orphan_label_ids"] = _orphans
             continue
         # 同一物理杆两个 3D 形态：l 面直读（x 原值/面平面）与 r 面镜像
         for face, m, origin, cls in (

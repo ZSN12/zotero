@@ -4336,6 +4336,8 @@ def stitch_collinear_bars(
     n_merged = 0
     roles_merged: Dict[str, int] = {}
     len_after: List[float] = []
+    # S1c：合并剥离的件号登记簿（见下方 pop("bar_id") 处注释）。
+    merged_label_ids: List[str] = []
     for b in bars:
         if str(b.get("id")) in consumed:
             continue
@@ -4376,6 +4378,14 @@ def stitch_collinear_bars(
                 _src_bids.append(str(_sb))
         if _src_bids:
             nb["source_bar_ids"] = sorted(set(_src_bids))
+        # S1c（2026-09-06）：合并剥离的件号收进报告登记簿——合成杆不
+        # 冒充 BOM 件号（bar_id 保持剥离），但源残段的 A1 识别证据不
+        # 随几何消失。调用方（tower_symmetry 展开链）把 merged_label_ids
+        # 并入 orphan_label_ids（几何清噪、A1 证据不丢）。实测（35A1-JC1
+        # 纯矢量）111/404 等 DIAG 杆在共线拼接时件号被静默剥掉。
+        for _lb in _src_bids:
+            if _lb and _lb != "None" and _lb not in merged_label_ids:
+                merged_label_ids.append(_lb)
         nb.pop("bar_id", None)
         nb.update({
             "id": nid,
@@ -4403,6 +4413,7 @@ def stitch_collinear_bars(
         "role_specific": role_specific,
         "role_rejected": role_rejected,
         "len_after_median": round(len_after[len(len_after) // 2], 1) if len_after else 0.0,
+        "merged_label_ids": merged_label_ids,
     }
 
 
@@ -4549,6 +4560,8 @@ def stitch_leg_chains(
     rep_quads = 0
     rep_dropped_dup = 0
     rep_split_deg = 0
+    # S1c：合并剥离的件号登记簿（见下方 pop("bar_id") 处注释）。
+    merged_label_ids: List[str] = []
 
     for _q, frags in quads.items():
         # 重复段去重：同角内 z 向近重合（中点距 < dup_mid_tol_mm）且共线
@@ -4574,11 +4587,21 @@ def stitch_leg_chains(
                             # 现存 k 胜出：丢弃新 b
                             dup = True
                             rep_dropped_dup += 1
+                            # S1c：重复段败者的件号收登记簿（几何清噪、
+                            # A1 证据不丢，实测 508 在此被静默丢弃）。
+                            _lb = str(b.get("bar_id") or "")
+                            if _lb and not _lb.startswith("UNLABELED") and _lb != "None" \
+                                    and _lb not in merged_label_ids:
+                                merged_label_ids.append(_lb)
                             break
                         # 新 b 胜出：丢弃旧 k
                         keep.remove(k)
                         merged_ids.add(_frag_key(k))
                         rep_dropped_dup += 1
+                        _lb = str(k.get("bar_id") or "")
+                        if _lb and not _lb.startswith("UNLABELED") and _lb != "None" \
+                                and _lb not in merged_label_ids:
+                            merged_label_ids.append(_lb)
                         break
             if dup:
                 merged_ids.add(_frag_key(b))  # 重复段直接移除（不重建合成杆）
@@ -4641,6 +4664,13 @@ def stitch_leg_chains(
                 _src_bids = sorted({str(f.get("bar_id")) for f in s
                                     if f.get("bar_id") and not str(f.get("bar_id")).startswith("UNLABELED")})
                 nb = dict(src)
+                # S1c（2026-09-06）：同 collinear_stitch——合并剥离的件号
+                # 收进报告登记簿（merged_label_ids），调用方并入
+                # orphan_label_ids。实测（35A1-JC1 纯矢量）508 等 LEG 杆
+                # 在腿链合并时件号被静默剥掉。
+                for _lb in _src_bids:
+                    if _lb and _lb != "None" and _lb not in merged_label_ids:
+                        merged_label_ids.append(_lb)
                 nb.pop("bar_id", None)
                 # 2026-09-05 代码审查 L3：剔除入口阶段（legs.append
                 # 的 dict(b, _a=..., _c=...)）遗留的临时坐标键——
@@ -4678,6 +4708,8 @@ def stitch_leg_chains(
         "n_legs_in": len(legs),
         "n_bars_in": len(bars),
         "n_bars_out": len(out_bars),
+        # S1c：合并剥离的件号登记（几何清噪、A1 证据不丢）。
+        "merged_label_ids": merged_label_ids,
         # P2.5b（B2 可审计）：豁免通道计数（diaphragm/terminal_pair/
         # leg_synth_table）落报告——跨口径审计要求。
         "skipped": dict(skipped),
@@ -5764,12 +5796,22 @@ def stitch_segment_boundaries(
 
     # 2) 杆件端点重指到共享节点，并去除端点退化（from==to）的杆件。
     new_bars: List[dict] = []
+    pruned_label_ids: List[str] = []
     for b in bars:
         nb = dict(b)
         nb["from"] = id_map.get(nb["from"], nb["from"])
         nb["to"] = id_map.get(nb["to"], nb["to"])
         if nb["from"] == nb["to"]:
-            continue  # 合并后端点退化（同一物理节点），剔除
+            # 合并后端点退化（同一物理节点），剔除。
+            # S1c 件号登记簿（2026-09-06）：退化杆携带的真实图纸件号
+            # 不随几何消失——调用方（tower_symmetry 展开链）把
+            # pruned_label_ids 并入 orphan_label_ids（几何清噪、A1
+            # 证据不丢），与 prune_short_stub_bars 同语义。
+            _bid = str(b.get("bar_id") or "")
+            if _bid and not _bid.startswith("UNLABELED") and _bid != "None":
+                if _bid not in pruned_label_ids:
+                    pruned_label_ids.append(_bid)
+            continue
         new_bars.append(nb)
 
     # 3) 重叠杆件去重：无向端点相同即视为同一根物理杆件，只保留先出现者。
@@ -5798,6 +5840,15 @@ def stitch_segment_boundaries(
             key = (min(b["from"], b["to"]), max(b["from"], b["to"]))
             if key in seen:
                 dedup_bars += 1
+                # S1c：重叠重复杆删除同样登记件号（实测 35A1-JC1：
+                # leg_synth/diag_synth 的同件号多实例被跨册边界缝合
+                # 判为同 key 重复删除，314/316/336/627 等件号随几何
+                # 静默消失）。注意：同 key 组胜者若也带同件号则保留，
+                # 此处只登记「几何被删」实例的件号。
+                _bid = str(b.get("bar_id") or "")
+                if _bid and not _bid.startswith("UNLABELED") and _bid != "None":
+                    if _bid not in pruned_label_ids:
+                        pruned_label_ids.append(_bid)
                 continue
             seen.add(key)
             deduped.append(b)
@@ -5807,6 +5858,7 @@ def stitch_segment_boundaries(
         "merged_nodes": merged_nodes,
         "dedup_bars": dedup_bars,
         "pairs": pairs,
+        "pruned_label_ids": pruned_label_ids,
     }
 
 
