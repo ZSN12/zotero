@@ -6875,9 +6875,16 @@ def exact_overlap_dedup(
     这些副本在 1:1 匹配下最多贡献 1 个 TP，其余全计 FP（离线模拟：
     同 GT 簇零风险删 684 杆，front full P 25.4%→31.3%，R 不降）。
 
-    规则（纯几何，无 GT 耦合）：union-find 聚类严格重复对，每簇按
-    证据优先级保 1 根（dxf_geom > marker/leg/diag synth > 模板/参数
-    生成——识别证据优先于合成）。
+    两级规则（纯几何，无 GT 耦合）：
+
+    1. **证据优先**（evidence-preferred）：识别杆（is_recognized 语义：
+       非模板/非参数生成的直接读图杆）严格 3D 重复一条非识别杆时，
+       删**非识别**副本——图纸证据保留，合成/模板副本让位。离线
+       （2026-09-05 JC1）：删 181 杆（含 41 个 TP 模板杆，Hungarian
+       将同几何识别杆重新指派到同一 GT），front P 25.6%→27.0%，
+       dual 并集 1069→1070。
+    2. **节点对多数**：剩余簇内仅当存在多数节点对（≥簇半数）时，
+       按证据优先级保 1 根删同节点对副本。
 
     tps 杆不在此处理（dedup_terminal_pair_bars 的既有语义，
     P3.5f 多子系统投影计数有意保留）。
@@ -6967,6 +6974,51 @@ def exact_overlap_dedup(
         grid[(round(mx / cell_mm), round(my / cell_mm),
               round(mz / cell_mm))].append(item)
 
+    # ---- 第一级：证据优先（识别杆的严格非识别孪生删除） ----
+    # 识别语义与 eval._bar_caliber_class 的 recognized 判定同源：非模板/
+    # 非参数生成 + front 面直读来源。此处用 geometry_origin 白名单近似
+    # （is_recognized_bar 在 eval 层，solve 层不 import 评测器，保持
+    # 单向依赖）。识别杆命中的非识别严格孪生杆整条删除（证据让位
+    # 不发生——被删的是副本）。
+    _RECOGNIZED_ORIGINS = frozenset({
+        "dxf_geom", "marker_synth", "leg_synth", "diag_synth",
+        "diag_complete", "side_direct", "collinear_stitch",
+    })
+    ev_removed: set = set()
+    ev_removed_ids: List[str] = []
+    _nonrec_by_cell: Dict[Tuple[int, int, int], List[Tuple[int, Tuple]]] = defaultdict(list)
+    for key, items in grid.items():
+        for item in items:
+            _org = str(bars[item[0]].get("geometry_origin") or "")
+            if _org not in _RECOGNIZED_ORIGINS:
+                _nonrec_by_cell[key].append(item)
+    for key, items in grid.items():
+        for a in items:
+            _org_a = str(bars[a[0]].get("geometry_origin") or "")
+            if _org_a not in _RECOGNIZED_ORIGINS:
+                continue
+            kx, ky, kz = key
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        for b_item in _nonrec_by_cell.get(
+                                (kx + dx, ky + dy, kz + dz), ()):
+                            if b_item[0] in ev_removed:
+                                continue
+                            if _dup(a, b_item):
+                                ev_removed.add(b_item[0])
+                                ev_removed_ids.append(
+                                    str(bars[b_item[0]].get("id")))
+    if ev_removed:
+        segs = [it for it in segs if it[0] not in ev_removed]
+        grid = defaultdict(list)
+        for item in segs:
+            mx = (item[1][0][0] + item[1][1][0]) / 2.0
+            my = (item[1][0][1] + item[1][1][1]) / 2.0
+            mz = (item[1][0][2] + item[1][1][2]) / 2.0
+            grid[(round(mx / cell_mm), round(my / cell_mm),
+                  round(mz / cell_mm))].append(item)
+
     parent: Dict[int, int] = {}
 
     def find(x: int) -> int:
@@ -7035,10 +7087,41 @@ def exact_overlap_dedup(
                 removed_set.add(it[0])
                 removed_ids.append(str(bars[it[0]].get("id")))
 
+    # 第二级在第一级删余后的杆系上执行；两级删除量分开上报。
+    removed_set = ev_removed
+    removed_ids = list(ev_removed_ids)
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        pair_counts: Dict[Tuple[str, str], int] = defaultdict(int)
+        for it in members:
+            b = bars[it[0]]
+            pair_counts[(str(b.get("from")), str(b.get("to")))] += 1
+        majority_pair, majority_n = max(
+            pair_counts.items(), key=lambda kv: kv[1])
+        if majority_n * 2 < len(members) or majority_n < 2:
+            continue  # 无多数节点对 → 不同物理杆，整簇保留
+        candidates = [it for it in members
+                      if (str(bars[it[0]].get("from")),
+                          str(bars[it[0]].get("to"))) == majority_pair]
+        keep = min(
+            candidates,
+            key=lambda it: (
+                origin_rank.get(
+                    str(bars[it[0]].get("geometry_origin") or ""), 99),
+                str(bars[it[0]].get("id") or ""),
+            ),
+        )
+        for it in candidates:
+            if it[0] != keep[0] and it[0] not in removed_set:
+                removed_set.add(it[0])
+                removed_ids.append(str(bars[it[0]].get("id")))
+
     kept = [b for i, b in enumerate(bars) if i not in removed_set]
     return kept, {
         "removed": len(removed_ids),
         "removed_ids": removed_ids[:200],
+        "removed_evidence_preferred": len(ev_removed_ids),
         "n_dup_pairs": n_pairs,
         "dist_tol_mm": dist_tol_mm,
         "overlap_frac": overlap_frac,

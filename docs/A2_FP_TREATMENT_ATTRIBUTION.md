@@ -89,6 +89,23 @@ leg_synth×terminal_pair 314 等（共 4284 对）。同一物理杆被多个
 **节点对不同但 3D 共线**的副本（端点细分 68 / 端点偏移 100），
 生产侧无法区分「同杆双放」与「相邻真杆」。
 
+### 4.1b 证据优先层（evidence-preferred，第二跑追加）
+
+§4.1 节点对多数层之上再加一层**证据优先**规则：recognized 杆
+（origin ∈ {dxf_geom, marker_synth, leg_synth, diag_synth,
+diag_complete, side_direct, collinear_stitch}）被**非 recognized**
+杆严格 3D 重复时，删非 recognized 副本（证据赢）。判据仍是 §4.1
+严格重复测试，但**不要求节点对相同**——证据杆与模板杆节点对天然
+不同（模板按网格生成），节点对判据在此失效；证据杆几何直接来自
+DXF 图纸线，是「同一物理杆」更强的信号。
+
+生产终跑：removed=248（其中证据优先层 238、节点对多数层 10）。
+front full TP=913 FP=2451（P 25.6→27.1%），dual 并集 1069 红线
+保持，A1 168/197 无回归，五层口径全部改善或持平
+（parametric P 33.6→34.2%）。离线仿真预示 drop 181（41 TP + 140 FP）
+≈ 双视图下净 +1 TP（1070），生产实测 913/2451 与离线一致性在
+1:1 匹配抖动范围内。
+
 ### 4.2 headx 证据覆盖门（塔头模板杆不重复生成）
 
 `complete_head_panel_chain`（S8.4）此前无证据门：塔头 156 根模板杆中
@@ -113,8 +130,10 @@ leg_synth×terminal_pair 314 等（共 4284 对）。同一物理杆被多个
 ## 6. 决策记录
 
 - kfan/xpanel 主体剪枝：**不做**（§2 证据对称性）。
-- exact_overlap_dedup + headx 覆盖门：**已落地**（零损失 FP -55）。
-- 验证：full TP 920→919（-1，1:1 匹配抖动），FP 2707→2666，
+- exact_overlap_dedup（节点对多数层）+ headx 覆盖门：**已落地**（零损失
+  FP -55）。
+- exact_overlap_dedup 证据优先层：**已落地**（FP -215，dual 红线保持）。
+- 验证（证据优先层后终态）：full TP=913 FP=2451（P=27.1% R=85.2%），
   dual 并集 1069 红线保持，A1 168/197 无回归，pytest 736/5，
   web/demo 镜像 sha 一致。
 - 复跑：`python3 scripts/run_35A1_jc1_full.py`；
