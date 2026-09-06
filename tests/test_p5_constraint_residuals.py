@@ -145,6 +145,29 @@ class SidegenP43LadderTest(unittest.TestCase):
         self.assertEqual(p["section"], "L63X5")
         self.assertNotIn("section_detached", p)
 
+    def test_angle_vs_angle_section_rehangs_when_underlength(self):
+        """S2（2026-09-06）：角钢对角钢 + 杆长严重不足 BOM（噪声碎片佐证）
+        → 截面按 BOM member 行重挂，原值 section_detached 留痕。
+
+        实测背景（JC1 02 册）：sidegen 噪声杆 122/139——件号文字贴到
+        视图 region 外的侧立面碎短线（杆长仅 BOM 62%/33%），截面文字
+        是另一处独立贪心贴附，两者不是同一处标注。杆长吻合的真矛盾
+        走 test_angle_vs_angle_section_stays_untouched（诚实 FAILED 保留）。
+        """
+        from traceability.intake.tower_symmetry import _strip_misassociated_bar_ids
+        from traceability.intake.tower_bom import cross_check_bom
+        m = self._mk(bar_id="122", length=1002.0, section="L63X5",
+                     bom_len=1609.0, bom_sec="L50X4")
+        cross_check_bom(m, [{"bar_id": "122", "section": "L50X4",
+                             "length_mm": 1609.0, "qty": 1}])
+        _strip_misassociated_bar_ids(m)
+        p = m.components["b0"].properties
+        self.assertEqual(p["section"], "L50X4")
+        self.assertEqual(p["section_detached"], "L63X5")
+        self.assertEqual(p["section_source"], "bom_member_row")
+        df = m.components["drawing_file"].properties
+        self.assertIn("122", (df.get("section_attribute_detached") or [""])[0])
+
 
 class SidegenRootStemTest(unittest.TestCase):
     def test_sidegen_lr_twins_share_root_stem(self):

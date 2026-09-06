@@ -2259,11 +2259,23 @@ def expand_4_face_symmetry_model(
     return model
 
 
+def _normalize_angle_section(section: str) -> str:
+    """角钢截面归一化（S2 2026-09-06）：Q345L63X5 / l63x5 → l63x5。
+
+    供截面规格比对——形态（角钢）相同而规格不同时判矛盾。
+    非角钢形态返回原串（classify 已在调用方把关形态）。
+    """
+    import re
+    t = str(section or "").strip().upper().replace("×", "X").replace("*", "X").replace(" ", "")
+    return re.sub(r"^Q\d+", "", t)
+
+
 def _strip_misassociated_bar_ids(
     model: EngineeringModel,
     *,
     strip_ratio: float = 2.5,
     suspect_ratio: float = 1.03,
+    under_section_rehang_ratio: float = 0.8,
 ) -> None:
     """P4.3：件号长度一致性核验（3D 长度解算后调用）。
 
@@ -2274,7 +2286,7 @@ def _strip_misassociated_bar_ids(
         1.03 < ratio <= strip_ratio → bar_id_length_suspect=True（保留件号，
           同号多杆歧义属 review 队列，不自动剥离）；
         ratio < 0.4（识别不全）不剥离——几何问题是 Phase 5/7 战场，
-        件号关联本身没错，如实报超差（诚实失败）。
+          件号关联本身没错，如实报超差（诚实失败）。
 
     P5（2026-09-03）追加：截面属性同阶梯——杆自带截面为板材/螺栓形态
     而 BOM member 行为角钢时，属性按 BOM 权威值重挂（section_detached
@@ -2324,6 +2336,29 @@ def _strip_misassociated_bar_ids(
         if (_sec_dim is not None and _sec_dim.value is not None and _sec
                 and classify_bom_row(bid, str(_sec_dim.value)) == "member"
                 and classify_bom_row(bid, _sec) != "member"):
+            p["section_detached"] = _sec
+            p["section"] = str(_sec_dim.value)
+            p["section_source"] = "bom_member_row"
+            if bid not in _sec_detached:
+                _sec_detached.append((bid, _sec, str(_sec_dim.value)))
+        elif (_sec_dim is not None and _sec_dim.value is not None and _sec
+                and classify_bom_row(bid, str(_sec_dim.value)) == "member"
+                and classify_bom_row(bid, _sec) == "member"
+                and ratio < under_section_rehang_ratio
+                and _normalize_angle_section(_sec)
+                != _normalize_angle_section(str(_sec_dim.value))):
+            # S2（2026-09-06）：同形态不同规格 + 杆长严重不足 BOM
+            # （< under_section_rehang_ratio，噪声碎片/欠识别佐证）。
+            # 实测（JC1 02 册）sidegen 噪声杆 122/139——件号文字贴到
+            # 视图 region 外的侧立面碎短线（'122' 距杆 122.6 图面单位，
+            # 杆长仅 BOM 的 62%/33%），截面文字 Q345L63X5 又是从另一处
+            # 独立贪心贴附（d=172），两者根本不是同一处标注；真杆 2E8
+            # 恰在 '122' 文字旁 4 单位（长 1608≈BOM 1609）但画在
+            # region 外被丢弃。杆长吻合而截面矛盾的真数据矛盾（如
+            # ratio≈1.08 的 BOM/图纸实质不符）不进本分支——保留
+            # r_bom_section_match 的诚实 FAILED 信号。件号/几何不动，
+            # 截面按 BOM member 行为权威重挂（P5 同语义），
+            # section_detached 留痕供审计。
             p["section_detached"] = _sec
             p["section"] = str(_sec_dim.value)
             p["section_source"] = "bom_member_row"
