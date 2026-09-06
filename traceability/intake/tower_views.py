@@ -1045,6 +1045,33 @@ def merge_view_coordinates(
                 comp.properties.update({"x": solved["x"], "y": solved["y"], "z": solved["z"],
                                         "solve_status": "solved"})
 
+    # ---- 兜底：仍未解算的 front 节点至少落盘 x/z（2026-09-06）----
+    # 背景：front+side 同存但配对全失败时（Gemini hybrid 02 册实测：MLLM 只
+    # 检出侧立面上部 14 节点，分位数归一化把该子集拉伸铺满全段 → z 桶与
+    # 节拍锚定的 front 节点完全错位 → 每桶节点数不等 → 匈牙利 0 对），
+    # 旧逻辑因「side 存在」跳过 single_front 分支，front 节点 z=None、
+    # 下游 P3.15 把全部杆当悬空删光（95 杆 → 0）。
+    # front 视图本身的 view_x/view_y 就是直读证据（x=塔身X、z=标高），与
+    # single_front 分支同语义；这里按节点粒度兜底，只补 x/z、y 保持 None
+    # （诚实 partial——深度轴未解不伪造），四面展开只用 (x, 0, z) 重建。
+    _xz_fallback = 0
+    for cid, comp in nodes_by_view.get("front", []):
+        p = comp.properties
+        if p.get("solve_status") == "solved":
+            continue
+        ux, uz = p.get("view_x"), p.get("view_y")
+        if ux is None or uz is None:
+            continue
+        # y 必须显式清空：inject_mllm_bars_into_model / tower_dxf 写入的原始
+        # 图纸 y（如 -7358）不是塔身深度，泄漏会污染 bbox/半宽度量。
+        p["x"], p["y"], p["z"] = round(float(ux), 2), None, round(float(uz), 2)
+        p["solve_status"] = "partial_xz"
+        p["solve_method"] = "front_xz_fallback"
+        merged[cid] = {"x": float(ux), "y": None, "z": float(uz)}
+        _xz_fallback += 1
+    if df is not None and _xz_fallback:
+        df.properties["front_xz_fallback_nodes"] = _xz_fallback
+
     # ---- 阶段3 修复：未配对的 side 节点不得泄漏原始图纸 x ----
     # side 视图的横向轴是塔身 Y（深度），其原始图纸 x（如 34557~34701）只是
     # 该视图在整张图纸上的水平位置，不是塔身 X。配对失败（front/side 各 z 带

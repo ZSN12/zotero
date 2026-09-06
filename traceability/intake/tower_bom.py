@@ -96,6 +96,81 @@ def _bars_by_bar_id(model: EngineeringModel) -> Dict[str, List[str]]:
     return by_id
 
 
+def cross_validate_bar_ids(
+    model: EngineeringModel,
+    bom_rows: List[Dict],
+) -> Dict:
+    """A1 证据集 BOM 白名单核验（2026-09-06）。
+
+    背景：A1 评测把 master BOM 件号集当 GT，但管线侧识别件号从未与之
+    核对——实测（35A1-JC1）6~22 个 FP 是 BOM 表 length_mm/qty 列数字
+    被读成件号（'913' 是杆长、'341' 是数量），形态过滤拦不住（3 位
+    数字件号形态合法）。
+
+    行为（对六层契约「冲突记为待验证」的落地）：
+        * tower_bar.bar_id 不在 BOM 件号集 → 移入 bar_id_pending_bom
+          登记簿（不删杆、不改几何，只摘 A1 证据挂靠），杆自身
+          bar_id 置 UNLABELED_BOM_PENDING 并保留原值 bar_id_raw；
+        * drawing_file.orphan_label_ids 同步剔除非 BOM 件号（登记簿
+          只收 BOM 能确认的证据）；
+        * 返回报告：n_checked / n_pending / n_kept / pending_ids，
+          写入 drawing_file.properties['bom_validation_report']。
+
+    幂等：UNLABELED 前缀杆跳过；重复调用不重复计数。
+    """
+    bom_ids = {
+        str(r.get("bar_id", "")).strip()
+        for r in (bom_rows or [])
+        if str(r.get("bar_id", "")).strip()
+    }
+    if not bom_ids:
+        return {"n_checked": 0, "n_pending": 0, "n_kept": 0,
+                "pending_ids": [], "note": "BOM 为空，跳过核验"}
+
+    pending_ids: List[str] = []
+    kept = 0
+    checked = 0
+    for cid, comp in list(model.components.items()):
+        if comp.kind != "tower_bar":
+            continue
+        p = comp.properties
+        bid = p.get("bar_id")
+        if not bid or str(bid).startswith("UNLABELED"):
+            continue
+        checked += 1
+        if str(bid) in bom_ids:
+            kept += 1
+            continue
+        # 降级：摘除 A1 证据挂靠，原值留 bar_id_raw 供人工复核
+        p["bar_id_raw"] = str(bid)
+        p["bar_id"] = f"UNLABELED_BOM_PENDING_{cid}"
+        p["label_validation"] = "pending_bom"
+        pending_ids.append(str(bid))
+
+    df = model.components.get("drawing_file")
+    if df is not None:
+        orphan = [str(x) for x in (df.properties.get("orphan_label_ids") or [])]
+        orphan_kept = [x for x in orphan if x in bom_ids]
+        dropped_orphan = [x for x in orphan if x not in bom_ids]
+        if dropped_orphan:
+            df.properties["orphan_label_ids"] = orphan_kept
+            df.properties["orphan_label_ids_bom_pending"] = dropped_orphan
+        report = {
+            "n_checked": checked,
+            "n_pending": len(pending_ids),
+            "n_kept": kept,
+            "pending_ids": pending_ids,
+            "orphan_dropped": len(dropped_orphan),
+        }
+        df.properties["bom_validation_report"] = report
+    return {
+        "n_checked": checked,
+        "n_pending": len(pending_ids),
+        "n_kept": kept,
+        "pending_ids": pending_ids,
+    }
+
+
 def cross_check_bom(model: EngineeringModel, bom_rows: List[Dict]) -> EngineeringModel:
     """把 BOM 行并入模型并建立交叉核验。
 

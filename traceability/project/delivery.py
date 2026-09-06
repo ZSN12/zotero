@@ -589,9 +589,17 @@ def deliver_project(
             cross_result["model_path"] = str(model_path)
             cross_result["merge_report"].update({
                 "bars": sum(1 for c in merged.components.values() if c.kind == "tower_bar"),
+                # 2026-09-06：计数口径改为「x&z 已知」（进入 3D 链的节点）。
+                # front_xz_fallback 节点（y=None 诚实 partial）会被四面展开
+                # 物化为 solved，merge 时点只数 'solved' 会把它们漏报成
+                # NO_NODES_SOLVED（Gemini hybrid 02 册实测 97 节点全 partial_xz
+                # 但展开后 577 节点全 solved）。两个分支（hybrid/ezdxf）同改，
+                # ezdxf 纯矢量节点 merge 时已 solved 且 x&z 非空，计数不变。
                 "nodes_solved": sum(
                     1 for c in merged.components.values()
-                    if c.kind == "tower_node" and c.properties.get("solve_status") == "solved"
+                    if c.kind == "tower_node"
+                    and c.properties.get("x") is not None
+                    and c.properties.get("z") is not None
                 ),
             })
     elif should_use_cross_file_merge(layer_map_path):
@@ -624,9 +632,17 @@ def deliver_project(
             cross_result["model_path"] = str(model_path)
             cross_result["merge_report"].update({
                 "bars": sum(1 for c in merged.components.values() if c.kind == "tower_bar"),
+                # 2026-09-06：计数口径改为「x&z 已知」（进入 3D 链的节点）。
+                # front_xz_fallback 节点（y=None 诚实 partial）会被四面展开
+                # 物化为 solved，merge 时点只数 'solved' 会把它们漏报成
+                # NO_NODES_SOLVED（Gemini hybrid 02 册实测 97 节点全 partial_xz
+                # 但展开后 577 节点全 solved）。两个分支（hybrid/ezdxf）同改，
+                # ezdxf 纯矢量节点 merge 时已 solved 且 x&z 非空，计数不变。
                 "nodes_solved": sum(
                     1 for c in merged.components.values()
-                    if c.kind == "tower_node" and c.properties.get("solve_status") == "solved"
+                    if c.kind == "tower_node"
+                    and c.properties.get("x") is not None
+                    and c.properties.get("z") is not None
                 ),
             })
     else:
@@ -756,6 +772,27 @@ def deliver_project(
             _dfm = merged_model.components.get("drawing_file")
             if _dfm is not None:
                 _dfm.properties["dedup_identical_bars_report"] = dict(_dd)
+
+    # A1 证据集 BOM 白名单核验（2026-09-06）：识别件号与 master BOM 交叉
+    # 核对，非 BOM 件号降级「待验证」（bar_id=UNLABELED_BOM_PENDING_*，原值
+    # 留 bar_id_raw，A1 不进预测集）。必须放在 4-face expansion 之后——
+    # apply_side_reads 注入的 sidegen 杆（side_direct/side_mirror）在展开
+    # 阶段才挂 bar_id，核验早于注入会漏（实测 4 个 sidegen FP 漏网）。
+    # overlay 显式开关控制，默认关闭保证既有口径零变化。
+    if merged_model is not None and ov.get("bom_validate_bar_ids") and bom_path:
+        try:
+            import csv as _csv_bv
+            from ..intake.tower_bom import cross_validate_bar_ids
+            _bom_rows_bv = list(_csv_bv.DictReader(
+                Path(bom_path).read_text(encoding="utf-8-sig").splitlines()))
+            _bv_report = cross_validate_bar_ids(merged_model, _bom_rows_bv)
+            print(
+                f"[A1 BOM 核验] checked={_bv_report.get('n_checked')} "
+                f"kept={_bv_report.get('n_kept')} pending={_bv_report.get('n_pending')}",
+                flush=True,
+            )
+        except Exception as _exc_bv:
+            print(f"[A1 BOM 核验] 失败（跳过，不影响交付）: {_exc_bv}", flush=True)
 
     # Phase 2.5（仅调试/评测）：GT 权威拓扑对齐。默认关闭，生产交付永不启用。
     # 阶段 0.2 GT 隔离：此路径只允许 overlay 显式 `gt_align: true`（debug/eval），
