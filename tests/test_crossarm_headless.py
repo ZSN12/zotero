@@ -291,6 +291,52 @@ def test_k_fan_dangling_endpoint_no_crash():
     assert "generated" in rep  # 不崩即通过
 
 
+def test_k_fan_tower_tightening_params():
+    """P3（2026-09-06 ZC1 FP 治理）：塔型声明式收紧三参数。
+
+    ZC1 离线实测：深桥接 spokes + S8.3 扭结层推导合计 1158 杆 0 TP。
+    twist_completion=False 整段关闭扭结推导；spoke/xpanel_depth_max_mm
+    收紧桥接深度窗口。默认值（None/True）= JC1 历史行为不变。
+    """
+    from traceability.solve.tower_geometry import complete_k_fan_braces
+
+    # 塔身：junction 7000，角点在 6000/5000/4000（1000 网格）+ 扭结层 6500。
+    # 角点半宽 200（corner 判据要求 |x|>100）；补一条水平环杆避免
+    # 「空 bars 输入」早退（complete_k_fan_braces 要求非空杆集）。
+    def mk_nodes():
+        nodes = {}
+        for z in (7000, 6500, 6000, 5000, 4000):
+            for i, (x, y) in enumerate(((200, 200), (200, -200), (-200, -200), (-200, 200))):
+                nodes[f"c{z}_{i}"] = (float(x), float(y), float(z))
+        return nodes
+
+    nodes = mk_nodes()
+    bars = [{"id": "ring0", "from": "c7000_0", "to": "c7000_1", "role": "HORIZ"}]
+
+    # 基线（默认）：spoke 深度窗口 2000-5500 → 目标 5000/4000；
+    # 扭结层 6500 有 4 角点 → S8.3 扭结 X 面板生成。
+    _n0, b0, _r0 = complete_k_fan_braces(
+        dict(nodes), list(bars), lambda z: 100.0, [7000.0])
+    spoke0 = [b for b in b0 if str(b["id"]).startswith("kfan_bar")]
+    assert spoke0, "基线应生成辐条"
+    z0 = {abs(nodes[b["from"]][2] - nodes[b["to"]][2]) for b in spoke0
+          if b["from"] in nodes and b["to"] in nodes}
+    assert any(d > 2800 for d in z0), f"基线应含深桥接（>2800）: {sorted(z0)}"
+
+    # 收紧后：深度窗口 ≤2500 → 无深桥接；twist 关闭 → 无扭结源杆。
+    _n1, b1, _r1 = complete_k_fan_braces(
+        dict(nodes), list(bars), lambda z: 100.0, [7000.0],
+        twist_completion=False,
+        spoke_depth_max_mm=2500.0, xpanel_depth_max_mm=2500.0)
+    gen1 = [b for b in b1 if b.get("panel_template_completion")]
+    for b in gen1:
+        f, t = nodes.get(b["from"]), nodes.get(b["to"])
+        if f is None or t is None:
+            continue  # 模板自建节点（如 spoke 面中点）跳过深度检查
+        d = abs(f[2] - t[2])
+        assert d <= 2800, f"收紧后仍有深桥接 {b['id']} d={d}"
+
+
 def test_leg_chain_stitch_no_leaky_internal_keys():
     """L3：腿链合成杆不得泄漏 _a/_c 临时坐标键。"""
     from traceability.solve.tower_geometry import stitch_leg_chains

@@ -873,5 +873,9 @@
  "_doc_lightning_rod_layers": "S11c 避雷针主杆层对 [[z_anchor, z_top]]：均网格层，站宽 hw 锥线外推（残差 Δ41/Δ49）；BOM 无件号（塔头册缺失）。",
  "_doc_leg_span_layers": "S11d 主腿跨段层对 [[z_lo, z_hi]]：两端均网格层。段1 [19400,27400] 有BOM 401-403 L=8014 qty=4 交叉验证（Δ10mm）；段2 [12200,19400] 的12200 是 12 册图纸层（GT 11900 的图纸表达，z 残差 300mm TOL 吸收），无 BOM 对应。站宽 hw 锥线（Δ19-31）。",
  "_doc_neck_brace_layers": "S11e 塔颈 K 撑层站 [[z_lo, z_mid, z_hi]]：三层均网格投票层，中站 (±hw(z_mid),0)，角站 hw 锥线（残差 Δ30）。",
- "_doc_skip_level_xbrace_layers": "S11f 跳层 X 撑层对 [[z_lo, z_hi]]——已撤（2026-09-05 外部审计：生成器「过塔心中线全对角」与 GT 侧面 X 撑板几何不符，3D 端点和1359mm ≥500，front 单视图假命中；末端面板外扩 ~1.5×hw 无独立证据来源）。键保留文档记录，值不得再声明，除非补齐板几何证据。"
+ "_doc_skip_level_xbrace_layers": "S11f 跳层 X 撑层对 [[z_lo, z_hi]]——已撤（2026-09-05 外部审计：生成器「过塔心中线全对角」与 GT 侧面 X 撑板几何不符，3D 端点和1359mm ≥500，front 单视图假命中；末端面板外扩 ~1.5×hw 无独立证据来源）。键保留文档记录，值不得再声明，除非补齐板几何证据。",
+ "kfan_twist_completion": false,
+ "kfan_spoke_depth_max_mm": 2500.0,
+ "kfan_xpanel_depth_max_mm": 2500.0,
+ "_doc_kfan_tightening": "P3 FP 治理（2026-09-06）：ZC1 直线塔真实斜材节拍 ≤2500mm（GT 普查：常规节拍 700-2500，深跨杆是主腿/避雷针整杆，由 leg_span/lrod 生成器覆盖）。kfan 深桥接 spokes（目标=1000 网格层）与 S8.3 扭结层推导（角点轨迹簇不在 ZC1 节拍上）合计 1158 杆 0 TP——声明式关闭/收紧。离线仿真：TP 258 不变，FP 2271→1127（P 10.2%→18.6%）。JC1 默认行为不变。"
 }

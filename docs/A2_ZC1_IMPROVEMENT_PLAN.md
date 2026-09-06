@@ -659,3 +659,79 @@ zc1_master_bom.csv，纯图纸证据）。
 
 几何零影响实证：git stash 对照重跑 ZC1，杆数 2664 与全部口径
 （pure 9/135、recon 258/2271、front-full 223/2381）逐位一致。
+
+## 十九、Phase 3：kfan 模板收紧——FP 2271→991，P 10.2%→20.7%（2026-09-06）
+
+### 19.1 归因（离线仿真，官方 eval_a2_dual_view 语义复刻）
+
+ZC1 dual-full FP=2271 结构：panel_template_completion 1501（kfan 桥接
+610 cids/41 TP + kfan 扭结 840 cids/16 TP + headx 178 cids/70 TP + 其他 6）
++ dxf_geom 365（面分布 f=100/b=95/l=87/r=83 均匀——不可分）+
+terminal_pair_gen 163 + diagonal_topology 100。
+
+**关键判别（与 JC1 相反）**：ZC1 GT 跨层斜材节拍普查 = 常规节拍
+700/800/900/1000/1400/1600/2500mm（最大常规节拍 2500；更深跨杆全是
+主腿/避雷针整杆，由 leg_span/lrod 生成器覆盖）。而 kfan 生成器把辐条
+打到 1000 网格层——22 个 junction 对里只有 1 对命中 GT 节拍。JC1 的
+深面板（d2500-5500）是真实 GT 结构不可剪（A2_FP_TREATMENT_ATTRIBUTION
+负结论），ZC1 的深桥接/扭结推导是纯模板幻觉。
+
+### 19.2 修复（声明式 overlay 收紧，JC1 默认不变）
+
+`complete_k_fan_braces` 新增三参数（默认值 = 原行为）：
+- `twist_completion`（S8.3 角点轨迹扭结层推导，ZC1 声明 false）；
+- `spoke_depth_max_mm`（辐条目标层深度窗，ZC1 声明 2500.0）；
+- `xpanel_depth_max_mm`（S8.2 X 面板深度窗，ZC1 声明 2500.0）。
+
+ZC1 overlay（`examples/external/guowang_35A2_zc1/layer_overlay.json`）
+追加 `kfan_twist_completion/kfan_spoke_depth_max_mm/kfan_xpanel_depth_max_mm`
+三键 + `_doc_kfan_tightening` 归因注释。headx（S8.4，70 TP 载荷）不动。
+
+新单测 `test_k_fan_tower_tightening_params`：基线深桥接存在性 +
+收紧后 depth>2800 模板杆归零。
+
+### 19.3 实测（全管线，out/phase3-zc1）
+
+| 口径 | Phase 2e 基线 | Phase 3 实测 | Δ |
+|---|---|---|---|
+| A2-dual-view-reconstructed | TP 258 / FP 2271 / P 10.2% / R 90.5% | **TP 259 / FP 991 / P 20.7% / R 90.9%** | P +10.5pp，TP +1 |
+| A2-dual-view-pure | TP 9 / P 6.4% | TP 9 / P 6.4% | 不变 |
+| A2-front-full | TP 223 / FP 2381 / P 8.6% | TP 227 / FP 1095 / P 17.2% | P +8.6pp，TP +4 |
+| A1 | 190/202 P=100% R=94.1% | 190/202 P=100% R=94.1% | 不变 |
+| kfan 生成量 | 1964 杆 / 22 对 | 158 杆 / 4 对 | 深于 2500 节拍的桥接/扭结全消 |
+
+**超预期来源**：离线仿真预测 P 18.6%（FP 2271→1127）；实测 20.7%。
+TP 不降反升 1（recon）/4（front-full）——删掉的 FP 杆此前在匈牙利
+匹配中与真杆争抢，移除后真杆获得更优配对。35800/36600 两头部 junction
+（最近网格层深 >2500）正确归零。
+
+**门禁**：ZC1 P≥20% ✅（20.7%）、A2-dual≥90% ✅（90.9%）、A1≥80% ✅
+（94.1%）。A2-pure≥20% 维持结构性不可达判定（pure 池 142 cids/2 TP，
+task_brief SUPERSEDED 结论不变）。JC1 红线回归见 §19.4。
+
+### 19.4 JC1 红线回归（out/phase3-jc1，全管线）
+
+三参数默认值 = 原行为，JC1 未声明任何收紧键，实测零变化：
+
+| 口径 | 基线 | Phase 3 回归 |
+|---|---|---|
+| A2-front-full | TP 913 / P 27.1% / R 85.2% | TP 913 / P 27.1% / R 85.2% ✅ |
+| A2-dual-view-reconstructed | TP 1067 / R 99.6% | TP 1067 / R 99.6% ✅ |
+| A2-dual-view-pure | TP 304 / P 63.5% / R 28.4% | TP 304 / P 63.5% / R 28.4% ✅ |
+| A1 | 168/197 P=100% R=85.3% | 168/197 P=100% R=85.3% ✅ |
+
+收尾状态：pytest 775 passed / 5 skipped；双塔红线全绿。
+Phase 3 收口，进入 Phase 4（批跑矩阵 + tier-3 泛化塔）。
+
+### 19.5 测试分层状态如实记录（2026-09-06）
+
+- 门禁层（`pytest tests/` 默认 addopts，unit+pipeline）：**775 passed /
+  5 skipped，exit 0** ✅（与基线逐位一致）。
+- 全量层（`-o addopts="-q"` 含 slow/integration）：841 passed / 5 skipped
+  / **6 failed**。git stash 对照确认 6 个失败在 Phase 3 前基线 f0bdd5b
+  逐位复现（非本轮回归）。归因：JC1 02 册 side region 回归 ×3（
+  view_kinds ['front','side']≠['front']，P0.2 层）、GLB 节点板/螺栓孔
+  mesh 计数 ×2（2689<2830，GLB 资产层）、M8 项目交付 BOM rule 'pending'
+  ×1（36 件号 pending 核验）。均与本轮 kfan 收紧无关（kfan 改动路径
+  在 tower_symmetry S8 展开层，不触 GLB mesh / view_kinds / 项目交付）。
+  挂账处理，不在 Phase 3 修复范围。

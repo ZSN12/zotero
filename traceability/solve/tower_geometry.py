@@ -1513,6 +1513,9 @@ def complete_k_fan_braces(
     id_prefix: str = "kfan",
     twist_height_hints: Optional[Sequence[float]] = None,
     twist_z_max_mm: float = 29500.0,
+    twist_completion: bool = True,
+    spoke_depth_max_mm: Optional[float] = None,
+    xpanel_depth_max_mm: Optional[float] = None,
 ) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
     """S8：塔身 K-fan 辐条补全（评分制，证据门控）。
 
@@ -1590,9 +1593,13 @@ def complete_k_fan_braces(
         wj = float(half_width_fn(zj))
         if wj <= 0:
             continue
-        # 目标层 = 1000 倍数格点，深度 [depth_min, depth_max]
+        # 目标层 = 1000 倍数格点，深度 [depth_min, depth_max]。
+        # P3（2026-09-06 ZC1 FP 治理）：spoke_depth_max_mm 可把辐条
+        # 深度窗口按塔型收紧（ZC1 真实节拍 ≤2500mm；默认 None =
+        # depth_max_mm 历史行为，JC1 深面板不受影响）。
+        spoke_dmax = float(spoke_depth_max_mm) if spoke_depth_max_mm is not None else depth_max_mm
         zt = float(int((zj - depth_min_mm) // spoke_step_mm) * int(spoke_step_mm))
-        while zt >= zj - depth_max_mm and zt >= min_target_z_mm:
+        while zt >= zj - spoke_dmax and zt >= min_target_z_mm:
             if pair_count.get((round(zj), round(zt)), 0) < full_spokes:
                 wt = float(half_width_fn(zt))
                 if wt > 0:
@@ -1639,8 +1646,12 @@ def complete_k_fan_braces(
         wj = float(half_width_fn(zj))
         if wj <= 0:
             continue
+        # P3（2026-09-06 ZC1 FP 治理）：xpanel（S8.2 X 交叉）深度窗口
+        # 同 spoke 收紧语义——该循环生成的是 junction 桥接 X 面板，
+        # ZC1 离线实测深桥接 100% FP（无 TP），收紧后 TP 不变。
+        xp_dmax = float(xpanel_depth_max_mm) if xpanel_depth_max_mm is not None else depth_max_mm
         zt = float(int((zj - depth_min_mm) // spoke_step_mm) * int(spoke_step_mm))
-        while zt >= zj - depth_max_mm and zt >= min_target_z_mm:
+        while zt >= zj - xp_dmax and zt >= min_target_z_mm:
             wt = float(half_width_fn(zt))
             if wt > 0:
                 for (x, y) in ((wj, wj), (wj, -wj), (-wj, wj), (-wj, -wj)):
@@ -1657,6 +1668,9 @@ def complete_k_fan_braces(
     # 网格层（深度 2000-3500）张 X 交叉（leg+diag+depth）。扭结层
     # 层位从模型既有角点节点 z 轨迹簇（≥4 角点）推导——真实提取
     # 证据，非 GT 注入。实测（离线原型）：dual full TP 799→847（+48）。
+    # P3（2026-09-06 ZC1 FP 治理）：twist_completion=False 整段关闭
+    # （ZC1 角点轨迹簇不在其真实节拍上，840 杆全深桥接 FP；JC1
+    # 层对是真实扭结结构，默认 True 不变）。
     twist_min_nodes = 4
     twist_depth_lo, twist_depth_hi = 2000.0, 3500.0
     # P1 修复（2026-09-05）：塔专属上界参数化（默认 = JC1 实测 29500，
@@ -1665,7 +1679,7 @@ def complete_k_fan_braces(
     twist_z_max = float(twist_z_max_mm)
     _corner_z: Dict[int, int] = {}
     for nid_, p in nodes.items():
-        if _is_corner(p):
+        if _is_corner(p) and twist_completion:
             zk = int(round(float(p[2])))
             _corner_z[zk] = _corner_z.get(zk, 0) + 1
     _tz_sorted = sorted(_corner_z)
@@ -1692,7 +1706,7 @@ def complete_k_fan_braces(
     # 取 ±500 内加权质心（单层）；对「目标层」（扭结 X 的下端）保留
     # 两簇各自质心（GT 实测 14400/14500 双层紧邻目标——证据簇的分裂
     # 恰对应物理双层）。
-    if twist_height_hints:
+    if twist_height_hints and twist_completion:
         _hints = sorted(float(z) for z in twist_height_hints)
         # 目标层：±150 内合并，否则独立保留
         for hz in _hints:
@@ -1744,7 +1758,7 @@ def complete_k_fan_braces(
         if za != float(zs) and abs(za - float(zs)) <= 500.0:
             _anchor_set.add(float(za))
     _twist_only_tgt = [z for z in _tgt_grid if z in {float(t) for t in _twist_levels}]
-    for ztw in list(_twist_src) + sorted(_anchor_set):
+    for ztw in (list(_twist_src) + sorted(_anchor_set)) if twist_completion else []:
         # 网格锚伴生源（_anchor_set）按定义落在网格上，跳过网格排除，
         # 否则永不生成；junction 排除仍生效（kfan 已覆盖 junction 源）。
         # 锚源只朝扭结簇目标（证据层位）生成——网格目标由 kfan/junction

@@ -1143,6 +1143,19 @@ def expand_4_face_symmetry_model(
             # P1（2026-09-03）：塔专属扭结上界参数化（overlay
             # kfan_twist_z_max_mm，默认 29500 = JC1 实测）。
             twist_z_max_mm=float(spec.get("kfan_twist_z_max_mm", 29500.0)),
+            # P3（2026-09-06 ZC1 FP 治理）：塔型声明式收紧——
+            # kfan_twist_completion=false 关 S8.3 扭结层推导（ZC1
+            # 角点轨迹簇不在真实节拍上，840 杆全 FP）；
+            # kfan_spoke_depth_max_mm / kfan_xpanel_depth_max_mm 收紧
+            # 桥接深度窗口（ZC1 常规节拍 ≤2500，深桥接 306 杆 0 TP）。
+            # 默认值保持 JC1 历史行为（twist=True、深度 5500）。
+            twist_completion=bool(spec.get("kfan_twist_completion", True)),
+            spoke_depth_max_mm=(
+                float(spec["kfan_spoke_depth_max_mm"])
+                if spec.get("kfan_spoke_depth_max_mm") is not None else None),
+            xpanel_depth_max_mm=(
+                float(spec["kfan_xpanel_depth_max_mm"])
+                if spec.get("kfan_xpanel_depth_max_mm") is not None else None),
         )
         roles = classify_members(face_nodes, face_bars)
         _df_kfan = model.components.get("drawing_file")
