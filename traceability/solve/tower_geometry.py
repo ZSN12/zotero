@@ -4195,6 +4195,8 @@ def stitch_collinear_bars(
     target_len_mm: float = 2018.0,
     skip_corner_leg: bool = True,
     max_single_len_mm: float = 0.0,
+    max_single_exempt_roles: Optional[Sequence[str]] = None,
+    max_single_exempt_origins: Optional[Sequence[str]] = None,
     role_specific: bool = False,
     panel_levels: Optional[Sequence[float]] = None,
     platform_tol_mm: float = 80.0,
@@ -4283,7 +4285,27 @@ def stitch_collinear_bars(
         # 中长杆（如 1100~1500mm）往往单独就能命中 GT（500mm 容差），把它
         # 与短残段并成 ~2000mm 合成杆反而毁掉已有匹配（TP@500 208→188）。
         # 只允许「短残段」（< max_single_len_mm）参与拼接；0 = 不设限。
-        if max_single_len_mm > 0 and _dist3(a, c) >= max_single_len_mm:
+        # max_single_exempt_roles/origins（2026-09-06 断裂对治理）：豁免
+        # = 已配置的每个维度都命中。离线归因：165 纯口径 FP 里 8 对共线
+        # 断裂对全部卡在单段 >800（塔身斜材 GT 杆长中位 2005，800 门禁
+        # 对 DIAG 域系统性过紧）。但「按角色豁免」实测砸红线（union
+        # 1070→1056）：模板杆本身 role=DIAG（terminal_pair_gen 276 根 /
+        # panel_template_completion 944 根），豁免让整杆模板参与拼接、
+        # 吞掉 tps@22800_24000 的 16 根 GT 匹配杆。修正：豁免必须叠加
+        # 图纸证据来源白名单（dxf_geom/diag_synth/diag_complete——
+        # 8 对断裂对全部来自这些来源），模板/参数化来源维持 800 门禁，
+        # 它们本来就是整杆、没有「断裂碎片」语义。
+        _role_u = str(b.get("role") or "").upper()
+        _origin_u = str(b.get("geometry_origin") or "dxf_geom")
+        _exempt = False
+        if max_single_exempt_roles or max_single_exempt_origins:
+            _exempt = True
+            if max_single_exempt_roles and _role_u not in max_single_exempt_roles:
+                _exempt = False
+            if max_single_exempt_origins and _origin_u not in max_single_exempt_origins:
+                _exempt = False
+        if (max_single_len_mm > 0 and not _exempt
+                and _dist3(a, c) >= max_single_len_mm):
             skipped["long_single"] = skipped.get("long_single", 0) + 1
             continue
         cand[bid] = (a, c, dict(b))

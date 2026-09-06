@@ -185,7 +185,7 @@ def main() -> int:
                         help="几何提取后端：ezdxf（默认）/ hybrid（Kimi MLLM Agent 链）")
     parser.add_argument("--gt-align", action="store_true",
                         help="GT 权威拓扑对齐：用 .mod/.NODE 的 358 节点 + 1071 杆拓扑"
-                             "重建 M3 骨架，使召回对齐 GT（100%）。默认关闭（纯 DXF 语义）。")
+                             "重建 M3 骨架，使召回对齐 GT（100%%）。默认关闭（纯 DXF 语义）。")
     parser.add_argument("--profile", choices=["canonical_assisted", "production_dxf"],
                         default="canonical_assisted",
                         help="P0.4 口径 profile：canonical_assisted（默认，研究对照，"

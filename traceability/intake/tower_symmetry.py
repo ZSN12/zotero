@@ -1604,6 +1604,17 @@ def expand_4_face_symmetry_model(
             max_merged_len_mm=float(spec.get("collinear_stitch_max_len_mm", 4500.0)),
             max_segments=int(spec.get("collinear_stitch_max_segments", 2)),
             max_single_len_mm=float(spec.get("collinear_stitch_max_single_len_mm", 0.0)),
+            max_single_exempt_roles=[
+                str(r).upper() for r in (
+                    spec.get("collinear_stitch_max_single_exempt_roles") or [])
+            ] or None,
+            # 2026-09-06 断裂对治理修正：角色豁免须叠加来源白名单——
+            # 模板杆（terminal_pair_gen/panel_template_completion）role
+            # 也是 DIAG，纯角色豁免让整杆模板参与拼接（union 1070→1056）。
+            max_single_exempt_origins=[
+                str(o) for o in (
+                    spec.get("collinear_stitch_max_single_exempt_origins") or [])
+            ] or None,
             role_specific=bool(spec.get("collinear_stitch_role_specific", True)),
             # P3.19（ZC1）：多册同段图纸放开跨册 DIAG 拼接
             # （cross_sheet_diagonal_stitch=true 时同段跨册碎段可拼回整杆）。
