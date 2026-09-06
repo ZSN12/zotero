@@ -1365,13 +1365,18 @@ def merge_view_bars(
                 _fr_nodes, _fr_bars, method="taper")
     except Exception:
         _hw_freeze = None
+    _side_funnel = {"side_bars_seen": 0, "nodes_missing": 0, "zy_unsolved": 0,
+                    "frozen": 0, "x_face_plane": 0, "hw_unavailable": 0}
+
     for _cid, _c in model.components.items():
         if _c.kind != "tower_bar" or _c.properties.get("view_type") != "side":
             continue
+        _side_funnel["side_bars_seen"] += 1
         _fn, _tn = _c.properties.get("from_node"), _c.properties.get("to_node")
         _nf = model.components.get(_fn) if _fn else None
         _nt = model.components.get(_tn) if _tn else None
         if _nf is None or _nt is None or _nf is _nt:
+            _side_funnel["nodes_missing"] += 1
             continue
         _pf, _pt = _nf.properties, _nt.properties
         # P2.4b-2：未配对 side 节点的视图域求解（本地计算，零共享态修改）。
@@ -1397,6 +1402,7 @@ def merge_view_bars(
                 break
             _zys.append((_yy, _zz))
         if _zys is None:
+            _side_funnel["zy_unsolved"] += 1
             continue
         # P2.4b-3：z 端点层位吸附（z-only 设计常数，同 marker_synth 纪律）。
         # 实测（02 册）：配对平均 z 落在 GT 层位中间（如 34452 介于 34200/
@@ -1423,15 +1429,20 @@ def merge_view_bars(
             any(abs(_z2 - v) < 1e-6 for v in _lv))
         if _x1 is None or _x2 is None:
             if _hw_freeze is None:
+                _side_funnel["hw_unavailable"] += 1
                 continue
             try:
                 _h1, _h2 = float(_hw_freeze(_z1)), float(_hw_freeze(_z2))
             except Exception:
+                _side_funnel["hw_unavailable"] += 1
                 continue
             if _h1 < 50 or _h2 < 50:
+                _side_funnel["hw_unavailable"] += 1
                 continue
             _x1, _x2 = -_h1, -_h2
             _x_src = "face_plane"
+            _side_funnel["x_face_plane"] += 1
+        _side_funnel["frozen"] += 1
         _side_reads.append({
             "from": [round(float(_x1), 2), round(_y1, 2), round(_z1, 2)],
             "to": [round(float(_x2), 2), round(_y2, 2), round(_z2, 2)],
@@ -1453,6 +1464,10 @@ def merge_view_bars(
             _dfz.properties["side_reads"] = _side_reads
             _dfz.properties["side_reads_n"] = len(_side_reads)
             _dfz.properties["side_reads_hw_fit"] = _hw_freeze is not None
+            # 漏斗观测（P2.4b 通道审计）：提取到的 side 杆 → 冻结各环节
+            # 的拒绝计数。侧立面直读是 l/r 面杆唯一诚实 recognized 通道，
+            # 漏斗断点数据决定下一个覆盖杠杆修哪一环。
+            _dfz.properties["side_reads_funnel"] = _side_funnel
 
     # P2-6 跨视图身份：删除非主视图投影前，把它们的二维投影来源挂到主物理杆件。
     # 严禁静默丢弃 side/plan/detail 投影——每条投影必须要么挂到匹配的主杆件
