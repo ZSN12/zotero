@@ -1978,6 +1978,47 @@ def complete_head_panel_chain(
     for nid, p in nodes.items():
         _by_z.setdefault(round(float(p[2])), []).append((nid, p))
 
+    # 证据覆盖门（见下）：既有非模板杆的空间索引（中点网格哈希）。
+    _evid_grid: Dict[Tuple[int, int, int], List[Tuple[Vec3, Vec3]]] = defaultdict(list)
+    for _b in bars:
+        if bool(_b.get("panel_template_completion")):
+            continue
+        _f = nodes.get(_b.get("from"))
+        _t = nodes.get(_b.get("to"))
+        if _f is None or _t is None:
+            continue
+        fa = (float(_f[0]), float(_f[1]), float(_f[2]))
+        ta = (float(_t[0]), float(_t[1]), float(_t[2]))
+        _evid_grid[(round(((fa[0] + ta[0]) / 2) / 500),
+                    round(((fa[1] + ta[1]) / 2) / 500),
+                    round(((fa[2] + ta[2]) / 2) / 800))].append((fa, ta))
+
+    def seg_seg_distance(
+        p1: Tuple[float, float, float], p2: Tuple[float, float, float],
+        q1: Tuple[float, float, float], q2: Tuple[float, float, float],
+    ) -> float:
+        d1 = tuple(p2[i] - p1[i] for i in range(3))
+        d2 = tuple(q2[i] - q1[i] for i in range(3))
+        r = tuple(p1[i] - q1[i] for i in range(3))
+        a = sum(x * x for x in d1)
+        e = sum(x * x for x in d2)
+        f_ = sum(x * y for x, y in zip(r, d2))
+        c_ = sum(x * y for x, y in zip(r, d1))
+        b_ = sum(x * y for x, y in zip(d1, d2))
+        denom = a * e - b_ * b_
+        if denom:
+            s = max(0.0, min(1.0, (b_ * f_ - c_ * e) / denom))
+            t = max(0.0, min(1.0, (a * f_ - b_ * c_) / denom))
+            s = max(0.0, min(1.0, (b_ * t - c_) / a)) if a else 0.0
+            t = max(0.0, min(1.0, (b_ * s + f_) / e)) if e else 0.0
+        else:
+            s = 0.0
+            t = max(0.0, min(1.0, f_ / e)) if e else 0.0
+        cp1 = tuple(p1[i] + d1[i] * s for i in range(3))
+        cp2 = tuple(q1[i] + d2[i] * t for i in range(3))
+        return sum((cp1[i] - cp2[i]) ** 2 for i in range(3)) ** 0.5
+
+
     def _mk(x: float, y: float, z: float) -> str:
         for zk in (round(z), round(z - 1), round(z + 1)):
             for nid, p in _by_z.get(zk, ()):
@@ -1993,6 +2034,55 @@ def complete_head_panel_chain(
 
     n_gen = 0
     n_panels = 0
+
+    # 证据覆盖门（2026-09-05，FP 治理）：候选杆若被既有**非模板**杆
+    # 完整覆盖——共线 |cos|>=0.985、段距 <=150mm、既有杆更长或等长
+    # （len>=1.0×）且轴向覆盖 >=95%——则跳过生成（证据杆已在同一
+    # 物理位置，模板副本在 1:1 匹配下只是 FP）。离线扫参
+    # （tol=500mm）：headx FP 2694→2654（-40）而 front TP 919 与
+    # dual 并集 1069 均不降；放宽（cos 0.985/len<1.0）或推广到
+    # 全部模板杆会各丢 2-23 TP（模板 TP 杆被证据杆「部分覆盖」时
+    # 反而是唯一命中者）——阈值按零损失点取。
+    def _unit2(v):
+        n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) ** 0.5
+        return (v[0] / n, v[1] / n, v[2] / n) if n > 1e-9 else None
+
+    def _covered(f: Tuple[float, float, float],
+                 t: Tuple[float, float, float]) -> bool:
+        d1 = (t[0] - f[0], t[1] - f[1], t[2] - f[2])
+        u1 = _unit2(d1)
+        if not u1:
+            return False
+        l1 = (d1[0] ** 2 + d1[1] ** 2 + d1[2] ** 2) ** 0.5
+        kx = round(((f[0] + t[0]) / 2) / 500)
+        ky = round(((f[1] + t[1]) / 2) / 500)
+        kz = round(((f[2] + t[2]) / 2) / 800)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for eb in _evid_grid.get((kx + dx, ky + dy, kz + dz), ()):
+                        d2 = (eb[1][0] - eb[0][0], eb[1][1] - eb[0][1],
+                              eb[1][2] - eb[0][2])
+                        u2 = _unit2(d2)
+                        if not u2:
+                            continue
+                        if abs(sum(a * b for a, b in zip(u1, u2))) < 0.985:
+                            continue
+                        l2 = (d2[0] ** 2 + d2[1] ** 2 + d2[2] ** 2) ** 0.5
+                        if l2 < l1:
+                            continue
+                        lo = min(sum((eb[0][i] - f[i]) * u1[i] for i in range(3)),
+                                 sum((eb[1][i] - f[i]) * u1[i] for i in range(3)))
+                        hi = max(sum((eb[0][i] - f[i]) * u1[i] for i in range(3)),
+                                 sum((eb[1][i] - f[i]) * u1[i] for i in range(3)))
+                        ov = max(0.0, min(hi, l1) - max(lo, 0.0))
+                        if ov < 0.95 * l1:
+                            continue
+                        if seg_seg_distance(f, t, eb[0], eb[1]) > 150.0:
+                            continue
+                        return True
+        return False
+
     for i in range(len(filled) - 1):
         z1, z2 = filled[i], filled[i + 1]
         w1, w2 = float(half_width_fn(z1)), float(half_width_fn(z2))
@@ -2008,6 +2098,8 @@ def complete_head_panel_chain(
                 # 常数时，w1==w2 使 LEG 延续杆两端同点（JC2 实测 50 根
                 # 零长 4f_headx 杆导致 strict GLB 导出整体失败）。
                 if abs(t[0] - f[0]) + abs(t[1] - f[1]) + abs(t[2] - f[2]) < 50.0:
+                    continue
+                if _covered(f, t):
                     continue
                 counter["n"] += 1
                 n_gen += 1
@@ -6760,6 +6852,196 @@ def dedup_terminal_pair_bars(
         "removed_ids": removed_ids[:200],
         "tol_mm": tol_mm,
         "n_tps_before": len(tps_segs),
+        "n_bars_before": len(bars),
+        "n_bars_after": len(kept),
+    }
+
+
+def exact_overlap_dedup(
+    nodes: NodeMap,
+    bars: List[dict],
+    *,
+    dist_tol_mm: float = 10.0,
+    overlap_frac: float = 0.9,
+    cell_mm: float = 500.0,
+) -> Tuple[List[dict], Dict[str, Any]]:
+    """严格 3D 共线重叠杆去重（2026-09-05，FP 治理第二杠杆）。
+
+    背景：terminal_pair_dedup 只处理「tps 杆 vs 非 tps 杆」的重叠。
+    离线归因发现 full 池还有大量**跨过该门**的严格 3D 重复——共线
+    （|cos|>=0.999）、段距 <=10mm、轴向重叠 >=90% 短杆——同一物理杆
+    被两个生成器各放一份（实测 4284 对：panel_template×leg_synth 535、
+    panel_template×terminal_pair 411、leg_synth×terminal_pair 314 等）。
+    这些副本在 1:1 匹配下最多贡献 1 个 TP，其余全计 FP（离线模拟：
+    同 GT 簇零风险删 684 杆，front full P 25.4%→31.3%，R 不降）。
+
+    规则（纯几何，无 GT 耦合）：union-find 聚类严格重复对，每簇按
+    证据优先级保 1 根（dxf_geom > marker/leg/diag synth > 模板/参数
+    生成——识别证据优先于合成）。
+
+    tps 杆不在此处理（dedup_terminal_pair_bars 的既有语义，
+    P3.5f 多子系统投影计数有意保留）。
+    """
+    import math as _m
+
+    def _seg(b: dict):
+        f = nodes.get(b.get("from"))
+        t = nodes.get(b.get("to"))
+        if f is None or t is None:
+            return None
+        return (
+            (float(f[0]), float(f[1]), float(f[2])),
+            (float(t[0]), float(t[1]), float(t[2])),
+        )
+
+    def _unit(v):
+        n = _m.dist(v, (0.0, 0.0, 0.0))
+        return (v[0] / n, v[1] / n, v[2] / n) if n > 1e-9 else None
+
+    def _seg_dist(p1, p2, q1, q2):
+        d1 = tuple(p2[i] - p1[i] for i in range(3))
+        d2 = tuple(q2[i] - q1[i] for i in range(3))
+        r = tuple(p1[i] - q1[i] for i in range(3))
+        a = sum(x * x for x in d1)
+        e = sum(x * x for x in d2)
+        f_ = sum(x * y for x, y in zip(r, d2))
+        c_ = sum(x * y for x, y in zip(r, d1))
+        b_ = sum(x * y for x, y in zip(d1, d2))
+        denom = a * e - b_ * b_
+        if denom:
+            s = max(0.0, min(1.0, (b_ * f_ - c_ * e) / denom))
+            t = max(0.0, min(1.0, (a * f_ - b_ * c_) / denom))
+            s = max(0.0, min(1.0, (b_ * t - c_) / a)) if a else 0.0
+            t = max(0.0, min(1.0, (b_ * s + f_) / e)) if e else 0.0
+        else:
+            s = 0.0
+            t = max(0.0, min(1.0, f_ / e)) if e else 0.0
+        cp1 = tuple(p1[i] + d1[i] * s for i in range(3))
+        cp2 = tuple(q1[i] + d2[i] * t for i in range(3))
+        return _m.dist(cp1, cp2)
+
+    def _dup(a, b) -> bool:
+        sa, sb = a[1], b[1]
+        d1 = tuple(sa[1][i] - sa[0][i] for i in range(3))
+        d2 = tuple(sb[1][i] - sb[0][i] for i in range(3))
+        u1, u2 = _unit(d1), _unit(d2)
+        if not u1 or not u2:
+            return False
+        if abs(sum(x * y for x, y in zip(u1, u2))) < 0.999:
+            return False
+        if _seg_dist(sa[0], sa[1], sb[0], sb[1]) > dist_tol_mm:
+            return False
+        lo = min(sum((sb[0][i] - sa[0][i]) * u1[i] for i in range(3)),
+                 sum((sb[1][i] - sa[0][i]) * u1[i] for i in range(3)))
+        hi = max(sum((sb[0][i] - sa[0][i]) * u1[i] for i in range(3)),
+                 sum((sb[1][i] - sa[0][i]) * u1[i] for i in range(3)))
+        l1 = _m.dist(sa[0], sa[1])
+        l2 = _m.dist(sb[0], sb[1])
+        ov = max(0.0, min(hi, l1) - max(lo, 0.0))
+        return ov >= overlap_frac * min(l1, l2)
+
+    origin_rank = {
+        "dxf_geom": 0, "marker_synth": 1, "diag_synth": 2, "leg_synth": 3,
+        "diag_complete": 4, "leg_chain_stitch": 5, "boundary_leg_bridge": 6,
+        "diaphragm_reconstructed": 7, "terminal_pair_gen": 8,
+        "derived_parametric_base": 9, "panel_template_completion": 10,
+        "crossarm_truss_completion": 11,
+    }
+
+    segs: List[Tuple[int, Tuple]] = []
+    for idx, b in enumerate(bars):
+        if bool(b.get("terminal_pair_structure")):
+            continue  # 既有 tps 语义不重复处理
+        seg = _seg(b)
+        if seg is None:
+            continue
+        segs.append((idx, seg))
+    if not segs:
+        return bars, {"removed": 0, "n_dup_pairs": 0}
+
+    grid: Dict[Tuple[int, int, int], List[Tuple[int, Tuple]]] = defaultdict(list)
+    for item in segs:
+        mx = (item[1][0][0] + item[1][1][0]) / 2.0
+        my = (item[1][0][1] + item[1][1][1]) / 2.0
+        mz = (item[1][0][2] + item[1][1][2]) / 2.0
+        grid[(round(mx / cell_mm), round(my / cell_mm),
+              round(mz / cell_mm))].append(item)
+
+    parent: Dict[int, int] = {}
+
+    def find(x: int) -> int:
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+
+    def union(x: int, y: int) -> None:
+        parent[find(x)] = find(y)
+
+    n_pairs = 0
+    for key, items in grid.items():
+        kx, ky, kz = key
+        for i, a in enumerate(items):
+            for b in items[i + 1:]:
+                if _dup(a, b):
+                    union(a[0], b[0])
+                    n_pairs += 1
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        if dx == dy == dz == 0:
+                            continue
+                        for b in grid.get((kx + dx, ky + dy, kz + dz), ()):
+                            if _dup(a, b):
+                                union(a[0], b[0])
+                                n_pairs += 1
+
+    clusters: Dict[int, List[Tuple[int, Tuple]]] = defaultdict(list)
+    for item in segs:
+        clusters[find(item[0])].append(item)
+
+    # 首跑教训（2026-09-05）：全簇保 1 删余 1052 杆后 TP 920→823——
+    # 链式传递把「同 3D 轴线上的不同物理杆」（不同节点对，1:1 匹配下
+    # 各自独立 TP）也并进一簇。生产不可知匹配结果，只能以**节点对**
+    # 为重复的判据：簇内仅当存在一个多数节点对（出现 ≥ 簇半数）时才
+    # 视为同一物理杆的多重放置，保留证据最优的一根、删同节点对副本；
+    # 无多数节点对（投影重影/串联）的簇整簇保留（宁多勿丢 R）。
+    removed_set: set = set()
+    removed_ids: List[str] = []
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        pair_counts: Dict[Tuple[str, str], int] = defaultdict(int)
+        for it in members:
+            b = bars[it[0]]
+            pair_counts[(str(b.get("from")), str(b.get("to")))] += 1
+        majority_pair, majority_n = max(
+            pair_counts.items(), key=lambda kv: kv[1])
+        if majority_n * 2 < len(members) or majority_n < 2:
+            continue  # 无多数节点对 → 不同物理杆，整簇保留
+        candidates = [it for it in members
+                      if (str(bars[it[0]].get("from")),
+                          str(bars[it[0]].get("to"))) == majority_pair]
+        keep = min(
+            candidates,
+            key=lambda it: (
+                origin_rank.get(
+                    str(bars[it[0]].get("geometry_origin") or ""), 99),
+                str(bars[it[0]].get("id") or ""),
+            ),
+        )
+        for it in candidates:
+            if it[0] != keep[0]:
+                removed_set.add(it[0])
+                removed_ids.append(str(bars[it[0]].get("id")))
+
+    kept = [b for i, b in enumerate(bars) if i not in removed_set]
+    return kept, {
+        "removed": len(removed_ids),
+        "removed_ids": removed_ids[:200],
+        "n_dup_pairs": n_pairs,
+        "dist_tol_mm": dist_tol_mm,
+        "overlap_frac": overlap_frac,
         "n_bars_before": len(bars),
         "n_bars_after": len(kept),
     }

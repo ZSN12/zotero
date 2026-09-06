@@ -1785,6 +1785,27 @@ def expand_4_face_symmetry_model(
         if _df_td is not None:
             _df_td.properties["terminal_pair_dedup"] = _tdedup_rep
 
+    # P0 第二杠杆（2026-09-05，FP 治理）：严格 3D 共线重叠去重——
+    # terminal_pair_dedup 只删 tps×非tps 重复，离线归因发现还有大量
+    # 跨生成器的严格重复（共线 ≥0.999、段距 ≤10mm、重叠 ≥90%）：
+    # panel_template×leg_synth 535 对、panel_template×terminal_pair 411、
+    # leg_synth×terminal_pair 314 等。每簇按证据优先级保 1 根
+    # （识别来源 > 合成 > 模板）。纯几何规则，无 GT 耦合；离线模拟
+    # 同 GT 簇删 684 杆 front full P 25.4%→31.3% 且 R 不降。
+    # 运行时真值以 drawing_file.exact_overlap_dedup 报告为准。
+    if bool(spec.get("exact_overlap_dedup", True)):
+        from ..solve.tower_geometry import exact_overlap_dedup
+        face_bars, _ededup_rep = exact_overlap_dedup(
+            face_nodes, face_bars,
+            dist_tol_mm=float(spec.get("exact_overlap_dedup_dist_mm", 10.0)),
+            overlap_frac=float(spec.get("exact_overlap_dedup_overlap", 0.9)),
+        )
+        if _ededup_rep.get("removed"):
+            roles = classify_members(face_nodes, face_bars)
+        _df_ed = model.components.get("drawing_file")
+        if _df_ed is not None:
+            _df_ed.properties["exact_overlap_dedup"] = _ededup_rep
+
     # Phase 3：门禁度量「交付几何」——全部几何变换（展开/拼接/修复）之后
     # 用同一 half_width_fn 终算 topology（half_width_fn 在本作用域仍可用，
     # baseline_report 事后无法复现的问题不适用此处）。
