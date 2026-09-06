@@ -234,6 +234,9 @@ def merge_cross_file_views(
     # observations 普查与 drawing_file→dim 观测的 DAG 边全部丢失，
     # 最终 model.json 只剩 tower_symmetry 后写的 hypotheses。
     _ev_census: Dict[str, Dict[str, int]] = {}
+    # S1c（2026-09-06）：per-sheet 件号登记簿跨册聚合（见下方 df 循环）。
+    _merged_orphans: List[str] = []
+    _merged_tbl: Dict[str, dict] = {}
 
     for model in models:
         stem = _model_stem(model) or model.name
@@ -256,6 +259,21 @@ def merge_cross_file_views(
             # P0-2：evidence_layer 普查跨册累加（observations/hypotheses
             # 各子键计数求和；hypotheses 后面由 tower_symmetry 重写最终值）
             _el = df.properties.get("evidence_layer") or {}
+            # S1c（2026-09-06）：per-sheet 件号登记簿跨册聚合——sheet 级
+            # 提取的 orphan_label_ids（材料表件号列/短斜材过滤等）此前
+            # 在合并丢弃（合并只透传节拍锚点与普查），最终模型的 A1
+            # 预测集少了 sheet 级证据。展开层登记簿（tower_symmetry）
+            # 是「合并到 df 原值再追加」，此处聚合后语义不变。
+            _orph = [str(x) for x in (df.properties.get("orphan_label_ids") or [])]
+            for _lab in _orph:
+                if _lab not in _merged_orphans:
+                    _merged_orphans.append(_lab)
+            _tbl_rep = df.properties.get("material_table_labels") or {}
+            if _tbl_rep.get("labels"):
+                _merged_tbl[stem] = {
+                    "labels": _tbl_rep.get("labels"),
+                    "columns": _tbl_rep.get("columns"),
+                }
             if isinstance(_el, dict):
                 for _k, _sub in _el.items():
                     if not isinstance(_sub, dict):
@@ -361,6 +379,11 @@ def merge_cross_file_views(
     if beat_by_sheet:
         # P2.1：各册 DIMENSION 节拍锚点（key = stem/drawing_view）
         _merged_df_props["dimension_beat_anchors_by_sheet"] = beat_by_sheet
+    if _merged_orphans:
+        # S1c：sheet 级件号登记簿（材料表件号列/短斜材过滤等）跨册聚合。
+        _merged_df_props["orphan_label_ids"] = _merged_orphans
+    if _merged_tbl:
+        _merged_df_props["material_table_labels_by_sheet"] = _merged_tbl
     if _ev_census:
         # P0-2：跨册聚合的证据层普查（observations 计数 + 早期
         # hypotheses 阶段值；tower_symmetry 稍后 merge 覆写最终值）

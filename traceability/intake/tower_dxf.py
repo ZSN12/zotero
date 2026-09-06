@@ -1303,6 +1303,76 @@ def _extract_bar_label(
     return label
 
 
+_TABLE_LABEL_COL_RE = re.compile(r"^\d{1,4}$")
+_TABLE_SECTION_COL_RE = re.compile(
+    r"^(Q\d{3}L\d+X\d+|Q\d{3}|L\d+X\d+|-\d+X\d+|\d?M\d+X\d+)")
+
+
+def _extract_material_table_labels(
+    texts: List[Dict],
+    used_texts: set,
+    exclude_tokens: Optional[set],
+    *,
+    min_column_size: int = 10,
+    section_neighbor_span: Tuple[float, float] = (5.0, 20.0),
+    section_match_ratio: float = 0.8,
+) -> dict:
+    """材料表件号列提取（S1c 2026-09-06）：纯图纸结构证据，不查 BOM。
+
+    判定规则（材料表「件号|截面|长度|数量」列布局）：
+        1. 候选 = 未被贴杆（used_texts 之外）的纯数字文字（1~4 位）；
+        2. 候选按 x 坐标聚簇（±3 图面单位）成列；
+        3. 列规模 >= min_column_size，且列右侧 section_neighbor_span 范围
+           内存在 >= 80% 规模的截面型号文字（Q345L70X5 / L40X3 / -6X260
+           / 1M16X40）——即「数字列 + 截面邻列」的表格结构；
+        4. 命中列的值经 _extract_bar_label 合法性核验（排除材质/螺栓/
+           图号片段），去重后返回。
+
+    返回 {"labels": [...], "columns": [{x, count}]}；无命中列时 labels 为空。
+    """
+    report: dict = {"labels": [], "columns": []}
+    candidates: List[Tuple[str, float, float]] = []
+    section_texts: List[Tuple[float, float]] = []
+    for ti, t in enumerate(texts):
+        raw = str(t.get("text") or "").strip()
+        tx, ty = t["insert"]
+        if ti in used_texts:
+            continue
+        if _TABLE_LABEL_COL_RE.match(raw):
+            candidates.append((raw, tx, ty))
+        elif _TABLE_SECTION_COL_RE.match(raw):
+            section_texts.append((tx, ty))
+    if len(candidates) < min_column_size:
+        return report
+
+    # x 聚簇成列（±3 单位）
+    xs = sorted({round(c[1]) for c in candidates})
+    clusters: List[List[int]] = []
+    for x in xs:
+        if clusters and x - clusters[-1][-1] <= 3:
+            clusters[-1].append(x)
+        else:
+            clusters.append([x])
+
+    labels: List[str] = []
+    for cl in clusters:
+        cx = sum(cl) / len(cl)
+        col = [c for c in candidates if abs(c[1] - cx) < 4]
+        if len(col) < min_column_size:
+            continue
+        lo, hi = section_neighbor_span
+        sec_n = sum(1 for sx, _sy in section_texts if cx + lo < sx < cx + hi)
+        if sec_n < len(col) * section_match_ratio:
+            continue
+        report["columns"].append({"x": round(cx, 1), "count": len(col)})
+        for raw, _tx, _ty in col:
+            lab = _extract_bar_label(raw, _compile_bar_id_re(), exclude_tokens)
+            if lab and lab not in labels:
+                labels.append(lab)
+    report["labels"] = labels
+    return report
+
+
 def _extract_section_label(text: str) -> Optional[str]:
     """从一条 TEXT/MTEXT 中提取截面型号（L40X3 / Q345L63X5 / -6X101 等）。
 
@@ -2264,10 +2334,31 @@ def extract_tower_from_dxf(
     # ---- 6) DIMENSION → measured Dimension（B4）----
     _add_dimensions_from_dxf_entities(model, msp, lm, dxf_path, bar_id_re)
 
+    # ---- 6b) 材料表件号列提取（S1c 2026-09-06）----
+    # 国网总装图的材料表（图纸右侧表格）里每行都有件号文字，但离塔身杆件
+    # 远超 TEXT_SNAP，贴不上任何杆——这些文字此前随空间关联静默丢弃。
+    # 纯图纸结构证据判定（不查 BOM）：数字文字按 x 聚簇成列，列右侧
+    # 8~20 图面单位内存在同规模的截面型号列（Q345L70X5 / L40X3 /
+    # -6X260），即材料表「件号|截面|长度|数量」的列布局。命中列的
+    # 未关联件号收进 orphan_label_ids 登记簿（几何不动、不贴杆），
+    # 与短斜材过滤/边界缝合的登记簿同语义：几何清噪，A1 证据不丢。
+    # 实测（35A1-JC1 纯矢量）：02 册 101-104/127-149、04 册 303/335/
+    # 337/672/871/953、05 册 402 等件号仅在材料表出现（立面上无标注）。
+    table_label_report = _extract_material_table_labels(
+        texts, used_texts, designation_tokens)
+    df = model.components["drawing_file"]
+    if table_label_report["labels"]:
+        existing_orphans = [
+            str(x) for x in (df.properties.get("orphan_label_ids") or [])]
+        for _lab in table_label_report["labels"]:
+            if _lab not in existing_orphans:
+                existing_orphans.append(_lab)
+        df.properties["orphan_label_ids"] = existing_orphans
+        df.properties["material_table_labels"] = table_label_report
+
     # 解析率统计（不改变对象语义，写入 drawing_file 供报告/CLI 使用）
     bars = [c for c in model.components.values() if c.kind == "tower_bar"]
     labeled = [c for c in bars if not str(c.properties.get("bar_id", "")).startswith("UNLABELED")]
-    df = model.components["drawing_file"]
     df.properties["bar_count"] = len(bars)
     df.properties["labeled_count"] = len(labeled)
     df.properties["association_rate"] = round(len(labeled) / len(bars), 4) if bars else 0.0
