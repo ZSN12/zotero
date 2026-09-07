@@ -16,6 +16,9 @@
   1. ``ladder_from_sheet``：在 01-1 的 H 向 DIM 里找「阶梯列」——同 x 邻域、
      沿 y 等距堆叠、含大值（累计锚 ≥ 0.5×塔高量级）或节拍密集的列；
      产出（自底向上）节拍序列 beats 与累计结点 junctions（mm）。
+  1b. ``distributed_ladder``（35A1-ZC1 版式兜底）：01-1 无整塔阶梯时，
+     从各分段立面自带的段内阶梯列（首值=段高锚）重建——签名去重
+     重复视图后按册号序堆叠。
   2. ``sheet_segment_evidence``：对每张分段立面提取塔身区（长竖线腿对定界）
      的 h_draw/w_draw 与区内的横向大标注（≥2000mm，段定位指纹）。
   3. ``assign_z_chain``：把每张立面匹配到阶梯的相邻结点对 (z1, z2)——
@@ -346,6 +349,139 @@ def _beat_support(window: Tuple[float, float], ladder: Ladder,
     return support
 
 
+def _sheet_ladder_columns(dxf_path: str | Path,
+                          bar_layers: Optional[Sequence[str]] = None,
+                          ) -> List[List[float]]:
+    """分段立面内的全部 H 向阶梯列（按图面 y 自底向上，mm）。
+
+    35A1-ZC1 版式实测：每张分段立面左缘自带「段内阶梯列」——
+    最大值为段高锚（例：5400 + 900/900/800/700×4），相邻列节拍
+    错半位（800+1600×4+800），并集覆盖 GT 的半节拍层。
+
+    提取规则：H 向 DIM 按 x 容差切列，只留「格数 ≥ 2 且列和 ≥ 4000」
+    （段高量级）的列；列内按 y 升序原样累计（锚不特殊处理——04 页
+    实测锚 6500 在 y 序中段，累计口径与 GT 验证一致）。
+    """
+    import ezdxf
+
+    doc = ezdxf.readfile(str(dxf_path))
+    rows = [r for r in _dim_rows(doc)
+            if r[3] == "H" and r[0] >= _LADDER_BEAT_MIN_MM]
+    if not rows:
+        return []
+    rows.sort(key=lambda r: r[1])
+    atoms: List[List[Tuple[float, float, float, str]]] = [[rows[0]]]
+    for r in rows[1:]:
+        if r[1] - atoms[-1][-1][1] > _LADDER_SUBCOLUMN_TOL * 2:
+            atoms.append([r])
+        else:
+            atoms[-1].append(r)
+    cols = []
+    for a in atoms:
+        beats = [v for v, _x, _y, _o in sorted(a, key=lambda r: r[2])]
+        # 阶梯列判据：格数 ≥ 2 且列和达段高量级（07 半拍列 sum=4000 实测有效）
+        if len(beats) >= 2 and sum(beats) >= 4000:
+            cols.append(beats)
+    return cols
+
+
+@dataclass
+class SegmentLadder:
+    """一张分段立面的段内阶梯：锚 + 全列节拍并集结点（段内相对 z）。
+
+    junctions 是全部阶梯列（主列+半拍列）按图面 y 序累计的并集（含 0），
+    口径与 GT 验证一致（锚作为一格参与累计，不做特殊分离）。
+    """
+
+    stem: str
+    anchor_mm: float  # 段高锚（列内最大值）
+    beats: List[float]  # 主列节拍（签名去重用，不含锚）
+    junctions: List[float]  # 全列累计并集（含 0；可超过锚——错位列累计）
+    x_pos: float  # 主列 x（排序参考）
+
+
+def segment_ladders_from_sheets(
+    dxf_paths: Sequence[str | Path],
+    bar_layers: Optional[Sequence[str]] = None,
+    exclude_stems: Optional[Sequence[str]] = None,
+) -> List[SegmentLadder]:
+    """从各分段立面收集段内阶梯，签名去重重复视图（35A1-ZC1 版式）。
+
+    重复视图判据（无 GT）：锚值 + 节拍多重集完全相同（07/11、10/13
+    实测互为复制视图）。去重保留册号最小者。``exclude_stems`` 排除
+    索引图（01-1——它的分段高度标注不是阶梯列，实测会污染堆叠首段）。
+    """
+    skip = {Path(s).stem for s in (exclude_stems or [])}
+    segs: List[SegmentLadder] = []
+    seen: Dict[Tuple[float, Tuple[float, ...]], str] = {}
+    for p in sorted(dxf_paths):
+        stem = Path(p).stem
+        if stem in skip:
+            continue
+        cols = _sheet_ladder_columns(p, bar_layers)
+        if not cols:
+            continue
+        main = max(cols, key=lambda c: sum(c))
+        anchor = max(main)
+        beats = sorted(v for v in main if v != anchor)
+        jset = {0.0}
+        for c in cols:
+            acc = 0.0
+            for v in c:
+                acc += v
+                jset.add(round(acc, 1))
+        sig = (round(anchor, 1), tuple(round(b, 1) for b in beats))
+        dup = seen.get(sig)
+        if dup is not None:
+            continue  # 重复视图（同段另一面/复制图），不重复计入
+        seen[sig] = stem
+        segs.append(SegmentLadder(
+            stem=stem, anchor_mm=anchor, beats=beats,
+            junctions=sorted(jset), x_pos=0.0))
+    return segs
+
+
+def distributed_ladder(
+    dxf_paths: Sequence[str | Path],
+    bar_layers: Optional[Sequence[str]] = None,
+    ladder_sheet: Optional[str | Path] = None,
+) -> Optional[Ladder]:
+    """分散式整塔 z 链（35A1-ZC1 版式：01-1 无整塔阶梯的兜底）。
+
+    版式背景（2026-09-04 诊断实测定稿）：35A1-ZC1 的 01-1 是分段索引图
+    （H 向标注只有每站的接地节拍对与两个分段高度 4500/6400、4000/7000，
+    无整塔阶梯列）；阶梯证据分散在各分段立面自带的段内阶梯列。
+
+    重建规则（纯图纸，无 GT）：
+        1. 各页提取段内阶梯列（``_sheet_ladder_columns``）；
+        2. 节拍签名去重（锚+节拍多重集相同 = 重复视图，如 07/11）；
+        3. 剩余页按册号序自底向上堆叠（国网分段立面惯例），
+           段边界 = 锚前缀和，整塔 junctions = 各段全列节拍累计并集
+           （平移到绝对 z）。
+
+    已知限制（Phase 4 记录）：主链截止页无独立版面信号——当前取全部
+    去重后页面堆叠（35A1-ZC1 实测 9 页和 58800 超塔高），需配合
+    ``assign_z_chain`` 的段高互证约束裁剪；塔头细节页（09/12 等）
+    不分配 z 链。
+    """
+    segs = segment_ladders_from_sheets(
+        dxf_paths, bar_layers,
+        exclude_stems=[ladder_sheet] if ladder_sheet else None)
+    if len(segs) < 2:
+        return None
+    junctions = {0.0}
+    acc = 0.0
+    for s in segs:
+        # 段内 junctions（含 0）平移到绝对 z：先平移再加锚，
+        # 否则段自身的锚会被重复叠加
+        junctions.update(round(acc + j, 1) for j in s.junctions)
+        acc += s.anchor_mm
+        junctions.add(round(acc, 1))
+    js = sorted(j for j in junctions if j >= 0)
+    return Ladder(beats=[s.anchor_mm for s in segs],
+                  junctions=js, cum_anchors=[], source_stem="distributed")
+
+
 def assign_z_chain(
     dxf_paths: Sequence[str | Path],
     ladder_sheet: str | Path,
@@ -357,10 +493,28 @@ def assign_z_chain(
         1. 节拍指纹：sheet 塔身区横向大标注与阶梯节拍重合 → 支持分；
         2. 段高互证：窗口跨度 (z2-z1) 与 sheet 竖向大标注（自身段高）接近；
         3. 互斥约束：一张图一个窗口，多图抢同窗时高分胜出（塔身分段互斥）。
+
+    35A1-ZC1 版式兜底：``ladder_from_sheet`` 失败（01-1 无整塔阶梯）时
+    走 ``distributed_ladder``——各分段立面自带段内阶梯列直接堆叠，
+    跳过窗口匹配（每页的 z_offset/z_span 来自堆叠位置本身）。
     """
     ladder = ladder_from_sheet(ladder_sheet, bar_layers)
     if ladder is None or not ladder.junctions:
-        return {}
+        # 分散式兜底：阶梯在各分段立面里（排除索引图 ladder_sheet）
+        segs = segment_ladders_from_sheets(
+            dxf_paths, bar_layers, exclude_stems=[ladder_sheet])
+        if len(segs) < 2:
+            return {}
+        out: Dict[str, Dict[str, float]] = {}
+        acc = 0.0
+        for s in segs:
+            out[s.stem] = {
+                "z_offset": float(acc),
+                "z_span_mm": float(s.anchor_mm),
+                "match_score": 0.0,
+            }
+            acc += s.anchor_mm
+        return out
     windows = _junction_windows(ladder)
     if not windows:
         return {}
