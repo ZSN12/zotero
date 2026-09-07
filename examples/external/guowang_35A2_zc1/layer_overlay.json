@@ -839,6 +839,12 @@
    "leg": {
     "panel_dz_max_mm": 1000.0,
     "same_segment_dedup": true
+   },
+   "diaphragm_capacity": {
+    "origins": [
+     "diaphragm_reconstructed"
+    ],
+    "per_level_k": 5
    }
   }
  },

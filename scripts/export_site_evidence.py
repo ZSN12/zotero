@@ -35,7 +35,10 @@ TOWERS = {
         "demo_sheets": ["35A1-JC1-02", "35A1-JC1-04", "35A1-JC1-05", "35A1-JC1-06", "35A1-JC1-07"],
     },
     "35A2-ZC1": {
-        "model": "out/phase3-zc1/model.json",
+        # 阶段一-b（2026-09-07）：demo 证据源切到 full-deliver 主产物。
+        # 旧 phase3-zc1 是 R8 上线前的 1381 杆陈旧快照，与 trace/tower.glb
+        # （skeleton.glb 同步副本，448 杆）脱节——页面上点击一半的杆查不到血统。
+        "model": "out/35A2-ZC1-full-deliver/model.json",
         "overlay": "web/demo/35A2-ZC1/trace/overlay.json",
         "examples_overlay": "examples/external/guowang_35A2_zc1/layer_overlay.json",
         "out": "web/demo/35A2-ZC1/trace/evidence.json",

@@ -83,8 +83,12 @@
        d. 水平环槽位：孤儿槽 keep-K（环 multiplicity），候选密集时降 K。
        e. LEG 同段去重：同棱同 z 段（200mm 桶）第二份模板拷贝剪除；
           ``leg.panel_dz_max_mm`` 窗口外 panel 腿剪除。
-     实测（ZC1 离线复算，963 杆快照）：TP 256→251、FP 596→206、
-     P 30.0%→54.9%、R 89.8%→88.1%。默认关闭（JC1/JC2 零行为）。
+       f. ``diaphragm_capacity``：横隔层容量——名单 origin（横隔不参与
+          槽位竞争）同 level 层超过 ``per_level_k`` 时按 (tier, cid) 序
+          砍超额（ZC1 K=5：TP 251 零损失、FP 206→169、P 59.8%）。
+     实测（ZC1 离线复算，963 杆快照）：TP 256→251、FP 596→206→169、
+     P 30.0%→54.9%→59.8%、R 89.8%→88.1%（f 节后）。默认关闭（JC1/JC2
+     零行为）。
 
 铁律对齐：
   * 不读 GT、不读评测结果；只消费 model 组件属性 + overlay 配置 + BOM。
@@ -310,10 +314,16 @@ def apply_evidence_prune(
             (df.setdefault("properties", {})
              )["evidence_prune_report"] = {
                 k: v for k, v in report.items() if k != "removed_ids"}
+            # removed_ids 全量落盘（铁律「事后可审计」）；报告本体不带、
+            # 防 evidence_prune_report 体积翻倍（千根级全量 id 数组）。
+            df["properties"]["evidence_prune_removed_ids"] = report[
+                "removed_ids"]
             df["properties"]["evidence_prune_report"]["n_removed"] = len(remove)
         else:
             (df.properties or {})["evidence_prune_report"] = {
                 k: v for k, v in report.items() if k != "removed_ids"}
+            (df.properties or {})["evidence_prune_removed_ids"] = report[
+                "removed_ids"]
             df.properties["evidence_prune_report"]["n_removed"] = len(remove)
     return report
 
@@ -745,6 +755,34 @@ def _apply_panel_slot_nms(
             else:
                 seen.add(k2)
 
+    # f：横隔层容量（``diaphragm_capacity``）——非 mutex 家族的横隔杆
+    # （水平面内整环+辐条模板，diaphragm_reconstructed 等）不参与槽位
+    # 竞争，单独按层容量控制：同 level 层（层表 snap）内该名单 origin
+    # 的杆超过 ``per_level_k`` 时按 (tier, cid) 序砍超额。离线标定
+    # （ZC1，486 交付集再剪）：K=5 → TP 251 零损失、FP 206→169、
+    # P 54.9%→59.8%、R 88.1% 不变（GT 同层横隔真实数 8~14 根中模板
+    # TP 只 8 根——48 根/2 层全构型×4 面展开明显冗余）。
+    n_dia_cap = 0
+    dia_cfg = sc.get("diaphragm_capacity") or {}
+    dia_origins = {str(o) for o in dia_cfg.get("origins") or []}
+    if dia_origins and dia_cfg.get("per_level_k") is not None:
+        dia_k = int(dia_cfg["per_level_k"])
+        by_level: Dict[Any, List[tuple]] = defaultdict(list)
+        for cid, p in bars:
+            if cid in remove or _bar_origin(p) not in dia_origins:
+                continue
+            a, b = _endpoints(p)
+            if a is None or b is None:
+                continue
+            li = _slot_snap(levels, (a[2] + b[2]) / 2.0, snap_tol)
+            by_level[li].append((cid, p))
+        for li, items in by_level.items():
+            items.sort(key=lambda it: (
+                _SLOT_TIER.get(_bar_origin(it[1]), 3), it[0]))
+            for cid, _p in items[dia_k:]:
+                remove[cid] = "R8_diaphragm_capacity"
+                n_dia_cap += 1
+
     return {
         "levels": len(levels),
         "zero_tp_origins": sorted(zero_tp),
@@ -754,4 +792,5 @@ def _apply_panel_slot_nms(
         "leg_panel_window_killed": sum(
             1 for r in remove.values() if r == "R8_leg_panel_dz_window"),
         "leg_same_segment_killed": n_leg_dup,
+        "diaphragm_capacity_killed": n_dia_cap,
     }

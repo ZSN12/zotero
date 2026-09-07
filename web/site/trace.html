@@ -73,7 +73,7 @@ const TOWERS = {
   '35A1-JC1': { label: '35A1-JC1 酒杯型转角塔', sheets: ['02', '04', '05', '06', '07'] },
   '35A2-ZC1': { label: '35A2-ZC1 干字型直线塔', sheets: ['05', '07', '08', '09', '10', '12'] },
 };
-let tower = '35A1-JC1';
+let tower = '35A2-ZC1';   // 默认展示已净化塔型（R8 后 448 杆规范骨架）
 // 相对路径：/site/trace.html 出发 → 本地 /demo/…、Pages /zotero/demo/… 两边通用
 const BASE = () => `../demo/${tower}`;
 const DELIVER = () => `${BASE()}/latest_deliver`;
@@ -95,20 +95,36 @@ const rim = new THREE.DirectionalLight(0x88aaff, 0.8); rim.position.set(-1.2, 0.
 scene.add(rim);
 scene.add(new THREE.GridHelper(120000, 60, 0x2b3850, 0x1a2230));
 
-// 银色系杆件配色：主材亮银 / 斜材中银 / 横材暗银（深浅拉开结构层次）
-const ROLE_COLORS = { LEG: 0xdde3ec, DIAG: 0xc2cad6, HORIZ: 0xa9b2c0, CROSS: 0xa9b2c0 };
+// 材质分色（国网规范塔参考配色）：主柱腿材 LEG 深空钛灰 / 斜材 DIAG 青铜金 /
+// 横担横隔 HORIZ·CROSS 翠蓝——三类构件一眼分层，替代旧全银灰系。
+const ROLE_COLORS = { LEG: 0x4a5568, DIAG: 0xd4af37, HORIZ: 0x38b2ac, CROSS: 0x38b2ac };
+const ROLE_SURFACE = {   // 金属度/粗糙度随构件类型微调：腿材镜面感强、横材哑光
+  LEG: { metalness: 0.55, roughness: 0.45 },
+  DIAG: { metalness: 0.4, roughness: 0.52 },
+  HORIZ: { metalness: 0.32, roughness: 0.58 },
+  CROSS: { metalness: 0.32, roughness: 0.58 },
+};
 const matCache = new Map();     // key: role|isDirect|dim → material
+// role 归一化：evidence.json 的 role 沿用 eval 口径 HORIZONTAL，
+// 着色表键是 HORIZ；无 role/未知值落 DIAG 斜材色（塔身主体观感）
+function normRole(r) {
+  if (!r) return 'DIAG';
+  return r === 'HORIZONTAL' ? 'HORIZ' : (ROLE_COLORS[r] ? r : 'DIAG');
+}
 function barMat(role, isDirect, dim) {
   const k = `${role}|${isDirect ? 1 : 0}|${dim ? 1 : 0}`;
   if (!matCache.has(k)) {
     const base = ROLE_COLORS[role] || 0x9aa7b8;
     const c = new THREE.Color(base);
     if (dim) c.lerp(new THREE.Color(0x10141c), 0.7);
-    // 全部杆件（直读与衍生）均为 100% 物理实心实体材质
+    const s = ROLE_SURFACE[role] || { metalness: 0.4, roughness: 0.55 };
+    // 全部杆件（直读与衍生）均为 100% 物理实心实体材质；
+    // envMapIntensity 压低环境反射，靠方向光+环境贴图勾出金属边缘轮廓
     matCache.set(k, new THREE.MeshStandardMaterial({
       color: c,
-      metalness: 0.35,
-      roughness: 0.58,
+      metalness: s.metalness,
+      roughness: s.roughness,
+      envMapIntensity: 0.5,
       transparent: false,
       opacity: 1.0,
       depthWrite: true,
@@ -162,7 +178,9 @@ async function loadModel(modelJson, gltf) {
     const cid = ext.component_id || '';
     if (!cid) { o.material = barMat('LEG', false, false); return; }
     const comp = ev0.get(cid);
-    const role = ext.role || comp?.role || 'LEG';
+    // role 归一化：模型属性里水平杆写作 HORIZONTAL（eval 口径），
+    // GLB extras / 着色表用 HORIZ——统一到四键色表，防落默认灰色
+    const role = normRole(ext.role || comp?.role);
     const traced = !!(comp?.projection_refs?.length);
     o.material = barMat(role, traced, false);
     (traced ? tracedMeshes : synthMeshes).push(o);
@@ -183,8 +201,10 @@ async function loadModel(modelJson, gltf) {
   }
   window.__ev = ev; window.__h2cid = h2cid;
   const nTraced = [...ev.values()].filter((c) => c.projection_refs?.length).length;
-  document.getElementById('tag').textContent =
-    `${tower} · 3D 骨架实体 ${id2mesh.size} 杆（直读母体 ${nTraced} 杆 + 四面对称衍生 ${id2mesh.size - nTraced} 杆） · 点杆双向追溯`;
+  // 直读母体为 0（R8 剪枝塔）时换诚实文案：不宣称「直读+衍生」结构
+  document.getElementById('tag').textContent = nTraced > 0
+    ? `${tower} · 3D 骨架实体 ${id2mesh.size} 杆（直读母体 ${nTraced} 杆 + 四面对称衍生 ${id2mesh.size - nTraced} 杆） · 点杆双向追溯`
+    : `${tower} · 规范骨架 ${id2mesh.size} 杆（槽位去重后净化模型 · 册级图纸高程覆盖 ${[...ev.values()].filter((c) => c.prototype?.mode === 'sheet_cover').length} 杆） · 点杆追溯`;
   return ev;
 }
 
@@ -487,13 +507,13 @@ function applyOnlyTraced() {
   const ev = window.__ev;
   for (const o of tracedMeshes) {
     const comp = ev.get(o.userData.component_id);
-    o.material = barMat(o.userData.role || comp?.role || 'LEG', true, false);
+    o.material = barMat(normRole(o.userData.role || comp?.role), true, false);
     o.visible = true;
   }
   for (const o of synthMeshes) {
     o.visible = true;  // 实体实杆始终完整可见
     const comp = ev.get(o.userData.component_id);
-    const role = o.userData.role || comp?.role || 'LEG';
+    const role = normRole(o.userData.role || comp?.role);
     // 仅直读杆高亮时，衍生杆微降亮度但不透明
     o.material = barMat(role, false, onlyTraced);
   }
@@ -730,7 +750,7 @@ async function switchTower(tid) {
 }
 (async () => {
   try {
-    await loadTower('35A1-JC1');
+    await loadTower('35A2-ZC1');
   } catch (e) {
     const why = location.protocol === 'file:'
       ? '本页通过 file:// 直接打开，浏览器会拦截模型/图纸请求。请通过 http(s) 访问：'

@@ -443,5 +443,50 @@ class EvidencePruneTest(unittest.TestCase):
         self.assertEqual(rep["rules"]["R8_zero_tp_origin"], 1)
 
 
+
+    def test_r8_diaphragm_capacity(self):
+        """R8f：横隔层容量——同 level 层超过 per_level_k 的横隔杆按
+        (tier, cid) 序砍超额；TP 零损失语义由离线标定保证（K=5）。"""
+        from traceability.solve.evidence_prune import apply_evidence_prune
+        cfg = self._r8_cfg()
+        cfg["evidence_prune"]["panel_slot_nms"]["diaphragm_capacity"] = {
+            "origins": ["diaphragm_reconstructed"], "per_level_k": 2}
+        # 层表 z>4500：nodes 5000 一层。8 根横隔同层 → 保 2 砍 6
+        comps = {
+            "d0": _n3d("d0", 1000, 1000, 5000),
+            "d1": _n3d("d1", -1000, 1000, 5000),
+            "drawing_file": _drawing_file(),
+        }
+        for i in range(8):
+            comps[f"dia{i}"] = self._bar3d(f"dia{i}", "diaphragm_reconstructed",
+                                     "HORIZ", "d0", "d1")
+        # 非 diaphragm 家族同层不受容量约束
+        comps["h9"] = self._bar3d("h9", "terminal_pair_gen", "HORIZ", "d0", "d1")
+        m = _Model(comps)
+        rep = apply_evidence_prune(m, cfg)
+        kept_dia = [i for i in range(8) if f"dia{i}" in m.components]
+        self.assertEqual(len(kept_dia), 2)
+        self.assertEqual(kept_dia, [0, 1], "(tier, cid) 序保先见")
+        self.assertIn("h9", m.components)
+        self.assertEqual(rep["rules"]["R8_diaphragm_capacity"], 6)
+
+    def test_r8_diaphragm_capacity_off_by_default(self):
+        """R8f 默认关闭：diaphragm_capacity 键缺省 → 横隔全保。"""
+        from traceability.solve.evidence_prune import apply_evidence_prune
+        comps = {
+            "d0": _n3d("d0", 1000, 1000, 5000),
+            "d1": _n3d("d1", -1000, 1000, 5000),
+            "drawing_file": _drawing_file(),
+        }
+        for i in range(8):
+            comps[f"dia{i}"] = self._bar3d(f"dia{i}", "diaphragm_reconstructed",
+                                     "HORIZ", "d0", "d1")
+        m = _Model(comps)
+        rep = apply_evidence_prune(m, self._r8_cfg())
+        for i in range(8):
+            self.assertIn(f"dia{i}", m.components)
+        self.assertNotIn("R8_diaphragm_capacity", rep["rules"])
+
+
 if __name__ == "__main__":
     unittest.main()
