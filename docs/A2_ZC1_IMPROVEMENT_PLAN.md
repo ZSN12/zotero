@@ -735,3 +735,75 @@ Phase 3 收口，进入 Phase 4（批跑矩阵 + tier-3 泛化塔）。
   ×1（36 件号 pending 核验）。均与本轮 kfan 收紧无关（kfan 改动路径
   在 tower_symmetry S8 展开层，不触 GLB mesh / view_kinds / 项目交付）。
   挂账处理，不在 Phase 3 修复范围。
+
+---
+
+## 20. 攻坚手术①：R8 节间槽位 NMS（2026-09-08）
+
+来源：用户攻坚计划（毛线团/蜘蛛网整治）。手术①落地为
+`evidence_prune.panel_slot_nms`（R8），ZC1 overlay 显式开启，默认关闭。
+
+### 20.1 机制（代码只实现通用机制，家族名单/阈值全由 overlay 给出）
+
+- **层表**：模型 tower_node z>4500 的 1D 聚类（gap 400 切带）→ 38 级。
+- **槽位键**：DIAG = (i0, i1, 立面象限, 方向号)；HORIZ = ('X', i0, 象限)。
+- **a/b**：`zero_tp_origins`（离线归因零 TP 家族：derived_4face /
+  derived_parametric_base / marker_synth）全量剪；`dxf_origins`（dxf_geom，
+  ZC1 实测 DIAG 3/69 TP）整族关闭但保留证据源资格。
+- **c 槽位互斥**：`mutex_origins`（terminal_pair_gen / panel_template_
+  completion）按 (tier, cid) 置信序竞争；**孤儿槽**（无存证证据源杆落入）
+  按 dz 节拍窗收紧——span≥2 terminal dz≥1500 保 / panel dz≤1200 保；
+  span<2 terminal 无条件保。
+- **d 水平环**：孤儿槽 keep-K=3，候选 ≥4 降 K=2。
+- **e LEG**：panel 家族 dz>1000 剪；同棱同 z 段（200mm 桶）第二份模板
+  拷贝去重。
+
+### 20.2 实装 bug 修复：ev_slots 被 R2 剪除的镜像杆污染
+
+管线内 R1..R6 的 remove 在 R8 之后才统一 pop。首版 ev_slots 循环不过滤
+remove——被 R2 剪除的 dxf b/l/r 镜像 FP 杆（ZC1 275 根）仍「作证」，
+把 6 个本应孤儿的槽虚标 evidenced，9 杆 span2 模板漏杀（管线 495 vs
+离线 486）。修复：进入 R8 时快照 `pre_r8_removed`，ev_slots 过滤之；
+R8b 自身的 dxf 关闭仍作证（docstring b 节语义不变）。修复后管线/快照
+两种运行时状态重放均收敛 486/orphan 195，与离线逐位一致。
+
+### 20.3 官方 eval 验收（out/35A2-ZC1-full-deliver，管线全量重跑）
+
+| 口径 | 攻坚前基线 | 攻坚后 | Δ |
+|---|---|---|---|
+| A2-dual-view-reconstructed | TP 256 / FP 596 / P 30.0% / R 89.8%（963 杆） | **TP 251 / FP 206 / P 54.9% / R 88.1%（486 杆）** | FP −65.4%，P +24.9pp |
+| A2-front-full | TP 200 / P 40.4% / R 70.2% | TP 199 / P 40.9% / R 69.8% | 持平 |
+
+六 gate 对照：④ R≥88% ✅（88.1%）；⑤ 横担四面镜像展开 ✅（
+crossarm_truss_headless 42 杆完整）；⑥ pytest 820 passed / 0 failed ✅
+（≥813）。①②③ 未达，根因如下——均为生成侧结构性问题，剪枝侧已到
+离线 Pareto 前沿（B2 为全策略空间最优）。
+
+### 20.4 未达 gate 结构性根因
+
+**① 总杆 486 vs 290~350**：GT 285 杆的 LEG 是 32 根大跨（通长几千米
+级塔腿），模型 LEG 118 根按册分段（07 册等图纸分段边界切腿）。合并
+= 端点对齐链合并，实测链 NMS 后 R 崩至 74.4%（合并误差吞掉 40+ TP），
+已被判定死路（§攻坚记录）。剩余超编主要在 DIAG 分段粒度。
+
+**② DIAG ~193 vs 140~180**：GT 本身 186 根 DIAG。gate 上限（180）低于
+GT 真值计数——满召回（R=100%）时 DIAG 数下限即 186，该 gate 与 R gate
+（≥88% ⇒ DIAG ≥164）联合可满足，但与「砍到 180 以下」互斥。属 gate
+标定问题，非模型缺陷。
+
+**③ P 54.9% vs 60~80%**：DXF 证据结构性缺失——dxf_geom 杆 76/79 集中
+在 (NS, True) 象限（正立面），b/l/r 三面零图纸证据。模板补全杆在无证
+据面的 fabrication 无判别信号，剪枝侧不可分（离线全策略空间扫描确认
+54.9% 为 prune 侧上界）。突破需生成侧修复（对称面模板坍缩/参数化先验），
+超出手术①范围。
+
+### 20.5 JC1 红线回归（全管线，R8 默认关闭零行为）
+
+| 口径 | 基线 | R8 合入后 |
+|---|---|---|
+| A2-dual-view-reconstructed | TP 1067 / R 99.6% | TP 1067 / R 99.6% ✅ |
+| A2-dual-view-pure | TP 304 / P 63.5% / R 28.4% | TP 304 / P 63.5% / R 28.4% ✅ |
+| A1 | 168/197 P=100% R=85.3% | 168/197 P=100% R=85.3% ✅ |
+
+JC1 overlay 无 `panel_slot_nms` 键，evidence_prune 全程未触发（管线
+日志零 evidence_prune 行）——逐位锁定零回退。

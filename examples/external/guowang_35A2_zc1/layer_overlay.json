@@ -808,7 +808,39 @@
   "mirror_face_dxf": true,
   "tip_platform_ring": true,
   "leg_stitch_bridge": true,
-  "direct_snap_layers": false
+  "direct_snap_layers": false,
+  "panel_slot_nms": {
+   "zero_tp_origins": [
+    "derived_4face",
+    "derived_parametric_base",
+    "marker_synth"
+   ],
+   "dxf_origins": [
+    "dxf_geom"
+   ],
+   "mutex_origins": [
+    "terminal_pair_gen",
+    "panel_template_completion"
+   ],
+   "evidence_origins": [
+    "dxf_geom"
+   ],
+   "z_floor_mm": 4500.0,
+   "level_gap_mm": 400.0,
+   "snap_tol_mm": 800.0,
+   "orphan": {
+    "diag_span2_terminal_dz_min_mm": 1500.0,
+    "diag_span2_panel_dz_max_mm": 1200.0,
+    "diag_span1_panel_dz_max_mm": 1200.0,
+    "horiz_k": 3,
+    "horiz_dense_n": 4,
+    "horiz_dense_k": 2
+   },
+   "leg": {
+    "panel_dz_max_mm": 1000.0,
+    "same_segment_dedup": true
+   }
+  }
  },
  "crossarm_truss_zone_z_min_mm": 26000.0,
  "crossarm_truss_zone_z_max_mm": 38000.0,

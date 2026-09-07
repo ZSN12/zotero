@@ -67,6 +67,25 @@
      聚类 +2 TP 且不依赖任何绝对标定）。只动 recognized 杆端点 z，
      不改杆集合。变更写 ``snapped_by`` provenance。
 
+  R8 节间槽位 NMS（``evidence_prune.panel_slot_nms``，攻坚手术①）：
+     高程节间分桶（level 表 = 模型 tower_node z > z_floor 的 1D 聚类，
+     gap 切带），槽位键 = (节间 i0..i1, 立面象限, 斜材方向)。离线 GT
+     节间普查：157/169 斜材槽位单根——同槽多根即模板重复 fabricate，
+     按置信序只留 top-K。子规则（家族名单/阈值全部由 overlay 显式给出
+     ——研究标定语义，与 R4 ``segment_role_quota`` 显式表同款先例；
+     代码只实现通用机制，不枚举塔名）：
+       a. ``zero_tp_origins``：overlay 显式列出的 origin 全量剪除（离线
+          归因零 TP 的家族；JC1 上同 origin 可能是 TP——由 overlay 控制）。
+       b. ``dxf_origins``：直读质量崩坏塔的直读杆关闭（ZC1 实测 dxf
+          DIAG 3/69 TP；仍作为槽位存在性证据源）。
+       c. 槽位互斥：``mutex_origins``（模板家族）间按 (tier, cid) 置信序
+          竞争；孤儿槽位（无证据源杆落入）按 dz 节拍窗口收紧。
+       d. 水平环槽位：孤儿槽 keep-K（环 multiplicity），候选密集时降 K。
+       e. LEG 同段去重：同棱同 z 段（200mm 桶）第二份模板拷贝剪除；
+          ``leg.panel_dz_max_mm`` 窗口外 panel 腿剪除。
+     实测（ZC1 离线复算，963 杆快照）：TP 256→251、FP 596→206、
+     P 30.0%→54.9%、R 89.8%→88.1%。默认关闭（JC1/JC2 零行为）。
+
 铁律对齐：
   * 不读 GT、不读评测结果；只消费 model 组件属性 + overlay 配置 + BOM。
   * 默认全部关闭（``evidence_prune`` 键缺省 → 零行为变化，JC1/JC2
@@ -257,6 +276,11 @@ def apply_evidence_prune(
     if cfg.get("direct_snap_layers"):
         snap_report = _apply_direct_snap_layers(model, cfg)
 
+    # R8：节间槽位 NMS（攻坚手术①：模板层节间互斥 + 孤儿槽收紧）
+    slot_report: Dict[str, Any] = {}
+    if isinstance(cfg.get("panel_slot_nms"), dict):
+        slot_report = _apply_panel_slot_nms(model, bars, remove, cfg)
+
     # provenance：被剪杆写 pruned_by 后删除（证据链铁律）
     for cid, rule in remove.items():
         comp = model.components.get(cid)
@@ -276,6 +300,8 @@ def apply_evidence_prune(
         report["bom_quota"] = quota_report
     if snap_report:
         report["direct_snap_layers"] = snap_report
+    if slot_report:
+        report["panel_slot_nms"] = slot_report
     for cid in remove:
         model.components.pop(cid, None)
     df = model.components.get("drawing_file")
@@ -478,3 +504,254 @@ def _node_z(model: Any) -> Dict[str, float]:
                 except (TypeError, ValueError):
                     continue
     return out
+
+
+# --------------------------------------------------------------------------- #
+# R8：节间槽位 NMS（攻坚手术①，2026-09-08 离线迭代收敛后实装）
+# --------------------------------------------------------------------------- #
+
+# 置信序（R8 竞争排序用，与离线仿真校准一致）：数值小者优先保留。
+_SLOT_TIER = {
+    "dxf_geom": 0,
+    "side_direct": 1,
+    "collinear_stitch": 1,
+    "panel_subdivision": 1,
+    "derived_4face": 1,
+    "terminal_pair_gen": 2,
+    "panel_template_completion": 2,
+    "crossarm_truss_headless": 2,
+    "neck_brace_completion": 2,
+    "lightning_rod_headless": 2,
+    "diaphragm_reconstructed": 2,
+    "derived_parametric_base": 2,
+}
+
+
+def _slot_level_table(
+    node_xyz: Dict[str, tuple], z_floor: float, gap: float
+) -> List[float]:
+    """level 表：z > z_floor 的节点 z 做 1D 聚类（gap 切带），带中心序列。"""
+    zs = sorted({round(z) for (_x, _y, z) in node_xyz.values() if z > z_floor})
+    bands: List[List[float]] = []
+    for z in zs:
+        if not bands or z - bands[-1][-1] > gap:
+            bands.append([z])
+        else:
+            bands[-1].append(z)
+    return [sum(b) / len(b) for b in bands]
+
+
+def _slot_snap(levels: Sequence[float], z: float, tol: float) -> Optional[int]:
+    """z → 最近 level 下标（|Δ| > tol 返回 None）。"""
+    best_d, best_i = None, None
+    for i, c in enumerate(levels):
+        d = abs(z - c)
+        if best_d is None or d < best_d:
+            best_d, best_i = d, i
+    if best_d is None or best_d > tol:
+        return None
+    return best_i
+
+
+def _slot_face_quad(a: tuple, b: tuple) -> tuple:
+    """立面象限：投影主轴（EW/NS）+ 正负号。"""
+    dx, dy = abs(b[0] - a[0]), abs(b[1] - a[1])
+    if dx < dy:
+        return ("EW", b[0] > 0 or a[0] > 0)
+    return ("NS", b[1] > 0 or a[1] > 0)
+
+
+def _slot_classify(
+    p: Dict[str, Any], node_xyz: Dict[str, tuple]
+) -> Optional[str]:
+    """杆 → LEG / HORIZ / DIAG（结构属性，无 GT）。端点缺坐标返回 None。"""
+    a = node_xyz.get(str(p.get("from_node")))
+    b = node_xyz.get(str(p.get("to_node")))
+    if a is None or b is None:
+        return None
+    dz = abs(a[2] - b[2])
+    dh = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+    if _bar_role(p) == "LEG" or dz > 5000.0:
+        return "LEG"
+    if dz < 10.0 and dh > 100.0:
+        return "HORIZ"
+    return "DIAG"
+
+
+def _apply_panel_slot_nms(
+    model: Any,
+    bars: List[tuple],
+    remove: Dict[str, str],
+    cfg: Dict[str, Any],
+) -> Dict[str, Any]:
+    """R8：节间槽位 NMS。家族名单/阈值全由 overlay ``panel_slot_nms`` 给出。"""
+    sc = cfg.get("panel_slot_nms") or {}
+    zero_tp = {str(o) for o in sc.get("zero_tp_origins") or []}
+    dxf_kill = {str(o) for o in sc.get("dxf_origins") or []}
+    mutex = {str(o) for o in sc.get("mutex_origins") or []}
+    evidence_src = {str(o) for o in sc.get("evidence_origins") or []}
+    z_floor = float(sc.get("z_floor_mm", 4500.0))
+    gap = float(sc.get("level_gap_mm", 400.0))
+    snap_tol = float(sc.get("snap_tol_mm", 800.0))
+    orphan = sc.get("orphan") or {}
+    leg_cfg = sc.get("leg") or {}
+
+    # 端点坐标表（tower_node → (x,y,z)）
+    node_xyz: Dict[str, tuple] = {}
+    for comp in model.components.values():
+        if _kind(comp) != "tower_node":
+            continue
+        p = _props(comp)
+        try:
+            node_xyz[_comp_id(getattr(comp, "id", ""), comp)] = (
+                float(p.get("x") or 0.0), float(p.get("y") or 0.0),
+                float(p.get("z") or 0.0))
+        except (TypeError, ValueError):
+            continue
+    levels = _slot_level_table(node_xyz, z_floor, gap)
+
+    def _endpoints(p: Dict[str, Any]):
+        a = node_xyz.get(str(p.get("from_node")))
+        b = node_xyz.get(str(p.get("to_node")))
+        return a, b
+
+    def _slot_key(p: Dict[str, Any], g: str):
+        a, b = _endpoints(p)
+        if a is None or b is None:
+            return None, 0
+        i0 = _slot_snap(levels, min(a[2], b[2]), snap_tol)
+        i1 = _slot_snap(levels, max(a[2], b[2]), snap_tol)
+        fq = _slot_face_quad(a, b)
+        if g == "DIAG":
+            s = 1 if (b[2] - a[2]) * ((b[0] + b[1]) - (a[0] + a[1])) > 0 else -1
+            span = (i1 - i0) if (i0 is not None and i1 is not None) else 0
+            return (i0, i1, fq, s), span
+        return ("X", i0, fq), 0
+
+    # a/b：零 TP 家族 + 直读关闭（不参与后续槽位竞争，但 dxf 仍是证据源）
+    pre_r8_removed: set = set(remove)  # R8 之前规则（R1..R7）已剪除的杆
+    for cid, p in bars:
+        if cid in remove:
+            continue
+        o = _bar_origin(p)
+        if o in zero_tp:
+            remove[cid] = "R8_zero_tp_origin"
+        elif o in dxf_kill:
+            remove[cid] = "R8_dxf_quality_off"
+
+    # 证据槽位集合：证据源 origin 的杆落入的槽位（dxf_origins 关闭的直读杆
+    # 仍作证——语义见 docstring b 节）。但 R8 之前规则已剪除的杆（R2 的
+    # dxf b/l/r 镜像 FP 等）不具证据资格——它们是待剪噪声，若计入会把
+    # 孤儿槽虚标为 evidenced（ZC1 实测 6 槽 9 杆因此漏杀，1371→495 vs
+    # 离线 486）。
+    ev_slots: set = set()
+    for cid, p in bars:
+        if cid in pre_r8_removed or _bar_origin(p) not in evidence_src:
+            continue
+        g = _slot_classify(p, node_xyz)
+        if g in (None, "LEG"):
+            continue
+        key, span = _slot_key(p, g)
+        ev_slots.add((g, span, key))
+
+    # LEG：panel 家族 dz 窗口
+    leg_panel_max = leg_cfg.get("panel_dz_max_mm")
+    for cid, p in bars:
+        if cid in remove or _bar_origin(p) not in mutex:
+            continue
+        if _slot_classify(p, node_xyz) != "LEG":
+            continue
+        a, b = _endpoints(p)
+        if (a is None or b is None or leg_panel_max is None
+                or abs(a[2] - b[2]) <= float(leg_panel_max)):
+            continue
+        if _bar_origin(p) == "panel_template_completion":
+            remove[cid] = "R8_leg_panel_dz_window"
+
+    # 槽位互斥：mutex 家族按 (g, span, key) 分桶
+    slots: Dict[tuple, List[tuple]] = defaultdict(list)
+    for cid, p in bars:
+        if cid in remove or _bar_origin(p) not in mutex:
+            continue
+        g = _slot_classify(p, node_xyz)
+        if g in (None, "LEG"):
+            continue
+        key, span = _slot_key(p, g)
+        slots[(g, span, key)].append((cid, p))
+
+    n_slot_kill = n_orphan_kill = 0
+    for (g, span, key), items in slots.items():
+        items.sort(key=lambda it: (_SLOT_TIER.get(_bar_origin(it[1]), 3), it[0]))
+        orphaned = (g, span, key) not in ev_slots
+        keep: set = set()
+        if g == "DIAG":
+            c0, p0 = items[0]
+            a, b = _endpoints(p0)
+            dz0 = abs(a[2] - b[2]) if (a is not None and b is not None) else 0.0
+            o0 = _bar_origin(p0)
+            if orphaned:
+                if span >= 2:
+                    # 跨层孤儿：terminal 保 dz≥floor；panel 保 dz≤cap
+                    if o0 == "terminal_pair_gen" and dz0 >= float(
+                            orphan.get("diag_span2_terminal_dz_min_mm", 0.0)):
+                        keep.add(c0)
+                    elif o0 == "panel_template_completion" and dz0 <= float(
+                            orphan.get("diag_span2_panel_dz_max_mm", 1e18)):
+                        keep.add(c0)
+                else:
+                    if o0 == "terminal_pair_gen":
+                        keep.add(c0)
+                    elif o0 == "panel_template_completion" and dz0 <= float(
+                            orphan.get("diag_span1_panel_dz_max_mm", 1e18)):
+                        keep.add(c0)
+            else:
+                keep.update(cid for cid, _p in items[:2 if span >= 2 else 1])
+        else:  # HORIZ：环 multiplicity 容量（孤儿收紧）
+            k = 3
+            if orphaned:
+                k = int(orphan.get("horiz_k", 3))
+                dense_n = orphan.get("horiz_dense_n")
+                if dense_n is not None and len(items) >= int(dense_n):
+                    k = min(k, int(orphan.get("horiz_dense_k", k)))
+            keep.update(cid for cid, _p in items[:k])
+        for cid, _p in items:
+            if cid in keep or cid in remove:
+                continue
+            remove[cid] = ("R8_slot_orphan"
+                           if orphaned else "R8_slot_mutex")
+            if orphaned:
+                n_orphan_kill += 1
+            else:
+                n_slot_kill += 1
+
+    # LEG 同段去重：同棱同 z 段（200mm 桶）第二份模板拷贝
+    n_leg_dup = 0
+    if leg_cfg.get("same_segment_dedup"):
+        def _edge_key(p: Dict[str, Any]):
+            a, b = _endpoints(p)
+            e = (1 if a[0] + b[0] >= 0 else -1, 1 if a[1] + b[1] >= 0 else -1)
+            return (e, round(min(a[2], b[2]) / 200) * 200,
+                    round(max(a[2], b[2]) / 200) * 200)
+        seen: set = set()
+        for cid, p in sorted(bars):
+            if cid in remove or _bar_origin(p) not in mutex:
+                continue
+            if _slot_classify(p, node_xyz) != "LEG":
+                continue
+            k2 = _edge_key(p)
+            if k2 in seen:
+                remove[cid] = "R8_leg_same_segment"
+                n_leg_dup += 1
+            else:
+                seen.add(k2)
+
+    return {
+        "levels": len(levels),
+        "zero_tp_origins": sorted(zero_tp),
+        "dxf_origins": sorted(dxf_kill),
+        "slot_mutex_killed": n_slot_kill,
+        "slot_orphan_killed": n_orphan_kill,
+        "leg_panel_window_killed": sum(
+            1 for r in remove.values() if r == "R8_leg_panel_dz_window"),
+        "leg_same_segment_killed": n_leg_dup,
+    }
