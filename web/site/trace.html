@@ -148,17 +148,20 @@ function barMat(role, isDirect, dim) {
     const c = new THREE.Color(base);
     if (dim) c.lerp(new THREE.Color(0x10141c), 0.7);
     const s = ROLE_SURFACE[role] || { metalness: 0.85, roughness: 0.22, clearcoat: 0.3, envMapIntensity: 1.8 };
-    // 升级为 MeshPhysicalMaterial：高金属度、低粗糙度、带清漆层与环境反光
+    // 升级为 MeshPhysicalMaterial：高金属度、微透光感与锐利边线融合，彻底复现图 2 纤细骨架质感
     matCache.set(k, new THREE.MeshPhysicalMaterial({
       color: c,
-      metalness: s.metalness,
-      roughness: s.roughness,
-      clearcoat: s.clearcoat,
+      metalness: 0.65,
+      roughness: 0.35,
+      clearcoat: 0.3,
       clearcoatRoughness: 0.15,
-      reflectivity: 0.95,
-      envMapIntensity: s.envMapIntensity,
-      transparent: false,
-      opacity: 1.0,
+      reflectivity: 0.85,
+      envMapIntensity: 1.2,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
+      transparent: true,
+      opacity: 0.88,
       depthWrite: true,
     }));
   }
@@ -215,6 +218,18 @@ async function loadModel(modelJson, gltf) {
     const role = normRole(ext.role || comp?.role);
     const traced = !!(comp?.projection_refs?.length);
     o.material = barMat(role, traced, false);
+    // 注入图 2 的精细角钢轮廓高光边线（纤细锐利，消灭发胀笨重感）
+    if (o.geometry && !o.userData.hasEdges) {
+      const edges = new THREE.EdgesGeometry(o.geometry, 28);
+      const edgeLine = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
+        color: 0xe2e8f0,
+        transparent: true,
+        opacity: 0.82,
+        depthWrite: false
+      }));
+      o.add(edgeLine);
+      o.userData.hasEdges = true;
+    }
     (traced ? tracedMeshes : synthMeshes).push(o);
     id2mesh.set(cid, o);
   });
