@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>35A2-ZC1 · 3D→2D 双向追溯联动（阶段一）</title>
+<style>
+  :root { --ink: #dfe6f0; --dim: #71809a; --gold: #ffd479; --line: #26314a; }
+  html, body { margin: 0; height: 100%; background: #10141c; overflow: hidden;
+               font: 13px/1.55 ui-sans-serif, system-ui, "PingFang SC"; color: var(--ink); }
+  #wrap { display: flex; height: 100%; }
+  #left  { flex: 1 1 50%; position: relative; min-width: 320px; }
+  #divid { flex: 0 0 4px; background: #232c3b; cursor: col-resize; }
+  #right { flex: 1 1 50%; position: relative; background: #0c1017; min-width: 320px;
+           display: flex; flex-direction: column; }
+  #tag { position: absolute; left: 12px; top: 12px; z-index: 5;
+         background: rgba(8,10,14,.8); padding: 8px 14px; border-radius: 8px; }
+  #hint { position: absolute; left: 12px; bottom: 12px; z-index: 5; color: var(--dim);
+          background: rgba(8,10,14,.6); padding: 6px 12px; border-radius: 8px; }
+  #sheetbar { display: flex; gap: 6px; padding: 10px 12px; flex-wrap: wrap;
+              border-bottom: 1px solid #1c2432; align-items: center; }
+  #sheetbar button { background: #18202e; color: #aebacd; border: 1px solid #2a3547;
+                     border-radius: 7px; padding: 4px 12px; cursor: pointer; font: inherit; }
+  #sheetbar button.on { background: #2c4a86; color: #fff; border-color: #3f6ac4; }
+  #sheetbar .stat { margin-left: auto; color: var(--dim); }
+  #canvashost { flex: 1; position: relative; overflow: hidden; }
+  #dxf { display: block; width: 100%; height: 100%; cursor: grab; }
+  #dxf:active { cursor: grabbing; }
+  /* 高亮呼吸边框：点击 3D 杆件后 2D 视口聚焦提示 */
+  #canvashost.breath::after { content: ""; position: absolute; inset: 0; z-index: 3;
+    border: 2px solid #ffd479; border-radius: 10px; pointer-events: none;
+    animation: breath 1.6s ease-in-out infinite; }
+  @keyframes breath { 0%,100% { opacity: .15; } 50% { opacity: .95; } }
+  /* 血统气泡 */
+  #bubble { position: absolute; right: 14px; top: 14px; width: 320px; z-index: 4;
+            background: rgba(10,14,22,.94); border: 1px solid var(--line);
+            border-radius: 10px; padding: 12px 14px; display: none; }
+  #bubble h4 { margin: 0 0 6px; color: var(--gold); font-size: 14px; }
+  #bubble table { width: 100%; border-collapse: collapse; }
+  #bubble td { padding: 2px 0; vertical-align: top; }
+  #bubble td:first-child { color: var(--dim); width: 84px; white-space: nowrap; }
+  #bubble .src { color: #8ee6a8; word-break: break-all; font-size: 12px; }
+  #bubble .none { color: var(--dim); margin-top: 8px; font-size: 12px; }
+  #bubble .close { position: absolute; right: 8px; top: 6px; color: var(--dim);
+                   cursor: pointer; font-size: 14px; } #bubble .close:hover { color: #fff; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="wrap">
+  <div id="left">
+    <div id="tag">3D 骨架加载中…</div>
+    <div id="hint">左：点杆件 → 右侧图纸聚焦高亮 + 血统气泡 · 滚轮缩放 / 拖拽旋转</div>
+  </div>
+  <div id="divid" title="拖动调整分栏"></div>
+  <div id="right">
+    <div id="sheetbar"><span class="stat">2D CAD 视口</span></div>
+    <div id="canvashost"><canvas id="dxf"></canvas></div>
+    <div id="bubble"></div>
+  </div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const BASE = './traceview';
+const SHEETS = ['05', '07', '08', '09', '10', '12'].map((s) => `35A2-ZC1-${s}`);
+
+// ================================================================
+// 左：3D 骨架（three.js 直画，数据 = trace_bars.json，Z-up → Y-up）
+// ================================================================
+const left = document.getElementById('left');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x10141c);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio || 1);
+left.appendChild(renderer.domElement);
+const camera = new THREE.PerspectiveCamera(40, 1, 10, 200000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xbfd4ee, 0x1a1f28, 1.1));
+const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(1, 1.6, 0.8).multiplyScalar(40000);
+const rim = new THREE.DirectionalLight(0x88aaff, 0.7); rim.position.set(-1.2, 0.6, -1).multiplyScalar(40000);
+scene.add(key, rim);
+
+// 可点击性：杆件用胶囊化圆柱（粗到可点），太细的挑不出来——半径 = 长度×4%，
+// 既保持骨架观感又保证 raycast 命中。
+const bars = new Map();        // cid → {props, mesh, line}
+const barGroup = new THREE.Group();
+scene.add(barGroup);
+const ROLE_COLORS = { LEG: 0x86b6ff, DIAG: 0xffcf6e, HORIZ: 0x7fe39c, HORIZONTAL: 0x7fe39c, CROSS: 0x7fe39c };
+const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _mid = new THREE.Vector3(), _dir = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
+
+function addBar(cid, b) {
+  // model.json 为 Z-up：逐杆变换到 three Y-up（x, z→y, -y→z），
+  // 与官网 trace 页同款坐标系，相机 up 默认 Y。
+  _v1.set(b.p1[0], b.p1[2], -b.p1[1]);
+  _v2.set(b.p2[0], b.p2[2], -b.p2[1]);
+  const len = _v1.distanceTo(_v2);
+  if (len < 1e-6) return;
+  const r = Math.max(len * 0.012, 18);
+  const geo = new THREE.CylinderGeometry(r, r, len, 6, 1, true);
+  const mesh = new THREE.Mesh(geo, barMaterial(b));
+  _mid.addVectors(_v1, _v2).multiplyScalar(0.5);
+  _dir.subVectors(_v2, _v1).normalize();
+  mesh.position.copy(_mid);
+  mesh.quaternion.setFromUnitVectors(_up, _dir);
+  mesh.userData.cid = cid;
+  barGroup.add(mesh);
+  bars.set(cid, { props: b, mesh });
+}
+
+const matCache = new Map();
+function barMaterial(b) {
+  const traced = !!b.seed;
+  const k = `${b.role}|${traced}`;
+  if (!matCache.has(k)) {
+    const c = new THREE.Color(ROLE_COLORS[b.role] || 0x9aa7b8);
+    if (!traced) c.lerp(new THREE.Color(0x2a3446), 0.45);
+    matCache.set(k, new THREE.MeshStandardMaterial({
+      color: c, metalness: 0.25, roughness: 0.7,
+      transparent: !traced, opacity: traced ? 1 : 0.4, depthWrite: traced,
+    }));
+  }
+  return matCache.get(k);
+}
+
+function fitTower() {
+  const box = new THREE.Box3().setFromObject(barGroup);
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  const fov = (camera.fov * Math.PI) / 180;
+  const dist = (sphere.radius / Math.tan(fov / 2)) * 1.15;
+  controls.target.copy(sphere.center);
+  camera.position.copy(sphere.center).addScaledVector(new THREE.Vector3(0.62, -0.55, 0.45).normalize(), dist);
+  controls.update();
+}
+
+function resize3D() {
+  const w = left.clientWidth, h = left.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+
+// ---------- 3D 点击拾取（pointerdown→up 位移 < 5px 才算点击，避免旋转误选）----------
+const raycaster = new THREE.Raycaster();
+let selected = null;
+let downPos = null;
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.button === 0) downPos = { x: e.clientX, y: e.clientY };
+});
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (e.button !== 0 || !downPos) return;
+  const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
+  downPos = null;
+  if (moved > 5) return;   // 拖拽旋转，不触发选择
+  const rect = renderer.domElement.getBoundingClientRect();
+  const m = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(m, camera);
+  const hit = raycaster.intersectObjects(barGroup.children, false)[0];
+  if (hit) selectBar(hit.object.userData.cid);
+});
+
+function selectBar(cid) {
+  // 材质是 role|traced 共享缓存——选中高亮必须克隆，不能改共享材质
+  if (selected) {
+    selected.mesh.material.dispose();
+    selected.mesh.material = selected.baseMat;
+    selected = null;
+  }
+  const b = bars.get(cid);
+  if (!b) return;
+  selected = { mesh: b.mesh, baseMat: b.mesh.material };
+  const hl = b.mesh.material.clone();
+  hl.emissive?.setHex(0x7a2a10);
+  b.mesh.material = hl;
+  showBubble(cid, b.props);
+  if (b.props.seed) focus2D(b.props.seed);
+}
+
+// ================================================================
+// 右：2D CAD 视口（canvas，pan/zoom + 高亮呼吸）
+// ================================================================
+const host = document.getElementById('canvashost');
+const cv = document.getElementById('dxf');
+const ctx = cv.getContext('2d');
+const sheetBar = document.getElementById('sheetbar');
+const bubble = document.getElementById('bubble');
+
+let sheetCache = new Map();   // sheet → {layers, bbox}
+let view = { sheet: null, tx: 0, ty: 0, scale: 1 };
+let hlSeed = null;            // 当前高亮 seed {pts, sheet}
+let hlPhase = 0;
+
+const LAYER_COLORS = { '0': '#8fa3bd', '1': '#5d7396', '2': '#4e637f', '3': '#8fa3bd', '4': '#44576e', '5': '#44576e', '8': '#8fa3bd' };
+
+async function loadSheet(sheet) {
+  if (!sheetCache.has(sheet)) {
+    const r = await fetch(`${BASE}/dxf_lines/${sheet}.json`);
+    if (!r.ok) throw new Error(`dxf_lines/${sheet}.json ${r.status}`);
+    sheetCache.set(sheet, await r.json());
+  }
+  return sheetCache.get(sheet);
+}
+
+async function showSheet(sheet, focus) {
+  view.sheet = sheet;
+  [...sheetBar.querySelectorAll('button')].forEach((b) => b.classList.toggle('on', b.dataset.sheet === sheet));
+  const data = await loadSheet(sheet);
+  // 初始视图：整图 fit（y 取负 → 立面朝上）
+  const [x0, y0, x1, y1] = data.bbox;
+  const w = host.clientWidth || 800, h = host.clientHeight || 600;
+  view.scale = Math.min(w / (x1 - x0), h / (y1 - y0)) * 0.92;
+  view.tx = (w - (x1 - x0) * view.scale) / 2 - x0 * view.scale;
+  view.ty = (h + (y1 - y0) * view.scale) / 2 + y1 * view.scale;   // y 翻转后的 fit
+  if (focus) focusTarget(focus);
+  draw();
+}
+
+function focusTarget(pts) {
+  // 平移缩放到 seed 线段居中：线段在视口中占 ~28% 短边。
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 30);
+  const w = host.clientWidth, h = host.clientHeight;
+  view.scale = Math.max(0.5, Math.min(40, (Math.min(w, h) * 0.28) / span));
+  view.tx = w / 2 - cx * view.scale;
+  view.ty = h / 2 + cy * view.scale;   // 屏幕 y = ty - wy*scale（翻转）
+}
+
+function draw() {
+  const w = host.clientWidth, h = host.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== w * dpr || cv.height !== h * dpr) {
+    cv.width = w * dpr; cv.height = h * dpr;
+    cv.style.width = `${w}px`; cv.style.height = `${h}px`;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#0c1017';
+  ctx.fillRect(0, 0, w, h);
+  const data = view.sheet && sheetCache.get(view.sheet);
+  if (!data) return;
+  // 屏幕坐标：sx = tx + wx*scale, sy = ty - wy*scale（y 翻转立面朝上）
+  ctx.lineWidth = 1;
+  for (const [layer, segs] of Object.entries(data.layers)) {
+    ctx.strokeStyle = LAYER_COLORS[layer] || '#5d7396';
+    ctx.beginPath();
+    for (const s of segs) {
+      const ax = view.tx + s[0] * view.scale, ay = view.ty - s[1] * view.scale;
+      const bx = view.tx + s[2] * view.scale, by = view.ty - s[3] * view.scale;
+      ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+    }
+    ctx.stroke();
+  }
+  // 高亮 seed：呼吸金色粗线（相位由 rAF 推进）
+  if (hlSeed) {
+    const a = 0.45 + 0.5 * (0.5 + 0.5 * Math.sin(hlPhase));
+    ctx.strokeStyle = `rgba(255,212,121,${a.toFixed(3)})`;
+    ctx.lineWidth = 4;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    hlSeed.pts.forEach((p, i) => {
+      const x = view.tx + p[0] * view.scale, y = view.ty - p[1] * view.scale;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    // 端点标记
+    ctx.fillStyle = '#ff7d6e';
+    for (const p of hlSeed.pts) {
+      ctx.beginPath();
+      ctx.arc(view.tx + p[0] * view.scale, view.ty - p[1] * view.scale, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // 状态角标
+  ctx.fillStyle = '#71809a';
+  ctx.font = '12px ui-monospace, Menlo, monospace';
+  ctx.fillText(`${view.sheet} · ${(view.scale).toFixed(2)}x · ${Object.values(data.layers).reduce((a, s) => a + s.length, 0)} 段`, 10, h - 10);
+}
+
+async function focus2D(seed) {
+  if (!seed || !seed.sheet) return;
+  hlSeed = seed;
+  host.classList.remove('breath');
+  void host.offsetWidth;        // 重启动画
+  host.classList.add('breath');
+  await showSheet(seed.sheet, seed.pts);
+  setTimeout(() => host.classList.remove('breath'), 5200);   // 呼吸 3 拍后停
+}
+
+// ---------- 2D pan / zoom ----------
+let pan = null;
+cv.addEventListener('mousedown', (e) => { pan = { x: e.clientX - view.tx, y: e.clientY - view.ty }; });
+cv.addEventListener('mousemove', (e) => { if (pan) { view.tx = e.clientX - pan.x; view.ty = e.clientY - pan.y; draw(); } });
+addEventListener('mouseup', () => { pan = null; });
+cv.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = cv.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const k = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  const ns = Math.min(60, Math.max(0.4, view.scale * k));
+  const kk = ns / view.scale;
+  view.tx = mx - kk * (mx - view.tx);
+  view.ty = my - kk * (my - view.ty);
+  view.scale = ns;
+  draw();
+}, { passive: false });
+
+// ================================================================
+// 血统气泡
+// ================================================================
+const ORIGIN_CN = {
+  dxf_geom: '直读 DXF 实线', marker_synth: '短划合成', boundary_leg_bridge: '边界腿桥接',
+  derived_parametric_base: '参数化补全', derived_4face: '对称四面衍生',
+  diaphragm_reconstructed: '横隔重建', terminal_pair_gen: '端对生成',
+  diagonal_topology_reconstructed: '斜杆拓扑重建', panel_template_completion: '节间模板补全',
+  crossarm_truss_headless: '横担补全', lightning_rod_headless: '避雷针补全',
+  neck_brace_completion: '颈撑补全', leg_chain_stitch: '腿链缝合',
+};
+const FACE_CN = { f: '正立面', b: '背立面', l: '左立面', r: '右立面', corner: '角柱' };
+const ROLE_CN = { LEG: '主材', DIAG: '斜材', HORIZ: '横材', HORIZONTAL: '横材', CROSS: '交叉材' };
+
+function showBubble(cid, b) {
+  const face = b.face ? (FACE_CN[b.face] || b.face) : null;
+  const origin = ORIGIN_CN[b.geometry_origin] || b.geometry_origin || '—';
+  const derived = b.derived_from && b.derived_from !== b.root_bar_id;
+  const title = b.bar_id
+    ? `件号 ${b.bar_id} · ${ROLE_CN[b.role] || b.role || '—'}`
+    : `${ROLE_CN[b.role] || b.role || '杆件'} · 无件号`;
+  let lineage;
+  if (b.source_file) {
+    lineage = `源自 ${b.source_file} 册${face ? `（${face}${b.geometry_origin !== 'dxf_geom' ? '，对称镜像生成' : ''}）` : ''}`;
+  } else {
+    lineage = '无直接图纸来源（拓扑/参数化重建）';
+  }
+  bubble.style.display = 'block';
+  bubble.innerHTML =
+    `<span class="close" title="关闭">✕</span><h4>${title}</h4><table>` +
+    `<tr><td>血统</td><td class="src">${lineage}</td></tr>` +
+    `<tr><td>规格</td><td>${b.section || '—'}</td></tr>` +
+    `<tr><td>几何来源</td><td>${origin}</td></tr>` +
+    (derived ? `<tr><td>衍生自</td><td class="src">${b.derived_from}</td></tr>` : '') +
+    `<tr><td>3D 长度</td><td>${b.length_mm_3d ? b.length_mm_3d.toFixed(0) + ' mm' : '—'}</td></tr>` +
+    `<tr><td>构件 ID</td><td class="src" style="font-size:11px">${cid}</td></tr>` +
+    `</table>` +
+    (b.seed
+      ? ''
+      : `<div class="none">该杆为重建/衍生杆，无 2D 母体线段可聚焦（诚实降级）。</div>`);
+  bubble.querySelector('.close').onclick = () => { bubble.style.display = 'none'; };
+}
+
+// ================================================================
+// 启动
+// ================================================================
+async function boot() {
+  const r = await fetch(`${BASE}/trace_bars.json`);
+  if (!r.ok) throw new Error(`trace_bars.json ${r.status}`);
+  const data = await r.json();
+  for (const [cid, b] of Object.entries(data.bars)) addBar(cid, b);
+  fitTower();
+  resize3D();
+  const traced = [...Object.values(data.bars)].filter((b) => b.seed).length;
+  document.getElementById('tag').textContent =
+    `35A2-ZC1 · 3D 骨架 ${data.bars ? Object.keys(data.bars).length : 0} 杆 · ${data.nodes ? Object.keys(data.nodes).length : 0} 节点 · 可追溯 ${traced} 杆`;
+
+  // 图纸切换按钮
+  const wrap = document.createElement('span');
+  wrap.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap';
+  for (const s of SHEETS) {
+    const btn = document.createElement('button');
+    btn.textContent = '图 ' + s.slice(-2);
+    btn.dataset.sheet = s;
+    btn.onclick = () => { hlSeed = null; showSheet(s); };
+    wrap.appendChild(btn);
+  }
+  sheetBar.prepend(wrap);
+  await showSheet(SHEETS[0]);
+}
+
+// 渲染循环：呼吸相位推进 + 3D 渲染
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+  if (hlSeed) { hlPhase += 0.09; draw(); }
+});
+
+new ResizeObserver(() => { resize3D(); draw(); }).observe(left);
+new ResizeObserver(() => { draw(); }).observe(host);
+addEventListener('resize', () => { resize3D(); draw(); });
+
+// 分栏拖动
+const divid = document.getElementById('divid');
+divid.onmousedown = (e) => {
+  e.preventDefault();
+  const move = (ev) => {
+    const lp = Math.min(innerWidth * 0.75, Math.max(innerWidth * 0.25, ev.clientX));
+    left.style.flex = `0 0 ${lp}px`;
+  };
+  const up = () => { removeEventListener('mousemove', move); removeEventListener('mouseup', up); };
+  addEventListener('mousemove', move);
+  addEventListener('mouseup', up);
+};
+
+boot().catch((e) => {
+  document.getElementById('tag').textContent =
+    (location.protocol === 'file:'
+      ? 'file:// 打开会被浏览器拦截 fetch，请经 http 访问（python web/server.py）'
+      : `资源加载失败：${e && e.message || e}`);
+});
+
+// 控制台演示 / 验收钩子
+window.__traceview = {
+  select: (cid) => { if (bars.has(cid)) { selectBar(cid); return true; } return false; },
+  bar: (cid) => bars.get(cid)?.props || null,
+  sheet: (s) => { hlSeed = null; return showSheet(s); },
+  tracedCids: () => [...bars.entries()].filter(([, b]) => b.props.seed).map(([cid]) => cid),
+};
+</script>
+</body>
+</html>

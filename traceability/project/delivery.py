@@ -108,6 +108,22 @@ def export_detail_qa_atlas(
         return {"present": False, "error": str(exc), "non_structural": True}
 
 
+def _load_bom_rows(bom_path: Optional[str | Path]) -> List[Dict[str, Any]]:
+    """master BOM 行列表（evidence_prune R4 配额源）。文件缺失/解析失败
+    返回空列表——R4 无配额来源时该组跳过，不影响 R1-R3。"""
+    if not bom_path:
+        return []
+    p = Path(bom_path)
+    if not p.exists():
+        return []
+    import csv
+    try:
+        return list(csv.DictReader(
+            p.read_text(encoding="utf-8-sig").splitlines()))
+    except (OSError, UnicodeDecodeError):
+        return []
+
+
 def _load_review_exemptions(ov: Dict[str, Any],
                             layer_map_path: Optional[str | Path] = None) -> Optional[Path]:
     """线1 verified delivery（2026-09-03）：加载人工复核豁免文件。
@@ -780,6 +796,22 @@ def deliver_project(
             _dfm = merged_model.components.get("drawing_file")
             if _dfm is not None:
                 _dfm.properties["dedup_identical_bars_report"] = dict(_dd)
+
+        # 阶段二（2026-09-07）：证据置信分层剪枝器。overlay ``evidence_prune``
+        # 显式开启才执行（默认关闭，JC1/JC2 红线零变化）。规则族见
+        # traceability/solve/evidence_prune.py 模块 docstring：
+        #   R1 无投影证据的纯推断杆 / R2 dxf_geom 四面镜像 / R3 悬空断头 /
+        #   R4 BOM (segment,role) 刚性配额。
+        # 被剪杆写 pruned_by provenance，审计报告落 drawing_file.properties。
+        if isinstance(ov, dict) and ov.get("evidence_prune"):
+            from ..solve.evidence_prune import apply_evidence_prune
+            _ep_report = apply_evidence_prune(
+                merged_model, ov, bom_rows=_load_bom_rows(bom_path))
+            if _ep_report.get("enabled"):
+                print(
+                    f"[阶段二 evidence_prune] rules={_ep_report.get('rules')} "
+                    f"bars {_ep_report.get('n_before')}→{_ep_report.get('n_after')}",
+                    flush=True)
 
     # A1 证据集 BOM 白名单核验（2026-09-06）：识别件号与 master BOM 交叉
     # 核对，非 BOM 件号降级「待验证」（bar_id=UNLABELED_BOM_PENDING_*，原值
