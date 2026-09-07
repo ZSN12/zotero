@@ -329,11 +329,19 @@ function barEvidence(cid) {
   const comp = window.__ev && window.__ev.get(cid);
   if (!comp) return null;
   const p = comp;
+  const proto = p.prototype || null;   // 导出器四级解析：direct/mirror/side/sheet_cover
   let ref = (p.projection_refs || []).find((r) => r.sheet_id) || null;
   let isDerived = false;
+  let sheet = null, handle = null, mode = null;
 
-  // 若没有直接 projection_refs，通过 derived_from 或 root_bar_id 寻找母体直读杆
-  if (!ref) {
+  if (ref) {
+    // 直读杆：自己的 projection_refs
+    sheet = ref.sheet_id; handle = ref.source_component_id; mode = 'direct';
+  } else if (proto && proto.sheet) {
+    sheet = proto.sheet; handle = proto.handle || null; mode = proto.mode;
+    isDerived = mode === 'mirror' || mode === 'side';
+  } else {
+    // 兜底：通过 derived_from/root_bar_id 找母体直读杆（旧 evidence 数据兼容）
     const motherKey = p.derived_from || p.root_bar_id;
     if (motherKey) {
       for (const cand of [motherKey, `4f_${motherKey}_F`, `4f_${motherKey}`, String(motherKey).replace(/_[BLR]$/, '_F')]) {
@@ -341,7 +349,8 @@ function barEvidence(cid) {
         if (parent && parent.projection_refs?.length) {
           ref = parent.projection_refs.find((r) => r.sheet_id) || null;
           if (ref) {
-            isDerived = true;
+            sheet = ref.sheet_id; handle = ref.source_component_id;
+            isDerived = true; mode = 'mirror';
             break;
           }
         }
@@ -355,8 +364,7 @@ function barEvidence(cid) {
     section: p.section || '—',
     role: p.role || '—',
     origin: p.geometry_origin || '—',
-    sheet: ref ? ref.sheet_id : null,
-    handle: ref ? ref.source_component_id : null,
+    sheet, handle, mode,
     confidence: p.confidence,
     isDerived,
   };
@@ -383,21 +391,37 @@ function showCard(cid, ev) {
     panel_template_completion: '节间模板实杆', crossarm_truss_completion: '横担实杆',
     boundary_leg_bridge: '边界腿桥接', side_direct: '侧视直读', side_mirror: '侧视镜像',
   }[ev.origin] || ev.origin;
+  // 诚实分级标签：direct/side = 有单根图元原型；mirror = 母体图元对称复制；
+  // sheet_cover = 该杆高程由某分册立面覆盖（仅册级关联，不声明单根图元）。
+  const MODE_LABEL = {
+    direct: '来源图纸', mirror: '母体图纸', side: '来源图纸（侧视）',
+    sheet_cover: '高程覆盖图纸',
+  };
+  const MODE_BTN = {
+    direct: '在图纸上查看 →', mirror: '查看母体图元 →',
+    side: '在侧视图中查看 →', sheet_cover: '查看该高程图纸区段 →',
+  };
+  const sheetLabel = ev.sheet ? (MODE_LABEL[ev.mode] || '来源图纸') : null;
   card.style.display = 'block';
   card.innerHTML =
     `<h4>件号 ${ev.bar_id} · ${ev.role}</h4><table>` +
     `<tr><td>截面</td><td>${ev.section}</td></tr>` +
     `<tr><td>构件类型</td><td><b>物理实体实杆</b>（${originCn}）</td></tr>` +
-    (ev.isDerived ? `<tr><td>衍生血统</td><td class="src">由正立面母体对称复制生成</td></tr>` : '') +
-    (ev.sheet ? `<tr><td>${ev.isDerived ? '母体图纸' : '来源图纸'}</td><td class="src">${ev.sheet} · ${ev.handle || ''}</td></tr>` : '') +
+    (ev.isDerived ? `<tr><td>衍生血统</td><td class="src">由母体图元对称复制/侧视生成</td></tr>` : '') +
+    (ev.sheet ? `<tr><td>${sheetLabel}</td><td class="src">${ev.sheet}${ev.handle ? ' · ' + ev.handle : ''}</td></tr>` : '') +
     (ev.confidence != null ? `<tr><td>置信度</td><td>${ev.confidence}</td></tr>` : '') +
     `</table>` +
     (ev.sheet
-      ? `<div style="margin-top:8px"><button id="goto" style="background:#2c4a86;color:#fff;border:0;border-radius:7px;padding:5px 14px;cursor:pointer;font:inherit">${ev.isDerived ? '查看复制的原生图元 →' : '在图纸上查看 →'}</button></div>`
+      ? `<div style="margin-top:8px"><button id="goto" style="background:#2c4a86;color:#fff;border:0;border-radius:7px;padding:5px 14px;cursor:pointer;font:inherit">${MODE_BTN[ev.mode] || '在图纸上查看 →'}</button></div>`
       : `<div style="margin-top:8px;color:#71809a">空间实体构件（基于规程/高程拓扑推导）</div>`);
   const goto = document.getElementById('goto');
-  if (goto) goto.onclick = () => { showSheet(ev.sheet); highlightByHandle(ev.handle, true); };
+  if (goto) goto.onclick = async () => {
+    await showSheet(ev.sheet);
+    if (ev.handle) highlightByHandle(ev.handle, true);
+  };
 }
+
+// sheet_cover / 无 handle 跳转：await showSheet 后无单根图元可高亮（诚实降级，册级关联）
 
 // 3D 点杆 → 图纸高亮
 renderer.domElement.addEventListener('pointerdown', (e) => {
