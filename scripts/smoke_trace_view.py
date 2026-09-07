@@ -2,7 +2,8 @@
 """traceview 资产冒烟脚本（不进 tests/，阶段一验收用）。
 
 复跑 scripts/export_trace_view.py 后执行本脚本，断言三段链路：
-  1) trace_bars.json 结构：1381 杆 / 节点表 / 直读杆与衍生杆都在。
+  1) trace_bars.json 结构：杆数随 evidence_prune 动态（阶段二/三后
+     1381→973，R1/R2/R5/R6 剪除 408 根）+ 节点表 + 直读杆与衍生杆都在。
   2) seed 2D 线段落在对应 DXF 图纸 bbox 内（坐标系一致性）。
   3) seed 线段附近存在 DXF 实线（母体线段真的画在图上，y 翻转对齐）。
 
@@ -24,14 +25,17 @@ def main() -> int:
     bars_doc = json.loads((TV / "trace_bars.json").read_text(encoding="utf-8"))
     bars = bars_doc["bars"]
     nodes = bars_doc["nodes"]
-    assert len(bars) == 1381, f"杆件数 {len(bars)} != 1381"
+    # 杆数随剪枝动态（2026-09-07 阶段三后 973；上限防爆炸、下限防漏导出）
+    assert 900 <= len(bars) <= 1381, f"杆件数 {len(bars)} 超出预期区间"
     assert len(nodes) >= 500, f"节点数 {len(nodes)} 异常"
 
     origins = {b["geometry_origin"] for b in bars.values()}
     assert "dxf_geom" in origins and "derived_4face" in origins, "几何来源覆盖不全"
 
     with_seed = {cid: b for cid, b in bars.items() if b.get("seed")}
-    assert len(with_seed) >= 400, f"可追溯杆 {len(with_seed)} 过少"
+    # 2026-09-07 阶段三后：镜像面 FP 杆随 R2 剪除（原 275 根带 seed），
+    # seed 总量随之下降——核心承诺是「直读杆 100% 可追溯」而非总量。
+    assert len(with_seed) >= 100, f"可追溯杆 {len(with_seed)} 过少"
     # 每张图纸都有 seed
     sheets_with_seed = {b["seed"]["sheet"] for b in with_seed.values()}
     assert len(sheets_with_seed) == 6, f"seed 图纸覆盖 {sheets_with_seed}"
@@ -39,7 +43,7 @@ def main() -> int:
     # 直读杆（dxf_geom）100% 有 seed；衍生四面杆允许无 seed（诚实降级）
     dxf_geom = [b for b in bars.values() if b["geometry_origin"] == "dxf_geom"]
     ratio = sum(1 for b in dxf_geom if b.get("seed")) / len(dxf_geom)
-    assert ratio > 0.6, f"dxf_geom 杆 seed 覆盖率 {ratio:.0%} 过低"
+    assert ratio == 1.0, f"dxf_geom 杆 seed 覆盖率 {ratio:.0%} 必须 100%"
 
     # seed 与 DXF 线段共域校验：抽 60 根，逐根找 3 单位内的线段
     checked = 0
