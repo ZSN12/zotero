@@ -88,7 +88,8 @@ const rim = new THREE.DirectionalLight(0x88aaff, 0.8); rim.position.set(-1.2, 0.
 scene.add(rim);
 scene.add(new THREE.GridHelper(120000, 60, 0x2b3850, 0x1a2230));
 
-const ROLE_COLORS = { LEG: 0x86b6ff, DIAG: 0xffcf6e, HORIZ: 0x7fe39c, CROSS: 0x7fe39c };
+// 银色系杆件配色：主材亮银 / 斜材中银 / 横材暗银（深浅拉开结构层次）
+const ROLE_COLORS = { LEG: 0xdde3ec, DIAG: 0xc2cad6, HORIZ: 0xa9b2c0, CROSS: 0xa9b2c0 };
 const matCache = new Map();     // key: role|isDirect|dim → material
 function barMat(role, isDirect, dim) {
   const k = `${role}|${isDirect ? 1 : 0}|${dim ? 1 : 0}`;
