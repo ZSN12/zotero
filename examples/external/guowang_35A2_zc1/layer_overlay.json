@@ -805,7 +805,8 @@
   "dedup_identical_tol_mm": 60.0,
   "evidence_prune": {
     "no_projection_evidence": true,
-    "mirror_face_dxf": true
+    "mirror_face_dxf": true,
+    "tip_platform_ring": true
   },
   "crossarm_truss_zone_z_min_mm": 26000.0,
   "crossarm_truss_zone_z_max_mm": 38000.0,

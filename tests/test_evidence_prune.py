@@ -165,6 +165,38 @@ class EvidencePruneTest(unittest.TestCase):
         self.assertEqual(n_removed, 1, "超编 2 根（4→cap2），砍 2 根推断、留 1")
         self.assertEqual(rep["rules"]["R4_bom_quota"], 2)
 
+    def test_r5_removes_tip_platform_ring(self):
+        """R5：tip_platform 模板环（terminal_pair_gen 域、无投影证据）→ 删。
+        实测 ZC1 10 杆全 FP；JC1 生成器无角点证据时生成 0 杆不受影响。"""
+        from traceability.solve.evidence_prune import apply_evidence_prune
+        m = _Model({
+            "tip": _bar("tip", origin="terminal_pair_gen", role="HORIZ",
+                       derived_from="tip_platform"),
+            "pair": _bar("pair", origin="terminal_pair_gen", role="DIAG",
+                         derived_from="4f_tps_xc_35800_36200_1"),
+            "drawing_file": _drawing_file(),
+        })
+        rep = apply_evidence_prune(m, {"evidence_prune": {
+            "tip_platform_ring": True}})
+        self.assertNotIn("tip", m.components)
+        self.assertIn("pair", m.components,
+                      "terminal_pair_gen 主力杆（R4 域）不受 R5 波及")
+        self.assertEqual(rep["rules"]["R5_tip_platform_ring"], 1)
+
+    def test_r5_spares_tip_ring_with_projection_refs(self):
+        """R5 前置条件：带投影证据的 tip_platform 杆保留——若某塔型
+        平台环真有 2D 证据（中心构型平台），规则不误杀。"""
+        from traceability.solve.evidence_prune import apply_evidence_prune
+        m = _Model({
+            "tip": _bar("tip", origin="terminal_pair_gen", role="HORIZ",
+                        derived_from="tip_platform",
+                        refs=[{"sheet_id": "S1"}]),
+            "drawing_file": _drawing_file(),
+        })
+        apply_evidence_prune(m, {"evidence_prune": {
+            "tip_platform_ring": True}})
+        self.assertIn("tip", m.components)
+
     def test_report_and_provenance_written(self):
         """证据链铁律：被剪杆写 pruned_by；报告落 drawing_file。"""
         from traceability.solve.evidence_prune import apply_evidence_prune

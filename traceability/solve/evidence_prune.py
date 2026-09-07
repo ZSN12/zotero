@@ -29,6 +29,16 @@
      无投影证据的推断杆（R1 同集）且两端点图度均为 1（与塔架其余部分
      仅在自身两端相连）——孤儿虚假杆的几何特征（阶段三核心判据）。
 
+  R5 塔尖平台模板环剪除（``evidence_prune.tip_platform_ring``）：
+     derived_from=tip_platform 的顶平台模板环杆（terminal_pair_gen
+     域、无投影证据）。实测 ZC1 10 杆全 FP（0 TP）：图形源数据显示
+     ZC1 顶平台是「角-角矩形框 + 上层斜撑」构型，平台框杆由
+     leg_chain_stitch 已 1:1 匹配，中心/边中点模板环在双视投影中
+     只是 FP。JC1 的同生成器因「无角点证据」前置条件天然生成 0 杆
+     （其真平台是中心+边中点构型，但生成器在 JC1 塔顶无四象限角点
+     时不触发）——规则对其零影响，无塔型分支。若其他塔型确有中心
+     构型平台且生成器触发，开启方需在 overlay 显式关闭本规则。
+
   R4 BOM 配额（``evidence_prune.bom_quota``，阶段二主机制）：
      按 (segment, role) 分段配额裁超额低置信杆。BOM 数量是刚性证据：
      每分段每角色图纸只装 N 件，模型超出即虚假。置信序（高→低）：
@@ -200,6 +210,16 @@ def apply_evidence_prune(
             db = deg.get(str(p.get("to_node")), 0)
             if da == 1 and db == 1:
                 remove[cid] = "R3_dangling_degree1"
+
+    # R5：塔尖平台模板环（tip_platform 补生成的中心/边中点拓扑）
+    if cfg.get("tip_platform_ring"):
+        for cid, p in bars:
+            if cid in remove:
+                continue
+            if (str(p.get("derived_from") or "") == "tip_platform"
+                    and _bar_origin(p) == "terminal_pair_gen"
+                    and not _has_projection_evidence(p)):
+                remove[cid] = "R5_tip_platform_ring"
 
     # R4：(segment, role) 刚性配额，低置信超额剪除
     quota_report: Dict[str, Any] = {}
