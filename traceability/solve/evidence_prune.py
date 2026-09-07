@@ -39,6 +39,14 @@
      时不触发）——规则对其零影响，无塔型分支。若其他塔型确有中心
      构型平台且生成器触发，开启方需在 overlay 显式关闭本规则。
 
+  R6 腿链拼接桥剪除（``evidence_prune.leg_stitch_bridge``）：
+     origin=leg_chain_stitch 的共线拼接插值杆。stitch 是腿链断裂处
+     的插值补杆——projection_refs 指向被拼接的源线而非该杆自身的
+     投影证据，故 R1 的 refs 豁免对它语义无效。双塔实测 30/30 全
+     0 TP（ZC1 0/11、JC1 0/19）：插值位置与真实杆位有系统性偏差。
+     与 R2 同类的「origin 语义剪除」先例（非按塔枚举——不分塔、
+     不分 refs，全量该 origin 语义即插值桥）。
+
   R4 BOM 配额（``evidence_prune.bom_quota``，阶段二主机制）：
      按 (segment, role) 分段配额裁超额低置信杆。BOM 数量是刚性证据：
      每分段每角色图纸只装 N 件，模型超出即虚假。置信序（高→低）：
@@ -220,6 +228,14 @@ def apply_evidence_prune(
                     and _bar_origin(p) == "terminal_pair_gen"
                     and not _has_projection_evidence(p)):
                 remove[cid] = "R5_tip_platform_ring"
+
+    # R6：腿链拼接桥（共线插值杆，refs 是源线非自身证据——双塔 0/30 TP）
+    if cfg.get("leg_stitch_bridge"):
+        for cid, p in bars:
+            if cid in remove:
+                continue
+            if _bar_origin(p) == "leg_chain_stitch":
+                remove[cid] = "R6_leg_stitch_bridge"
 
     # R4：(segment, role) 刚性配额，低置信超额剪除
     quota_report: Dict[str, Any] = {}

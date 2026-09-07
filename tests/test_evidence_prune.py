@@ -197,6 +197,26 @@ class EvidencePruneTest(unittest.TestCase):
             "tip_platform_ring": True}})
         self.assertIn("tip", m.components)
 
+    def test_r6_removes_leg_stitch_bridge(self):
+        """R6：leg_chain_stitch 拼接桥全剪（refs 指向源线非自身证据，
+        双塔实测 0/30 TP）。带 refs 的一并剪——豁免对插值语义无效。"""
+        from traceability.solve.evidence_prune import apply_evidence_prune
+        m = _Model({
+            "st_ref": _bar("st_ref", origin="leg_chain_stitch",
+                           refs=[{"sheet_id": "S1"}]),
+            "st_bare": _bar("st_bare", origin="leg_chain_stitch"),
+            "marker": _bar("marker", origin="marker_synth",
+                           refs=[{"sheet_id": "S1"}]),
+            "drawing_file": _drawing_file(),
+        })
+        rep = apply_evidence_prune(m, {"evidence_prune": {
+            "leg_stitch_bridge": True}})
+        self.assertNotIn("st_ref", m.components)
+        self.assertNotIn("st_bare", m.components)
+        self.assertIn("marker", m.components,
+                      "带 refs 的 marker_synth 不受 R6 影响（R6 只管 stitch）")
+        self.assertEqual(rep["rules"]["R6_leg_stitch_bridge"], 2)
+
     def test_report_and_provenance_written(self):
         """证据链铁律：被剪杆写 pruned_by；报告落 drawing_file。"""
         from traceability.solve.evidence_prune import apply_evidence_prune
