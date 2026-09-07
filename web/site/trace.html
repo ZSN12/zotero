@@ -34,6 +34,13 @@
   #card .src { color: #8ee6a8; word-break: break-all; font-size: 12px; }
   svg .hl-bar { stroke: #ffd479 !important; stroke-width: 3 !important; }
   svg .hl-node { fill: #ff7d6e !important; }
+  /* 点击 3D 杆 → 原生 CAD 图元黄色高亮 + 其余图元压暗（焦点模式） */
+  svg .cad-hl { stroke: #ffd479 !important; stroke-width: 2.6 !important; }
+  svg circle.cad-hl { fill: #ffd479 !important; stroke: #ffd479 !important; }
+  svg text.cad-hl { fill: #ffd479 !important; stroke: none !important; }
+  svg rect.cad-hl { fill: #ffd479 !important; stroke: none !important; }
+  svg .cad-dim { opacity: 0.18; }
+  svg #bg line, svg #bg path, svg #bg circle, svg #bg text, svg #bg rect { transition: opacity .15s linear; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -274,6 +281,16 @@ async function showSheet(sid) {
   }
   const stat = document.getElementById('sheetstat');
   if (stat) stat.textContent = `${sid} · 可追溯杆 ${hlEls.length}`;
+  // 背景原生图元索引（供点击 3D 杆后的黄色高亮）
+  bgIndex = indexBackground(svg);
+  bgIndex.byH = new Map();
+  for (const el of svg.querySelectorAll('#bg > [data-h]')) {
+    const h = el.getAttribute('data-h');
+    if (!bgIndex.byH.has(h)) bgIndex.byH.set(h, []);
+    bgIndex.byH.get(h).push(el);
+  }
+  bgIndex.all = new Set(svg.querySelectorAll('#bg > [data-h]'));
+  dimEls = [];   // 换图后压暗列表失效
 }
 
 // SVG pan/zoom（滚轮缩放 + 拖拽平移；origin 固定左上角，translate/scale 才是线性对应）
@@ -299,6 +316,172 @@ function glowSVG(el, on) {
   el.setAttribute('stroke-width', on ? 3 : 1);
 }
 
+// ---------- 原生 CAD 图元黄色高亮 ----------
+// 联接三层：① source_component_id=DXF handle（ZC1 多数册）→ data-h 直接点亮；
+// ② CLE 合成中心线（JC1 全部/ZC1 部分，DXF 无同名实体）→ 以 overlay 折线为
+//    走廊几何匹配双线角钢边 + 螺栓孔 + 件号文字；③ sheet_cover → 只给该杆
+//    3D 位置所在的图纸区段画黄框（册级诚实降级）。
+let bgIndex = null;      // {lines:[{h,x1,y1,x2,y2,len}], circles:[{h,cx,cy,r}], texts:[{h,x,y,w,txt}]}
+let cadHlEls = [];       // 当前黄色图元
+let dimEls = [];         // 焦点模式下被压暗的其余图元
+
+function indexBackground(svg) {
+  const idx = { lines: [], circles: [], texts: [] };
+  for (const el of svg.querySelectorAll('#bg > [data-h]')) {
+    const tag = el.tagName;
+    const h = el.getAttribute('data-h');
+    if (tag === 'line') {
+      const x1 = +el.getAttribute('x1'), y1 = +el.getAttribute('y1');
+      const x2 = +el.getAttribute('x2'), y2 = +el.getAttribute('y2');
+      idx.lines.push({ h, el, x1, y1, x2, y2, len: Math.hypot(x2 - x1, y2 - y1) });
+    } else if (tag === 'path' || tag === 'circle') {
+      // path 走 bbox 近似（单杆匹配走廊足够）；circle 精确圆心半径
+      if (tag === 'circle') {
+        idx.circles.push({ h, el, cx: +el.getAttribute('cx'), cy: +el.getAttribute('cy'),
+                           r: +el.getAttribute('r') });
+      } else {
+        let bb; try { bb = el.getBBox(); } catch { continue; }
+        if (bb.width === 0 && bb.height === 0) continue;
+        idx.lines.push({ h, el, x1: bb.x, y1: bb.y, x2: bb.x + bb.width, y2: bb.y + bb.height,
+                         len: Math.hypot(bb.width, bb.height), bbox: true });
+      }
+    } else if (tag === 'text') {
+      let bb; try { bb = el.getBBox(); } catch { continue; }
+      idx.texts.push({ h, el, cx: bb.x + bb.width / 2, cy: bb.y + bb.height / 2,
+                       rad: Math.max(bb.width, bb.height) / 2, txt: el.textContent });
+    }
+  }
+  return idx;
+}
+
+// 点 (px,py) 到线段 ab 的距离
+function ptSegDist(px, py, x1, y1, x2, y2) {
+  const vx = x2 - x1, vy = y2 - y1;
+  const L2 = vx * vx + vy * vy;
+  const t = L2 ? Math.max(0, Math.min(1, ((px - x1) * vx + (py - y1) * vy) / L2)) : 0;
+  return Math.hypot(px - (x1 + t * vx), py - (y1 + t * vy));
+}
+
+// overlay 折线 → 命中的原生图元集合（纯几何：方向一致 + 走廊贴近 + 跨度覆盖）
+function matchCadElements(pts, idx) {
+  const hits = new Map();   // element → true
+  const K = [];             // 折线拐点（两点即线段）
+  for (const p of pts) K.push({ x: p[0], y: p[1] });
+  const ax = K[0].x, ay = K[0].y;
+  const vx = K[K.length - 1].x - ax, vy = K[K.length - 1].y - ay;
+  const totalLen = Math.hypot(vx, vy);
+  const CORRIDOR = 14;      // 图纸 mm：双线角钢半宽 + 提取容差
+  const WIDE = 22;          // 宽走廊：图纸画法与中心线偏差较大的分册（06 册实测）
+  const ANG_TOL = 12;       // 角度容差（度）
+  const tAng = Math.atan2(vy, vx) * 180 / Math.PI;
+
+  for (const L of idx.lines) {
+    if (L.len < totalLen * 0.12 || L.len < 20) continue;   // 忽略过短碎线
+    const angL = Math.atan2(L.y2 - L.y1, L.x2 - L.x1) * 180 / Math.PI;
+    let dAng = Math.abs(angL - tAng) % 180;
+    if (dAng > 90) dAng = 180 - dAng;
+    if (dAng > ANG_TOL) continue;
+    const d1 = ptSegDist(ax, ay, L.x1, L.y1, L.x2, L.y2);
+    const d2 = ptSegDist(K[K.length - 1].x, K[K.length - 1].y, L.x1, L.y1, L.x2, L.y2);
+    if (d1 <= CORRIDOR && d2 <= CORRIDOR) { hits.set(L.el, 'line'); continue; }
+    // 宽走廊补捞：中点贴近 + 在杆轴上的纵向投影与自身长度重叠过半（挡掉交叉斜材）
+    const mx = (L.x1 + L.x2) / 2, my = (L.y1 + L.y2) / 2;
+    if (ptSegDist(mx, my, ax, ay, ax + vx, ay + vy) > WIDE) continue;
+    if (L.len < totalLen * 0.2) continue;
+    const t1 = ((L.x1 - ax) * vx + (L.y1 - ay) * vy) / (totalLen * totalLen);
+    const t2 = ((L.x2 - ax) * vx + (L.y2 - ay) * vy) / (totalLen * totalLen);
+    const lo = Math.min(t1, t2), hi = Math.max(t1, t2);
+    const inBand = Math.min(hi, 1) - Math.max(lo, 0);
+    if (inBand <= 0) continue;
+    const selfIn = Math.min(L.len, (hi - lo) * totalLen);
+    if (selfIn > 0 && inBand * totalLen >= 0.5 * selfIn) hits.set(L.el, 'line');
+  }
+  // 螺栓孔 / 中心圆：贴近走廊的圆
+  for (const C of idx.circles) {
+    const d = ptSegDist(C.cx, C.cy, ax, ay, ax + vx, ay + vy);
+    if (d <= CORRIDOR + C.r) hits.set(C.el, 'circle');
+  }
+  // 件号文字：折线端头附近（真杆件号都标在端部）
+  for (const T of idx.texts) {
+    const d = Math.min(ptSegDist(T.cx, T.cy, ax, ay, ax, ay),
+                       ptSegDist(T.cx, T.cy, ax + vx, ay + vy, ax + vx, ay + vy)) - T.rad;
+    if (d <= 26) hits.set(T.el, 'text');
+  }
+  return [...hits.keys()];
+}
+
+function clearCadHighlight() {
+  for (const el of cadHlEls) el.classList.remove('cad-hl');
+  for (const el of dimEls) el.classList.remove('cad-dim');
+  cadHlEls = []; dimEls = [];
+}
+
+// 主入口：把某杆的原型图元点亮为黄色（可选 zoom 聚焦第一个命中）
+// 时序防护：showSheet 是 async——索引还属于上一张图时先等它完成再绘制，
+// 且只有当该杆的图纸仍是当前图时才落笔（过期绘制丢弃）。恒返回 Promise。
+function highlightCad(cid, zoom) {
+  clearCadHighlight();
+  if (!bgIndex) return Promise.resolve(0);
+  const ev = barEvidence(cid);
+  if (!ev || !ev.sheet || ev.mode === 'sheet_cover') return Promise.resolve(0);   // 册级覆盖不声明单杆图元
+  if (curSheet !== ev.sheet) {
+    return showSheet(ev.sheet).then(() => {
+      if (curSheet === ev.sheet && selected && selected.cid === cid) return paintCad(cid, ev, zoom);
+      return 0;
+    });
+  }
+  return Promise.resolve(paintCad(cid, ev, zoom));
+}
+
+function paintCad(cid, ev, zoom) {
+  clearCadHighlight();
+  // ① handle 是 DXF 实体 handle：直接点亮（可能多条同 handle 图元）
+  let els = [];
+  const direct = ev.handle && bgIndex.byH.get(ev.handle);
+  if (direct) els = direct;
+
+  // ② CLE 合成中心线 / 其余模式：overlay 折线几何匹配
+  if (!els.length && ev.handle) {
+    const ov = overlay[cid] || Object.values(overlay).find((o) => o.handle === ev.handle);
+    if (ov && ov.pts) els = matchCadElements(ov.pts, bgIndex);
+  }
+
+  if (els.length) {
+    for (const el of els) el.classList.add('cad-hl');
+    cadHlEls = els;
+    // 焦点模式：其余背景图元压暗，黄色即视觉焦点
+    const hlSet = new Set(els);
+    dimEls = [...bgIndex.all].filter((el) => !hlSet.has(el));
+    for (const el of dimEls) el.classList.add('cad-dim');
+    if (zoom) zoomToBBox(els);
+    return els.length;
+  }
+  return 0;
+}
+
+function zoomToBBox(els) {
+  const svg = svghost.querySelector('svg');
+  const host = svghost.getBoundingClientRect();
+  const vb = svg.viewBox.baseVal;
+  const fit = Math.min(host.width / vb.width, host.height / vb.height);
+  const ox = (host.width - vb.width * fit) / 2;
+  const oy = (host.height - vb.height * fit) / 2;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const el of els) {
+    let bb; try { bb = el.getBBox(); } catch { continue; }
+    if (!isFinite(bb.width)) continue;
+    x0 = Math.min(x0, bb.x); y0 = Math.min(y0, bb.y);
+    x1 = Math.max(x1, bb.x + bb.width); y1 = Math.max(y1, bb.y + bb.height);
+  }
+  if (!isFinite(x0)) return;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const px = (cx - vb.x) * fit + ox, py = (cy - vb.y) * fit + oy;
+  const segPx = Math.max(Math.hypot(x1 - x0, y1 - y0) * fit, 60);
+  const scale = Math.max(0.6, Math.min(30, (Math.min(host.width, host.height) * 0.45) / segPx));
+  svg.style.transform = `translate(${host.width / 2 - px * scale}px, ${host.height / 2 - py * scale}px) scale(${scale})`;
+}
+
+
 // 「仅直读杆高亮」开关：保持全塔物理实体可见，切换直读杆突出状态
 function applyOnlyTraced() {
   const ev = window.__ev;
@@ -322,6 +505,7 @@ function clearSel3D() {
   selected = null;
   card.style.display = 'none';
   clearSVGHighlight();
+  clearCadHighlight();
 }
 
 // ---------- 联动 ----------
@@ -416,8 +600,8 @@ function showCard(cid, ev) {
       : `<div style="margin-top:8px;color:#71809a">空间实体构件（基于规程/高程拓扑推导）</div>`);
   const goto = document.getElementById('goto');
   if (goto) goto.onclick = async () => {
-    await showSheet(ev.sheet);
-    if (ev.handle) highlightByHandle(ev.handle, true);
+    await highlightCad(cid, true);
+    highlightByHandle(ev.handle, true);
   };
 }
 
@@ -443,8 +627,10 @@ function select3D(mesh, scroll) {
   if (ev) showCard(selected.cid, ev);
   clearSVGHighlight();
   if (ev && ev.sheet) {
-    if (curSheet !== ev.sheet) showSheet(ev.sheet).then(() => highlightByHandle(ev.handle, true));
-    else highlightByHandle(ev.handle, true);
+    // highlightCad 内部处理换图时序（含过期绘制丢弃）
+    highlightCad(selected.cid, true).then(() => highlightByHandle(ev.handle, true));
+  } else {
+    clearCadHighlight();
   }
 }
 
@@ -565,6 +751,7 @@ window.__trace = {
   barsWithSheet: () => [...window.__ev.entries()].filter(([, c]) => c.projection_refs?.length).map(([cid]) => cid),
   tower: (tid) => switchTower(tid),
   current: () => tower,
+  cadHits: async (cid) => await highlightCad(cid || (selected && selected.cid), false),
 };
 </script>
 </body>
