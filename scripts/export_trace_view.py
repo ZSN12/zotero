@@ -167,12 +167,16 @@ def main() -> int:
             sheet, key = p["root_bar_id"].split("__", 1)
             hit = ov_by_key.get((sheet, key))
             if hit:
-                seed = {"sheet": sheet, **hit}
+                seed = {"sheet": sheet, **hit, "via": "root_bar_id"}
+        if seed is None and p.get("derived_from") and "__" in p["derived_from"]:
+            sheet, key = p["derived_from"].split("__", 1)
+            hit = ov_by_key.get((sheet, key))
+            if hit:
+                seed = {"sheet": sheet, **hit, "via": "derived_from"}
         if seed is None and p.get("source_file"):
             sid = p["source_file"]
             bar_id = p.get("bar_id")
-            face = (p.get("face") or "f")
-            # face f/b 的 seed 在 <sheet>__front；l/r 在 side（该塔侧立面）
+            # 无论处于哪个 face，正面原生线段都是其几何母体
             for key in (f"bar_{bar_id}_front", f"bar_{bar_id}_side"):
                 hit = ov_by_key.get((sid, key))
                 if hit:

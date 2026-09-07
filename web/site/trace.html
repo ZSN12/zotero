@@ -89,32 +89,33 @@ scene.add(rim);
 scene.add(new THREE.GridHelper(120000, 60, 0x2b3850, 0x1a2230));
 
 const ROLE_COLORS = { LEG: 0x86b6ff, DIAG: 0xffcf6e, HORIZ: 0x7fe39c, CROSS: 0x7fe39c };
-// 识别杆（有图纸实体）实色、补全杆压暗降透明——官网式「密而清晰」的层次来自此
-const DIM_ALPHA = 0.22;
-const matCache = new Map();     // key: role|traced|dim → material
-function barMat(role, traced, dim) {
-  const k = `${role}|${traced ? 1 : 0}|${dim ? 1 : 0}`;
+const matCache = new Map();     // key: role|isDirect|dim → material
+function barMat(role, isDirect, dim) {
+  const k = `${role}|${isDirect ? 1 : 0}|${dim ? 1 : 0}`;
   if (!matCache.has(k)) {
     const base = ROLE_COLORS[role] || 0x9aa7b8;
     const c = new THREE.Color(base);
-    if (!traced) c.lerp(new THREE.Color(0x2a3446), dim ? 0.55 : 0.35);   // 补全杆向背景色收
+    if (dim) c.lerp(new THREE.Color(0x10141c), 0.7);
+    // 全部杆件（直读与衍生）均为 100% 物理实心实体材质
     matCache.set(k, new THREE.MeshStandardMaterial({
-      color: c, metalness: 0.3, roughness: 0.62,
-      transparent: !traced, opacity: !traced ? (dim ? DIM_ALPHA : 0.5) : 1,
-      depthWrite: traced,
+      color: c,
+      metalness: 0.35,
+      roughness: 0.58,
+      transparent: false,
+      opacity: 1.0,
+      depthWrite: true,
     }));
   }
   return matCache.get(k);
 }
 const id2mesh = new Map();      // model.json component_id → mesh
 const meshById = new Map();     // mesh.uuid → {cid, props, src}
-const tracedMeshes = [];        // 有图纸实体的杆（「仅图纸实体」开关用）
-const synthMeshes = [];         // 补全杆
+const tracedMeshes = [];        // 有图纸实体的杆
+const synthMeshes = [];         // 衍生/补全杆
 let towerModel = null;          // 当前塔根节点（切塔时从场景移除）
 let selected = null;
-// 默认「仅图纸实体」：每根可见杆都必须有 projection_refs（图纸证据）。
-// 补全杆（panel_template/diag_synth 等无证据类）只在用户显式关闭开关时显示。
-let onlyTraced = true;
+// 默认展示完整铁塔实体（全部物理实杆均显示）
+let onlyTraced = false;
 
 const pickColor = new THREE.Color(0xff5f4e);
 const raycaster = new THREE.Raycaster();
@@ -175,7 +176,7 @@ async function loadModel(modelJson, gltf) {
   window.__ev = ev; window.__h2cid = h2cid;
   const nTraced = [...ev.values()].filter((c) => c.projection_refs?.length).length;
   document.getElementById('tag').textContent =
-    `${tower} · 图纸实体 ${nTraced} 杆（另有补全 ${id2mesh.size - nTraced} 杆，默认隐藏） / 图纸 ${TOWERS[tower].sheets.length} 张 · 点杆追溯`;
+    `${tower} · 3D 骨架实体 ${id2mesh.size} 杆（直读母体 ${nTraced} 杆 + 四面对称衍生 ${id2mesh.size - nTraced} 杆） · 点杆双向追溯`;
   return ev;
 }
 
@@ -210,11 +211,11 @@ function addSheetButtons() {
   sheetWrap.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;align-items:center';
   sheetBar.appendChild(sheetWrap);
   addSheetButtonsForTower();
-  // 3D 显示模式：仅图纸实体（默认，证据杆）↔ 全部（补全杆半透明追加）
+  // 3D 显示模式切换
   const bt = document.createElement('button');
   bt.id = 'btn-traced';
-  bt.textContent = '☑ 仅图纸实体';
-  bt.onclick = () => { onlyTraced = !onlyTraced; bt.textContent = (onlyTraced ? '☑' : '☐') + ' 仅图纸实体'; applyOnlyTraced(); };
+  bt.textContent = '☐ 仅直读杆高亮';
+  bt.onclick = () => { onlyTraced = !onlyTraced; bt.textContent = (onlyTraced ? '☑' : '☐') + ' 仅直读杆高亮'; applyOnlyTraced(); };
   const bwrap = document.createElement('span');
   bwrap.style.cssText = 'margin-left:auto;display:flex;gap:6px;align-items:center';
   bwrap.appendChild(bt);
@@ -297,7 +298,7 @@ function glowSVG(el, on) {
   el.setAttribute('stroke-width', on ? 3 : 1);
 }
 
-// 「仅图纸实体」开关：只渲染有 projection_refs 的杆（识别态），其余隐藏
+// 「仅直读杆高亮」开关：保持全塔物理实体可见，切换直读杆突出状态
 function applyOnlyTraced() {
   const ev = window.__ev;
   for (const o of tracedMeshes) {
@@ -306,13 +307,13 @@ function applyOnlyTraced() {
     o.visible = true;
   }
   for (const o of synthMeshes) {
-    o.visible = !onlyTraced;
-    if (!o.visible) continue;
+    o.visible = true;  // 实体实杆始终完整可见
     const comp = ev.get(o.userData.component_id);
     const role = o.userData.role || comp?.role || 'LEG';
-    o.material = barMat(role, false, false);   // 正常态：半透明压暗
+    // 仅直读杆高亮时，衍生杆微降亮度但不透明
+    o.material = barMat(role, false, onlyTraced);
   }
-  if (onlyTraced && selected && !selected.mesh.visible) clearSel3D();
+  if (selected) clearSel3D();
   document.getElementById('btn-traced')?.classList.toggle('on', onlyTraced);
 }
 function clearSel3D() {
@@ -327,8 +328,28 @@ function barEvidence(cid) {
   const comp = window.__ev && window.__ev.get(cid);
   if (!comp) return null;
   const p = comp;
-  const ref = (p.projection_refs || []).find((r) => r.sheet_id) || null;
+  let ref = (p.projection_refs || []).find((r) => r.sheet_id) || null;
+  let isDerived = false;
+
+  // 若没有直接 projection_refs，通过 derived_from 或 root_bar_id 寻找母体直读杆
+  if (!ref) {
+    const motherKey = p.derived_from || p.root_bar_id;
+    if (motherKey) {
+      for (const cand of [motherKey, `4f_${motherKey}_F`, `4f_${motherKey}`, String(motherKey).replace(/_[BLR]$/, '_F')]) {
+        const parent = window.__ev.get(cand);
+        if (parent && parent.projection_refs?.length) {
+          ref = parent.projection_refs.find((r) => r.sheet_id) || null;
+          if (ref) {
+            isDerived = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
   return {
+    cid,
     bar_id: p.bar_id || '—',
     section: p.section || '—',
     role: p.role || '—',
@@ -336,6 +357,7 @@ function barEvidence(cid) {
     sheet: ref ? ref.sheet_id : null,
     handle: ref ? ref.source_component_id : null,
     confidence: p.confidence,
+    isDerived,
   };
 }
 
@@ -353,26 +375,27 @@ function highlightByHandle(handle, pan) {
 
 function showCard(cid, ev) {
   const originCn = {
-    dxf_geom: '直读 DXF', leg_synth: '主腿合成', diag_synth: '斜材合成',
+    dxf_geom: '直读 DXF 实线', leg_synth: '主腿合成', diag_synth: '斜材合成',
     marker_synth: '短划合成', diag_complete: '斜材补全', leg_chain_stitch: '腿链缝合',
-    derived_4face: '四面重建', derived_parametric_base: '参数化补全',
-    diaphragm_reconstructed: '横隔重建', terminal_pair_gen: '端对生成',
-    panel_template_completion: '节间模板补全', crossarm_truss_completion: '横担补全',
+    derived_4face: '对称四面实杆', derived_parametric_base: '参数化补全实杆',
+    diaphragm_reconstructed: '横隔实杆', terminal_pair_gen: '端对生成实杆',
+    panel_template_completion: '节间模板实杆', crossarm_truss_completion: '横担实杆',
     boundary_leg_bridge: '边界腿桥接', side_direct: '侧视直读', side_mirror: '侧视镜像',
   }[ev.origin] || ev.origin;
   card.style.display = 'block';
   card.innerHTML =
     `<h4>件号 ${ev.bar_id} · ${ev.role}</h4><table>` +
     `<tr><td>截面</td><td>${ev.section}</td></tr>` +
-    `<tr><td>几何来源</td><td>${originCn}</td></tr>` +
-    (ev.sheet ? `<tr><td>来源图纸</td><td class="src">${ev.sheet} · ${ev.handle || ''}</td></tr>` : '') +
+    `<tr><td>构件类型</td><td><b>物理实体实杆</b>（${originCn}）</td></tr>` +
+    (ev.isDerived ? `<tr><td>衍生血统</td><td class="src">由正立面母体对称复制生成</td></tr>` : '') +
+    (ev.sheet ? `<tr><td>${ev.isDerived ? '母体图纸' : '来源图纸'}</td><td class="src">${ev.sheet} · ${ev.handle || ''}</td></tr>` : '') +
     (ev.confidence != null ? `<tr><td>置信度</td><td>${ev.confidence}</td></tr>` : '') +
     `</table>` +
     (ev.sheet
-      ? `<div style="margin-top:8px"><button id="goto" style="background:#2c4a86;color:#fff;border:0;border-radius:7px;padding:4px 12px;cursor:pointer;font:inherit">在图纸上查看 →</button></div>`
-      : `<div style="margin-top:8px;color:#71809a">参数化补全杆件：无对应图纸实体（诚实分色）</div>`);
+      ? `<div style="margin-top:8px"><button id="goto" style="background:#2c4a86;color:#fff;border:0;border-radius:7px;padding:5px 14px;cursor:pointer;font:inherit">${ev.isDerived ? '查看复制的原生图元 →' : '在图纸上查看 →'}</button></div>`
+      : `<div style="margin-top:8px;color:#71809a">空间实体构件（基于规程/高程拓扑推导）</div>`);
   const goto = document.getElementById('goto');
-  if (goto) goto.onclick = () => { showSheet(ev.sheet); highlightSVG(cid, true); };
+  if (goto) goto.onclick = () => { showSheet(ev.sheet); highlightByHandle(ev.handle, true); };
 }
 
 // 3D 点杆 → 图纸高亮

@@ -116,17 +116,20 @@ function addBar(cid, b) {
 
 const matCache = new Map();
 function barMaterial(b) {
-  const traced = !!b.seed;
-  const k = `${b.role}|${traced}`;
-  if (!matCache.has(k)) {
-    const c = new THREE.Color(ROLE_COLORS[b.role] || 0x9aa7b8);
-    if (!traced) c.lerp(new THREE.Color(0x2a3446), 0.45);
-    matCache.set(k, new THREE.MeshStandardMaterial({
-      color: c, metalness: 0.25, roughness: 0.7,
-      transparent: !traced, opacity: traced ? 1 : 0.4, depthWrite: traced,
+  // 全部杆件（直读杆与衍生杆）均为物理实体实杆，100% 不透明实心材质
+  const role = b.role || 'OTHER';
+  if (!matCache.has(role)) {
+    const c = new THREE.Color(ROLE_COLORS[role] || 0x9aa7b8);
+    matCache.set(role, new THREE.MeshStandardMaterial({
+      color: c,
+      metalness: 0.35,
+      roughness: 0.6,
+      transparent: false,
+      opacity: 1.0,
+      depthWrite: true,
     }));
   }
-  return matCache.get(k);
+  return matCache.get(role);
 }
 
 function fitTower() {
@@ -349,8 +352,8 @@ function showBubble(cid, b) {
     `<tr><td>构件 ID</td><td class="src" style="font-size:11px">${cid}</td></tr>` +
     `</table>` +
     (b.seed
-      ? ''
-      : `<div class="none">该杆为重建/衍生杆，无 2D 母体线段可聚焦（诚实降级）。</div>`);
+      ? `<div style="color:#ffd479;margin-top:8px;font-size:12px;">★ 实体实杆：已联动定位并高亮其对应的 CAD 原生图元。</div>`
+      : `<div class="none">空间结构实杆（按规程/高程拓扑重建），无单一 2D 提取图元。</div>`);
   bubble.querySelector('.close').onclick = () => { bubble.style.display = 'none'; };
 }
 
