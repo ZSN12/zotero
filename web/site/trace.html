@@ -95,14 +95,13 @@ const rim = new THREE.DirectionalLight(0x88aaff, 0.8); rim.position.set(-1.2, 0.
 scene.add(rim);
 scene.add(new THREE.GridHelper(120000, 60, 0x2b3850, 0x1a2230));
 
-// 材质分色（国网规范塔参考配色）：主柱腿材 LEG 深空钛灰 / 斜材 DIAG 青铜金 /
-// 横担横隔 HORIZ·CROSS 翠蓝——三类构件一眼分层，替代旧全银灰系。
-const ROLE_COLORS = { LEG: 0x4a5568, DIAG: 0xd4af37, HORIZ: 0x38b2ac, CROSS: 0x38b2ac };
-const ROLE_SURFACE = {   // 金属度/粗糙度随构件类型微调：腿材镜面感强、横材哑光
-  LEG: { metalness: 0.55, roughness: 0.45 },
-  DIAG: { metalness: 0.4, roughness: 0.52 },
-  HORIZ: { metalness: 0.32, roughness: 0.58 },
-  CROSS: { metalness: 0.32, roughness: 0.58 },
+// 电力铁塔真实镀锌钢灰银色系：斜材亮银 / 主材冷钢银 / 横材中银
+const ROLE_COLORS = { LEG: 0x94a3b8, DIAG: 0xe2e8f0, HORIZ: 0xcbd5e1, CROSS: 0xcbd5e1 };
+const ROLE_SURFACE = {   // 真实镀锌角钢金属质感
+  LEG: { metalness: 0.65, roughness: 0.38 },
+  DIAG: { metalness: 0.60, roughness: 0.42 },
+  HORIZ: { metalness: 0.55, roughness: 0.48 },
+  CROSS: { metalness: 0.55, roughness: 0.48 },
 };
 const matCache = new Map();     // key: role|isDirect|dim → material
 // role 归一化：evidence.json 的 role 沿用 eval 口径 HORIZONTAL，
