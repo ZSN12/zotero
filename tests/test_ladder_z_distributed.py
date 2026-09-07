@@ -88,18 +88,21 @@ class TestDistributedLadder:
 
     def test_stacking_offsets_are_prefix_sums(self, tmp_path):
         """册号序堆叠：段边界（锚前缀和）都在 junctions 里。"""
-        _make_sheet(tmp_path / "T-02.dxf", {0: [5400, 900, 900, 800, 700, 700, 700, 700]})
-        _make_sheet(tmp_path / "T-04.dxf", {0: [6500, 800, 800, 800, 800, 800, 800, 800]})
+        # 版式：锚列（单值大标注）与主节拍列 x 相邻（dx 差 6）
+        _make_sheet(tmp_path / "T-02.dxf",
+                    {0: [5400], 6: [900, 900, 800, 700, 700, 700, 700]})
+        _make_sheet(tmp_path / "T-04.dxf",
+                    {0: [6500], 6: [800, 800, 800, 800, 800, 800, 800, 900]})
         lad = distributed_ladder(sorted(tmp_path.glob("T-*.dxf")))
         assert lad is not None
         # 段边界 = 锚前缀和 [0, 5400, 11900]
         for acc in (5400.0, 5400.0 + 6500.0):
             assert any(abs(j - acc) <= 1.0 for j in lad.junctions), \
                 f"段边界 {acc} 缺失"
-        # 段内节拍累计也是 junction（02 段从锚起：5400+900=6300）
-        assert 6300.0 in lad.junctions
-        # 04 段：11900+800=12700
-        assert 12700.0 in lad.junctions
+        # 段内节拍累计也是 junction（02 段节拍从段底起：900）
+        assert 900.0 in lad.junctions
+        # 04 段：5400+800=6200
+        assert 6200.0 in lad.junctions
 
     def test_single_sheet_no_ladder(self, tmp_path):
         """少于 2 段无法堆叠——返回 None。"""

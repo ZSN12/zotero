@@ -1934,14 +1934,27 @@ def complete_head_panel_chain(
         return (abs(abs(float(p[0])) - abs(float(p[1]))) < corner_tol_mm
                 and abs(float(p[0])) > 100.0)
 
-    # 锚层：横隔层 ∪ 角点轨迹簇
+    # 锚层：横隔层 ∪ 角点轨迹簇。轨迹簇只采「证据节点」——被至少
+    # 一根非 panel_template_completion 杆引用的节点（2026-09-07 自举
+    # 污染修复：ZC1 实测模板节点自成轨迹簇→伪锚层→每层 10 杆 FP 环，
+    # 8 个伪层 80+ 杆 0 TP；排除后轨迹簇还原 GT 真实层位链
+    # 30900/31600/32300/34900…）。
     anchors: set = set()
     for z in anchor_levels:
         z = float(z)
         if z >= z_min_mm - 800.0:
             anchors.add(round(z))
+    _evid_nodes: set = set()
+    for b in bars:
+        if (bool(b.get("panel_template_completion"))
+                or str(b.get("geometry_origin") or "") == "panel_template_completion"):
+            continue
+        _evid_nodes.add(b.get("from"))
+        _evid_nodes.add(b.get("to"))
     _corner_z: Dict[int, int] = {}
     for nid, p in nodes.items():
+        if nid not in _evid_nodes:
+            continue
         if _is_corner(p) and float(p[2]) >= z_min_mm:
             zk = int(round(float(p[2])))
             _corner_z[zk] = _corner_z.get(zk, 0) + 1

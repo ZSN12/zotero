@@ -92,17 +92,92 @@ ZC1 junctions `[5500, 9100, 10500, 11900, 14400, 16900, 19400, 33000, 39400]`
 
 ## 5. 交付物索引
 
-- `traceability/solve/evidence_prune.py`——R1/R2/R5/R6 生产实现
+- `traceability/solve/evidence_prune.py`——R1/R2/R5/R6 生产实现 +
+  R7 页内层位带吸附（默认关，§6 负结论）
 - `traceability/intake/ladder_z.py`——01-1 整塔阶梯 + 35A1-ZC1 分散式兜底（§4.1）
+- `scripts/run_batch_benchmark.py`——四塔阶梯定标批跑矩阵（任务一交付，
+  `tests/test_batch_benchmark.py` 8 项单测）
 - `tests/test_evidence_prune.py`——12 项单测全绿
+- `tests/test_direct_snap_layers.py`——7 项单测（R7，配置默认关）
 - `tests/test_ladder_z_distributed.py`——8 项单测全绿（签名去重/堆叠/GT 验证）
+- `tests/test_head_panel_honest_anchor.py`——3 项单测（headx 自举污染回归锁，§7）
 - `examples/external/guowang_35A2_zc1/layer_overlay.json`——ZC1 规则开关
 - `web/demo/35A2-ZC1/trace.html`——3D↔2D 双向追溯联动页（阶段一交付）
-- 提交链：c0accbe → 56c4e46 → 7519d84 → 37a2a0c（全部已推送 origin/main）
+- 提交链：c0accbe → 56c4e46 → 7519d84 → 37a2a0c（已推送）→ 本批
 
-## 6. 下一步（阶段四续）
+## 6. 直读端点噪声治理（任务二，2026-09-07 存档）
+
+**归因实测（推翻任务书预设「提取线段截短」假设）**：95 根直读 FP 中
+长度截短不显著（len diff 中位 -105mm）；x 向干净（dx 中位 5mm）；
+主因是**页窗标定系统差**——44 根刚性平移（per-sheet dz 中位
+05:-650 / 08:-730 / 10:-741~-1093 / 12:-670mm）+ 37 根单端错位。
+
+**四条路线的净收益（A2-dual-view-reconstructed 基线 TP=256 FP=597）**：
+
+| 路线 | 结果 | 结论 |
+|---|---|---|
+| stitch_collinear 容差调参 | 长度差不显著 | 任务书假设不成立，存档 |
+| ladder junction 吸附 | +3 TP | 微正，但依赖 ladder 证据边界 |
+| per-sheet 网格吸附 | improved=11 / degraded=10 | 净 0，弃 |
+| R7 页内层位带吸附（`direct_snap_layers`） | 生产净 -1 TP（TP 256→255） | **弃用，配置默认关** |
+
+R7 细节：同册直读端点 z 做 1D 聚类（gap 250mm 切带，带内 ≥2 计数），
+离群端点吸附带中心。模拟（GT 对照）+2 TP，但生产管线实测净 -1：
+R7 时机在 evidence_prune，之后 4-face 展开重建节点 z，吸附修正被
+部分覆盖（交付模型 recognized 端点残余离群 0——带结构已自洽）。
+实现保留（`evidence_prune.py` `_apply_direct_snap_layers` +
+`tests/test_direct_snap_layers.py` 7 项单测），overlay 关闭。
+
+**页窗标定残差 44 刚性平移的 GT-sweep 上界**：TP 25→66（recognized
+子口径），但纯图纸信号无法收敛该残差（ladder junction 与最优平移
+不一致）——上游换算标定（view_regions z_offset/scale）需引入新的
+图纸证据源，挂账。
+
+## 7. 模板层 FP 治理（任务三，2026-09-07 存档）
+
+**目标回溯**：panel_template_completion 244 FP + terminal_pair_gen
+132 FP = 376 模板层 FP，任务书预设「按高程区间映射 segment 配额，
+超额硬砍，P 突破 40~50%」。
+
+**四条配额路线全部实测无诚实判据（负结论存档）**：
+
+| 路线 | 实测障碍 |
+|---|---|
+| A. BOM 册配额（z_mid→册窗口→qty） | 12 册 BOM 垃圾解析（无截面/qty 全 1）；09 册窗口与 05/08 三重叠；589/973 模板杆在所有册窗外（模板补全是全塔性的，不分册） |
+| B. GT 带数×K 配额（模拟上界） | K=2/3/4/5 sweep：K=4 砍 117 杆仅伤 1 TP，但主力是「GT 空 带」整带抹除（[0,5500) 78 杆全砍）——本质用 GT 位置清空区域，评测公正性红线越界，不可生产化 |
+| C. 对称性重复度（同层同 face 杆数上限） | TP 层与 FP 层结构完全同构（每层 10 杆：4 边框+4 中腰+2 轴线；TP 层 33000 vs FP 层 35000 同构），无判据 |
+| D. 直读层位带证据（水平环只留有直读带的层） | 塔头 27 层全无直读带（图纸塔头段无直读），KEEP/CUT 层同构 |
+
+**页窗标定残差假设亦被推翻（任务二 §6 修正）**：05/08/09 三册
+重叠区（19.1k~26.9k）直读端点带中心对齐良好（Δ=0~124mm，多个带
+Δ=0），窗口 z_offset 校准基本正确。此前 GT-sweep 的「最优平移
+-650~-730」实为 GT 层位表与图纸节拍的命名差异，非标定错误。
+
+**根因重定性**：8 个全 FP 横杆层（29500/30200/30950/31967/34950/
+37300/38000/38700，80+ 杆 0 TP）不是「数量超额」而是**自举污染**——
+`complete_head_panel_chain` 的角点轨迹簇统计了模板自生成节点，
+伪层自成锚层再生成横杆环（模板生模板）。
+
+**已落地修复**：轨迹簇只采「被至少一根非 panel_template_completion
+杆引用」的证据节点（`tower_geometry.py` `_evid_nodes` 门控）。
+修复后锚层链 30950/31967/34950/36222（伪）→ 30900/31600/32300/
+34900/36600/37300（与 GT terminal 层位链一致）。端到端
+（A2-dual-view-reconstructed）：TP 256 持平、FP 597→596、P 30.0%；
+front-full TP 223→219（-4，≤5 门限内）。单测
+`tests/test_head_panel_honest_anchor.py` 3 项锁定回归。
+
+**结论**：P 40~50% 的任务书目标在诚实判据约束下不可达——残余
+FP 的三个组成（无判据模板层 / terminal 临界容差错配 / 直读页内
+噪声）均已实测穷尽。诚实路径上限 ≈31.5%（+消失层水平环砍，
+-40 FP 0 TP，模拟值；未上线的进一步砍削需以牺牲层链结构正确性
+为代价）。
+
+## 8. 下一步（阶段四续）
 
 1. ~~35A1-ZC1 ladder 版式兼容~~（已完成：分散式兜底，§4.1）→
    三塔 ladder 全通，全自动批跑标定路径成立；
-2. dxf 直读端点噪声治理（提取截断/粘连——A0 版面层问题）；
-3. 35A1-ZC1 塔头细节页（09/10/12）的 z 链裁剪信号（当前按上界过滤）。
+2. ~~dxf 直读端点噪声治理~~（已存档负结论，§6）——主因页窗标定残差，
+   纯图纸信号不可收敛，挂账上游标定证据源；
+3. 35A1-ZC1 塔头细节页（09/10/12）的 z 链裁剪信号（当前按上界过滤）；
+4. ~~R4 高程带配额锁~~（四条路线负结论 + headx 自举污染修复已落地，
+   §7）——诚实判据上限 ≈31.5%，结构正确性修复优先于指标冲刺。

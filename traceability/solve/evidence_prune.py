@@ -58,6 +58,15 @@
           只统计主材杆（role ∈ LEG/DIAG/CROSS），板类不进配额。
      每根被剪杆写 ``pruned_by`` provenance（证据链完整性铁律）。
 
+  R7 直读端点页内层位带吸附（``evidence_prune.direct_snap_layers``）：
+     同册直读（recognized）杆的端点 z 做页内 1D 聚类（gap 250mm 切带），
+     离群端点（离最近带中心 >250mm）吸附到该带中心。纯几何自洽净化：
+     图纸分段立面内杆端应落在层位带上，提取像素抖动/角钢双线边缘取点
+     造成的孤立端点回收到带内。无 GT、无 ladder 依赖（阶段五任务二实测：
+     阶梯结点/页窗网格吸附均受窗标定残差污染，净收益 +1~+2；页内自洽
+     聚类 +2 TP 且不依赖任何绝对标定）。只动 recognized 杆端点 z，
+     不改杆集合。变更写 ``snapped_by`` provenance。
+
 铁律对齐：
   * 不读 GT、不读评测结果；只消费 model 组件属性 + overlay 配置 + BOM。
   * 默认全部关闭（``evidence_prune`` 键缺省 → 零行为变化，JC1/JC2
@@ -243,6 +252,11 @@ def apply_evidence_prune(
         quota_report = _apply_bom_quota(
             model, bars, deg, remove, cfg, bom_rows or [])
 
+    # R7：直读端点页内层位带吸附（几何自洽净化，不改杆集合）
+    snap_report: Dict[str, Any] = {}
+    if cfg.get("direct_snap_layers"):
+        snap_report = _apply_direct_snap_layers(model, cfg)
+
     # provenance：被剪杆写 pruned_by 后删除（证据链铁律）
     for cid, rule in remove.items():
         comp = model.components.get(cid)
@@ -260,6 +274,8 @@ def apply_evidence_prune(
     }
     if quota_report:
         report["bom_quota"] = quota_report
+    if snap_report:
+        report["direct_snap_layers"] = snap_report
     for cid in remove:
         model.components.pop(cid, None)
     df = model.components.get("drawing_file")
@@ -362,6 +378,92 @@ def _apply_bom_quota(
         "mode": "explicit" if explicit else "bom_qty",
         "groups": pruned_groups,
         "tolerance_mm": tol,
+    }
+
+
+def _apply_direct_snap_layers(model: Any, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """R7：同册直读杆端点 z 的页内层位带吸附（纯几何自洽）。
+
+    版式依据（图纸分段立面）：同一册的直读杆端点应落在该段的层位带
+    （等节拍网格）上。提取端点因角钢双线边缘/连接板延长线取点产生
+    孤立偏移（实测 ZC1 近失直读杆 114 根中 37 根单端错位）。
+    页内全部直读端点 z 做 1D 聚类（gap 250mm 切带）后，离群端点
+    （离最近带中心 >250mm）吸附到带中心。
+
+    纯模型内几何：不读 ladder/overlay 窗/GT——带中心来自同册杆自身的
+    z 分布（多数端点在带内，少数离群被拉回）。只改 node z，不改杆集合。
+    """
+    gap = float(cfg.get("direct_snap_gap_mm", 250.0))
+
+    node_z: Dict[str, float] = _node_z(model)
+    # 同册直读杆：source.reference 的文件 stem 分组
+    by_sheet: Dict[str, List[tuple]] = defaultdict(list)
+    for comp in model.components.values():
+        if _kind(comp) != "tower_bar":
+            continue
+        p = _props(comp)
+        if str(p.get("geometry_class") or "") != "recognized":
+            continue
+        ref = ""
+        src = getattr(comp, "source", None) or (comp.get("source") if isinstance(comp, dict) else None)
+        if isinstance(src, dict):
+            ref = str(src.get("reference") or "")
+        elif src is not None:
+            # 管线内是 SourceRef 对象（model.py），评测侧是 dict（model.json）
+            ref = str(getattr(src, "reference", "") or "")
+        stem = ref.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        for nid in (str(p.get("from_node") or ""), str(p.get("to_node") or "")):
+            z = node_z.get(nid)
+            if z is not None:
+                by_sheet[stem].append((nid, z, comp))
+
+    snapped_nodes: Dict[str, float] = {}
+    snap_count = 0
+    for stem, items in by_sheet.items():
+        zs = sorted(z for _nid, z, _c in items)
+        if len(zs) < 4:
+            continue
+        # 1D 聚类（gap 切带）→ 层位带中心（带内均值）。
+        # 带内计数 ≥2 才是层位带——单点带是离群端点自身，不能作为
+        # 吸附目标（否则离群点自成一带永远不被吸附）。
+        bands: List[List[float]] = [[zs[0]]]
+        for z in zs[1:]:
+            if z - bands[-1][-1] <= gap:
+                bands[-1].append(z)
+            else:
+                bands.append([z])
+        centers = [sum(b) / len(b) for b in bands if len(b) >= 2]
+        if not centers:
+            continue
+        for nid, z, comp in items:
+            if nid in snapped_nodes:
+                continue  # 共享节点只处理一次
+            best_d, best_c = None, None
+            for c in centers:
+                d = abs(z - c)
+                if best_d is None or d < best_d:
+                    best_d, best_c = d, c
+            if best_d is None or best_d <= gap:
+                continue  # 带内，不动
+            # 离群端点吸附到带中心（写 provenance 到杆）
+            snapped_nodes[nid] = best_c
+            props = _props(comp)
+            props.setdefault("snapped_by", "R7_direct_snap_layers")
+            snap_count += 1
+
+    # 应用 z 修改（node 组件）
+    for nid, z in snapped_nodes.items():
+        comp = model.components.get(nid)
+        if comp is None:
+            continue
+        props = comp if isinstance(comp, dict) else (comp.properties or {})
+        if props.get("z") is not None:
+            props["z"] = round(z, 3)
+
+    return {
+        "sheets": len(by_sheet),
+        "snapped_endpoints": snap_count,
+        "gap_mm": gap,
     }
 
 

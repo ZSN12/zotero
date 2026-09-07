@@ -46,6 +46,8 @@ _LADDER_COLUMN_TOL = 40.0
 _LADDER_SUBCOLUMN_TOL = 5.0
 # 阶梯节拍最小值（mm）——过滤构件尺寸/编号混入
 _LADDER_BEAT_MIN_MM = 400.0
+# 分段立面段高锚认定（mm）：单值大标注 ≥ 此值为锚（02..08 实测 4000~9000）
+_SEGMENT_ANCHOR_MIN_MM = 4000.0
 # 累计锚认定：值 ≥ 塔高估计的此比例
 _CUM_ANCHOR_RATIO = 0.5
 # 腿判定：近竖线长 ≥ 图高的此比例，且长 ≥ 斜率的 3 倍
@@ -358,9 +360,15 @@ def _sheet_ladder_columns(dxf_path: str | Path,
     最大值为段高锚（例：5400 + 900/900/800/700×4），相邻列节拍
     错半位（800+1600×4+800），并集覆盖 GT 的半节拍层。
 
-    提取规则：H 向 DIM 按 x 容差切列，只留「格数 ≥ 2 且列和 ≥ 4000」
-    （段高量级）的列；列内按 y 升序原样累计（锚不特殊处理——04 页
-    实测锚 6500 在 y 序中段，累计口径与 GT 验证一致）。
+    提取规则（锚剥离版式模型，35A1-ZC1 分段立面实测）：
+      * 版式：每页左缘一组阶梯列——「锚标注」（单值 ≥4000，段高）
+        +「主节拍列」（格数 ≥2，列和 == 段高锚，自洽）+ 可选「半拍列」
+        （首尾半格，列和同 = 锚）。锚与主列 x 仅差 6~8 单位，必须在
+        atom 内剥离，否则锚混入节拍累计污染段内结点（04 页实测）；
+      * atom 切分按 x 容差（10 单位）；atom 内 ≥4000 的值剥离为锚候选，
+        其余值为节拍；节拍列判据 = 格数 ≥2 且列和 ≥2400（07 半拍列
+        sum=4000 实测有效，2400 门槛容纳更短段）；
+      * 列内按 y 升序累计（国网立面 y 向上 = 标高向上）。
     """
     import ezdxf
 
@@ -376,27 +384,33 @@ def _sheet_ladder_columns(dxf_path: str | Path,
             atoms.append([r])
         else:
             atoms[-1].append(r)
-    cols = []
+    cols: List[List[float]] = []
+    anchor_cols: List[List[float]] = []
     for a in atoms:
-        beats = [v for v, _x, _y, _o in sorted(a, key=lambda r: r[2])]
-        # 阶梯列判据：格数 ≥ 2 且列和达段高量级（07 半拍列 sum=4000 实测有效）
-        if len(beats) >= 2 and sum(beats) >= 4000:
+        beat_rows = [r for r in a if r[0] < _SEGMENT_ANCHOR_MIN_MM]
+        anchor_rows = [r for r in a if r[0] >= _SEGMENT_ANCHOR_MIN_MM]
+        if len(beat_rows) >= 2 and sum(v for v, *_ in beat_rows) >= 2400.0:
+            beats = [v for v, _x, _y, _o in sorted(beat_rows, key=lambda r: r[2])]
             cols.append(beats)
-    return cols
+        elif len(a) == 1 and a[0][0] >= _SEGMENT_ANCHOR_MIN_MM:
+            # 独立锚列（单值大标注）——段高证据，自成一格
+            anchor_cols.append([a[0][0]])
+    return cols + anchor_cols
 
 
 @dataclass
 class SegmentLadder:
     """一张分段立面的段内阶梯：锚 + 全列节拍并集结点（段内相对 z）。
 
-    junctions 是全部阶梯列（主列+半拍列）按图面 y 序累计的并集（含 0），
-    口径与 GT 验证一致（锚作为一格参与累计，不做特殊分离）。
+    锚取「独立锚列」的单值；无独立锚列时取主节拍列的列和（版式自洽：
+    主列节拍累计 = 段高）。junctions 是全部阶梯列（主列+半拍列）按
+    图面 y 序累计的并集（含 0 与锚）。
     """
 
     stem: str
-    anchor_mm: float  # 段高锚（列内最大值）
-    beats: List[float]  # 主列节拍（签名去重用，不含锚）
-    junctions: List[float]  # 全列累计并集（含 0；可超过锚——错位列累计）
+    anchor_mm: float  # 段高锚（独立锚列单值，或主列和）
+    beats: List[float]  # 主列节拍（签名去重用）
+    junctions: List[float]  # 全列累计并集（含 0；半拍列可超锚）
     x_pos: float  # 主列 x（排序参考）
 
 
@@ -421,10 +435,13 @@ def segment_ladders_from_sheets(
         cols = _sheet_ladder_columns(p, bar_layers)
         if not cols:
             continue
+        # 锚 = 独立锚列单值（版式首选）；无独立锚列时 = 主列和（自洽）
+        anchor_vals = [c[0] for c in cols
+                       if len(c) == 1 and c[0] >= _SEGMENT_ANCHOR_MIN_MM]
         main = max(cols, key=lambda c: sum(c))
-        anchor = max(main)
-        beats = sorted(v for v in main if v != anchor)
-        jset = {0.0}
+        anchor = anchor_vals[0] if anchor_vals else sum(main)
+        beats = sorted(main)
+        jset = {0.0, round(anchor, 1)}
         for c in cols:
             acc = 0.0
             for v in c:
