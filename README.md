@@ -20,7 +20,7 @@
 - 改了某个判断后，哪些结果要作废？
 
 本项目用**结构化数据模型 + 依赖 DAG + 变更传播引擎**回答这四个问题，
-并提供一个给 AI 使用的 **Skill**（`SKILL.md`）。
+并提供一个给 AI 使用的 **Skill**（`docs/archive/SKILL.md`）。
 
 ## 60 秒开始（角钢塔领域包）
 
@@ -161,7 +161,7 @@ engineering-trace/
 
 ## 铁塔结构图识别与 3D 重构
 
-完整实施方案见 [`TOWER_IMPLEMENTATION_PLAN.md`](TOWER_IMPLEMENTATION_PLAN.md)。
+完整实施方案见 [`TOWER_IMPLEMENTATION_PLAN.md`](docs/archive/TOWER_IMPLEMENTATION_PLAN.md)。
 图层 / 件号 / 视图区域规范见 [`schema/tower_layer_map.json`](schema/tower_layer_map.json)，
 解析器与 DXF 生成器共用这一份规范。
 
@@ -367,7 +367,7 @@ bash scripts/acceptance.sh --with-mllm   # 追加 Kimi 门禁（需 KIMI_API_KEY
 系统本质 = **多模态模型（读图）+ Skill（约束行为）+ Harness（验证输出）**。  
 与 [仝心圆官网](https://concentriccirclesmrtt.github.io) 一致：工程 Agent Harness 编排 Skills、工具与验证，输出可核验的工程上下文。
 
-完整说明见 [`SKILL_HARNESS_ARCHITECTURE.md`](SKILL_HARNESS_ARCHITECTURE.md)。  
+完整说明见 [`SKILL_HARNESS_ARCHITECTURE.md`](docs/archive/SKILL_HARNESS_ARCHITECTURE.md)。  
 **产品路径 vs 当前 DXF 实现缺口**见 [`docs/PRODUCT_PATH_AND_AGENT_PLAN.md`](docs/PRODUCT_PATH_AND_AGENT_PLAN.md)。
 
 ```bash

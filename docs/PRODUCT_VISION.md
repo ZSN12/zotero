@@ -117,7 +117,7 @@
 ## 与其它文档的关系
 
 - **实现路径 & Agent 缺口**：见 [`PRODUCT_PATH_AND_AGENT_PLAN.md`](PRODUCT_PATH_AND_AGENT_PLAN.md)
-- **Skill + Harness 本质**：见 [`../SKILL_HARNESS_ARCHITECTURE.md`](../SKILL_HARNESS_ARCHITECTURE.md)
+- **Skill + Harness 本质**：见 [`archive/SKILL_HARNESS_ARCHITECTURE.md`](archive/SKILL_HARNESS_ARCHITECTURE.md)
 - **交付什么**：见 [`DELIVERY_NOTE.md`](DELIVERY_NOTE.md)
 - **CAD 里有什么、哪些能直接读**：见 [`DXF_DATA_READING.md`](DXF_DATA_READING.md)
 - **README 三阶段管线**：见 [`../README.md`](../README.md)

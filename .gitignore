@@ -17,9 +17,6 @@ web/demo/**/*.glb
 web/demo/**/*.json
 web/demo/**/latest_deliver/
 
-# 35A1-JC1 单塔运行产物目录（canonical/skeleton/detail_atlas glb + index.html）
-web/demo/35A1-JC1-hybrid/
-
 # 敏感 / 大体积安装包
 *.dmg
 tools/oda-file-converter/ODAFileConverter.app/
@@ -42,8 +39,7 @@ build/
 web/demo/**/trace/*.glb.tmp
 !web/demo/**/trace/*.glb
 !web/demo/**/trace/*.json
-# jc1.html 演示塔（GT 参考模型，690KB）：trace.html 双塔主视图不受影响，
-# 此白名单只保证 demo 查看器在线上不黑屏。
+# product.html 内嵌查看器资产（GT 参考模型，690KB）。
 !web/demo/35A1-JC1/gt_reference.glb
 
 # Sheet intent classification (Phase 2)：per-sheet 意图缓存不进库

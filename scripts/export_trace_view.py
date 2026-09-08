@@ -17,8 +17,8 @@
   * 3D 节点坐标直接取 model.json tower_node 的 x/y/z（Z-up，前端旋转到 Y-up）。
 
 用法：
-  python scripts/export_trace_view.py [--model out/phase3-zc1/model.json] \
-      [--dxf-dir out/phase3-zc1/_dxf_scope] [--overlay web/demo/35A2-ZC1/trace/overlay.json] \
+  python scripts/export_trace_view.py [--model out/35A2-ZC1-full-deliver/model.json] \
+      [--dxf-dir out/35A2-ZC1-full-deliver/_dxf_scope] [--overlay web/demo/35A2-ZC1/trace/overlay.json] \
       [--out web/demo/35A2-ZC1/traceview]
 """
 
@@ -95,10 +95,10 @@ def export_dxf_sheet(dxf_path: Path) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--model", default="out/phase3-zc1/model.json")
-    ap.add_argument("--dxf-dir", default="out/phase3-zc1/_dxf_scope")
+    ap.add_argument("--model", default="out/35A2-ZC1-full-deliver/model.json")
+    ap.add_argument("--dxf-dir", default="out/35A2-ZC1-full-deliver/_dxf_scope")
     ap.add_argument("--overlay", default="web/demo/35A2-ZC1/trace/overlay.json")
-    ap.add_argument("--inventory", default="out/phase3-zc1/bar_inventory.json")
+    ap.add_argument("--inventory", default="out/35A2-ZC1-full-deliver/bar_inventory.json")
     ap.add_argument("--out", default="web/demo/35A2-ZC1/traceview")
     args = ap.parse_args()
 

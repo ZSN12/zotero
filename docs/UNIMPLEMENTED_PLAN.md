@@ -1,7 +1,7 @@
 # 35A1-JC1 未实现计划与事实基准（历史归档，已停止更新）
 
 > **⚠️ 本文档已归档（2026-08-31）**：权威行动清单已迁移至仓库根目录
-> [`UNIMPLEMENTED_PLAN.md`](../UNIMPLEMENTED_PLAN.md)。
+> [`UNIMPLEMENTED_PLAN.md`](archive/UNIMPLEMENTED_PLAN.md)。
 > 本文件保留 2026-08-30 及以前的历史诊断记录（A2 1.9% 时代的根因分析、
 > 待裁决决策点、底段穷举等），**其中的基线数字（1.9% / 4.8%）与
 > 「待提交」状态均已过时**，仅作历史参考。当前权威基线与任务状态
@@ -470,5 +470,5 @@ z 7,500-23,000 大面积重叠（14⊇06 全部、11⊇05 大部分、10⊂05）
 - `docs/40_SEG_AND_BOTTOM_FACADE_PROBE.md` —— 40 段 + 底段立面只读探查（六条证据）。
 - `docs/SHEETS_10_14_IDENTIFICATION.md` —— 10-14 号图定性（收分斜率判决，163 行完整报告）。
 - `docs/JC1_SINGLE_TOWER_PLAN.md` —— 权威定稿版（技术真值表）。
-- `PHASE_PROGRESS.md` —— 阶段进度。
+- `archive/PHASE_PROGRESS.md` —— 阶段进度。
 - `/tmp/probe40/` —— 40 段 + 10-14 探查脚本（可复现）。

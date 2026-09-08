@@ -5,7 +5,7 @@
 > [`40_SEG_AND_BOTTOM_FACADE_PROBE.md`](40_SEG_AND_BOTTOM_FACADE_PROBE.md)、
 > [`SHEETS_10_14_IDENTIFICATION.md`](SHEETS_10_14_IDENTIFICATION.md)、
 > [`JC1_SINGLE_TOWER_PLAN.md`](JC1_SINGLE_TOWER_PLAN.md)（权威定稿）、
-> [`../UNIMPLEMENTED_PLAN.md`](../UNIMPLEMENTED_PLAN.md)（权威行动清单）。
+> [`archive/UNIMPLEMENTED_PLAN.md`](archive/UNIMPLEMENTED_PLAN.md)（权威行动清单）。
 >
 > **已推翻的四个核心结论**：
 > ① 40/41 不是塔腿立面，是构件加工详图（倒三角桁架 + BOM），不能进 3D merge；

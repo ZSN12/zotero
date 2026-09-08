@@ -7,7 +7,7 @@
 > 4594mm=07 号，GT 底段需 5524mm）。详见
 > [`40_SEG_AND_BOTTOM_FACADE_PROBE.md`](40_SEG_AND_BOTTOM_FACADE_PROBE.md)、
 > [`SHEETS_10_14_IDENTIFICATION.md`](SHEETS_10_14_IDENTIFICATION.md)、
-> [`../UNIMPLEMENTED_PLAN.md`](../UNIMPLEMENTED_PLAN.md)。
+> [`archive/UNIMPLEMENTED_PLAN.md`](archive/UNIMPLEMENTED_PLAN.md)。
 > 本文其余内容（8 呼高分组、layer0 结论、召回天花板）不受影响。
 
 ## 用户问题

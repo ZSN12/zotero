@@ -333,10 +333,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path in ("/full.html", "/full"):
-            # 旧全链 Demo（上传图纸→跑链→GLB）。品牌站上线后从根路径
-            # 降级到此入口（2026-09-04）。
-            return self._send(200, (ROOT / "index.html").read_bytes(), "text/html; charset=utf-8")
+        if path in ("/full.html", "/full", "/app.js", "/styles.css"):
+            # 旧全链 Demo 已于 2026-09-08 下线（上传图纸→跑链页面，
+            # 由 /site/ 品牌站 + /demo/ 查看器取代）；保留路径 302 收口。
+            self.send_response(302)
+            self.send_header("Location", "/site/index.html")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if path == "/" or path == "/index.html":
             # 品牌站页面全是相对路径资产（site.css 等），根路径直接内嵌
             # 会让资产 404 裸奔成无样式 HTML——302 到 /site/ 才能落位。
@@ -345,10 +349,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        if path in ("/app.js", "/styles.css"):
-            f = ROOT / path.lstrip("/")
-            ctype = "application/javascript" if path.endswith(".js") else "text/css"
-            return self._send(200, f.read_bytes(), ctype)
         if path == "/api/audit":
             rows = []
             if AUDIT_PATH.exists():
