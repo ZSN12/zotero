@@ -40,8 +40,13 @@ def _select_master_row(rows: List[Dict]) -> Optional[Dict]:
     if not usable:
         return None
     angles = [r for r in usable if is_angle_section(r.get("section"))]
-    pool = angles or usable
-    return max(pool, key=lambda r: int(r.get("qty", 0) or 0))
+    if not angles:
+        # docstring 语义修复（P0-1 审计发现）：无角钢行 = 纯配件撞号，
+        # 返回 None 走 fittings_skipped。此前 `pool = angles or usable`
+        # 在无角钢行时 fallback 到配件行，把 319/620 等 18 个连板件号
+        # 拉进杆件数量比对，虚增 under_identified 63→45。
+        return None
+    return max(angles, key=lambda r: int(r.get("qty", 0) or 0))
 
 
 @dataclass

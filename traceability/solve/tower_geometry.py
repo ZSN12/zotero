@@ -6976,7 +6976,7 @@ def exact_overlap_dedup(
         cp2 = tuple(q1[i] + d2[i] * t for i in range(3))
         return _m.dist(cp1, cp2)
 
-    def _dup(a, b) -> bool:
+    def _dup(a, b, base: Optional[str] = None) -> bool:
         sa, sb = a[1], b[1]
         d1 = tuple(sa[1][i] - sa[0][i] for i in range(3))
         d2 = tuple(sb[1][i] - sb[0][i] for i in range(3))
@@ -6994,6 +6994,13 @@ def exact_overlap_dedup(
         l1 = _m.dist(sa[0], sa[1])
         l2 = _m.dist(sb[0], sb[1])
         ov = max(0.0, min(hi, l1) - max(lo, 0.0))
+        if base == "b":
+            # 候选杆（b）为基准：仅当 b 的几何被 a 完整覆盖时 b 才是 a 的
+            # 副本。min(l1,l2) 基准下「识别杆 ⊂ 补全杆」的包含关系也会
+            # 判重，删掉补全杆的增量段（ZC1 S11d 实测：05 册 dxf 腿杆
+            # z 19223→26464 被 legspan 19223→27400 覆盖 88.8%，legspan
+            # 整条被删，[26464,27400] 补全段丢失 → 8 TP FN）。
+            return ov >= overlap_frac * l2
         return ov >= overlap_frac * min(l1, l2)
 
     origin_rank = {
@@ -7054,7 +7061,7 @@ def exact_overlap_dedup(
                                 (kx + dx, ky + dy, kz + dz), ()):
                             if b_item[0] in ev_removed:
                                 continue
-                            if _dup(a, b_item):
+                            if _dup(a, b_item, base="b"):
                                 ev_removed.add(b_item[0])
                                 ev_removed_ids.append(
                                     str(bars[b_item[0]].get("id")))

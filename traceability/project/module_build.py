@@ -34,6 +34,67 @@ def _root_stem(cid: str) -> str:
     return s
 
 
+def _bar_geometry_key(model: EngineeringModel, comp: Component) -> Optional[Tuple[Tuple[float, ...], Tuple[float, ...]]]:
+    """杆件端点几何位形键（100mm 桶）——同 stem 的四面镜像若几何不同则是多根。
+
+    sidegen l/r 孪生（side_direct + side_mirror 对，x 镜像）是同一物理杆：
+    x 取绝对值归一，让孪生共享位形键（P5 语义，bar 122/139/140/152 实证，
+    BOM qty=1）。节点坐标缺失（未求解/占位）返回 None，调用方退化为
+    face 计数。
+    """
+    props = comp.properties or {}
+    fn, tn = props.get("from_node"), props.get("to_node")
+    if not fn or not tn:
+        return None
+    is_sidegen = str(comp.id).startswith("sidegen__")
+    pts = []
+    for nid in (fn, tn):
+        node = model.components.get(nid)
+        if node is None:
+            return None
+        np_ = node.properties or {}
+        x, y, z = np_.get("x"), np_.get("y"), np_.get("z")
+        if x is None or y is None or z is None:
+            return None
+        if is_sidegen:
+            x = abs(float(x))
+        pts.append((round(float(x) / 100.0), round(float(y) / 100.0), round(float(z) / 100.0)))
+    a, b = sorted(pts)
+    return (a, b)
+
+
+def _connected_component_count(segs: List[Tuple[Tuple[float, ...], Tuple[float, ...]]],
+                               *, tol: float = 2.75) -> int:
+    """端点连通分量数——同 stem 内端点相邻（100mm 桶坐标距离 < tol≈275mm）
+    的段视为同一物理杆的连续 split/panel 细分。
+
+    108/606 实证：同一棱上的 __split 链首尾相接（端点重合），四面各
+    一条连续线 → 4 个分量 = 4 根；而 105 的四棱对称杆四面端点互不相接
+    → 4 个分量（各自独立成段）同样是 4 根。两种场景同式计算。
+    """
+    import math as _math
+    n = len(segs)
+    if n == 0:
+        return 0
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            near = any(
+                _math.dist(pi, pj) < tol
+                for pi in segs[i] for pj in segs[j]
+            )
+            if near:
+                parent[find(i)] = find(j)
+    return len({find(i) for i in range(n)})
+
+
 def physical_bar_counts(model: EngineeringModel, *, labeled_only: bool = True) -> Dict[str, int]:
     """合并模型中各 bar_id 物理根数（tower_bar 计数）。
 
@@ -52,9 +113,24 @@ def physical_bar_counts(model: EngineeringModel, *, labeled_only: bool = True) -
     604 报 3>2 假超计引爆 r_project_bom_master。非 primary 杆件本身
     保留（几何不删、r_no_duplicate_bar_id 仍可见），仅不参与 BOM
     数量核对。
+
+    V3（2026-09-08，P0 verified 交付审计）：stem 内按「几何连通分量」计数
+    ——两个语义修正叠加：
+    a) 塔身四棱对称杆（105/106/132…）在 F/B/L/R 四面各是一根独立物理杆，
+       BOM qty=4 是对的；V1 把它们并成 1 根，制造 63 件号假性
+       under_identified（其中 24 件 ×4、12 件 ×2）。
+    b) split/panel 细分段（108/606）在同一棱上首尾相接——按端点连通
+       （<250mm 视为相接）合并回一根；四面各一条连续线 → 4 根。
+       sidegen l/r 孪生（side_direct+side_mirror 对，x 镜像）是同一物理
+       杆（P5 语义，bar 122/139/140/152 实证 BOM qty=1）：x 取绝对值
+       归一后两孪生端点重合自然并 1。
+    余下的模型数 > 图纸数（3906/3907/623 等件号错挂/过度展开）是真实
+    数据分歧，保持 conflicts 让人工核（不自动 passed）。
     """
     from ..eval.metrics import is_physical_bar
-    stems: Dict[str, Dict[str, set]] = {}  # bar_id -> {root_stem: faces}
+    # bar_id -> {root_stem: [端点对列表]}（几何可用按几何连通分量，缺失退 face）
+    stems: Dict[str, Dict[str, list]] = {}
+    face_fallback: Dict[str, Dict[str, set]] = {}
     for cid, comp in model.components.items():
         if comp.kind != "tower_bar":
             continue
@@ -70,10 +146,22 @@ def physical_bar_counts(model: EngineeringModel, *, labeled_only: bool = True) -
         # V2：同视图重复件号的非 primary 实例不参与计数
         if props.get("bar_id_dup") and props.get("bar_id_primary") is False:
             continue
-        stems.setdefault(bid, {}).setdefault(_root_stem(cid), set()).add(
-            str(props.get("face") or ""))
-    # 每 bar_id 取 root stem 数为物理根数；同 stem 内 front 为识别源头（记录用）
-    return {bid: len(stem_map) for bid, stem_map in stems.items()}
+        stem = _root_stem(cid)
+        geo = _bar_geometry_key(model, comp)
+        if geo is None:
+            face_fallback.setdefault(bid, {}).setdefault(stem, set()).add(
+                str(props.get("face") or ""))
+        else:
+            stems.setdefault(bid, {}).setdefault(stem, []).append(geo)
+    counts: Dict[str, int] = {}
+    for bid, stem_map in stems.items():
+        n = sum(_connected_component_count(list(segs)) for segs in stem_map.values())
+        n += sum(len(faces) for faces in face_fallback.get(bid, {}).values())
+        counts[bid] = n
+    for bid, stem_map in face_fallback.items():
+        if bid not in counts:
+            counts[bid] = sum(len(faces) for faces in stem_map.values())
+    return counts
 
 
 def resolve_master_bom_path(

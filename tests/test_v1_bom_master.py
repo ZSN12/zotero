@@ -17,14 +17,23 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 
-def _bar(cid, bid, face, origin="dxf_geom", status="recognized"):
+def _bar(cid, bid, face, origin="dxf_geom", status="recognized",
+         fn="n1", tn="n2", x1=0.0, y1=0.0, z1=0.0, x2=1.0, y2=0.0, z2=0.0):
     return {
         "id": cid, "kind": "tower_bar", "name": cid,
         "properties": {
-            "bar_id": bid, "from_node": "n1", "to_node": "n2",
+            "bar_id": bid, "from_node": fn, "to_node": tn,
             "face": face, "geometry_origin": origin,
             "geometry_class": status, "evidence_status": status,
+            "x": x1, "y": y1, "z": z1, "x2": x2, "y2": y2, "z2": z2,
         },
+    }
+
+
+def _node(nid, x, y, z):
+    return {
+        "id": nid, "kind": "tower_node", "name": nid,
+        "properties": {"x": x, "y": y, "z": z},
     }
 
 
@@ -60,19 +69,27 @@ class RootStemCountTest(unittest.TestCase):
         )
 
     def test_counts_per_root_stem(self):
-        """112 场景：26 dxf_geom 实例 + 4 stitch，全来自 2 条母线 → 计 2 根。"""
+        """112 场景：26 dxf_geom 实例 + 4 stitch，全来自 2 条母线 → 计 2 根。
+
+        V3（2026-09-08）：节点无坐标 → 位形键退化 face；四面镜像 share
+        同一 from/to 节点（同节点=同几何）→ 几何位形相同 → 仍计 1 根。
+        """
         from traceability.model import Component, EngineeringModel
         from traceability.project.module_build import physical_bar_counts
 
         model = EngineeringModel(name="m")
+        model.add_component(Component(**_node("n1", 0.0, 0.0, 0.0)))
+        model.add_component(Component(**_node("n2", 1.0, 0.0, 0.0)))
         bars = []
-        # 母线 A：front + b/l/r 镜像 + 二级 split（同 root stem）
+        # 母线 A：front + b/l/r 镜像 + 二级 split（同 root stem 且同几何）
         for face in ("f", "b", "l", "r"):
             bars.append(_bar(f"4f_barA_front__split61_{face.upper()}", "112", face))
         bars.append(_bar("4f_barA_front__split61__split65_F", "112", "f"))
-        # 母线 B：独立识别线（_56 后缀），front + back
-        bars.append(_bar("4f_barB_front_56__split55_F", "112", "f"))
-        bars.append(_bar("4f_barB_front_56__split55_B", "112", "b"))
+        # 母线 B：独立识别线（_56 后缀），独立节点（几何不同）
+        model.add_component(Component(**_node("n3", 10.0, 0.0, 0.0)))
+        model.add_component(Component(**_node("n4", 11.0, 0.0, 0.0)))
+        bars.append(_bar("4f_barB_front_56__split55_F", "112", "f", fn="n3", tn="n4"))
+        bars.append(_bar("4f_barB_front_56__split55_B", "112", "b", fn="n3", tn="n4"))
         for b in bars:
             model.add_component(Component(
                 id=b["id"], name=b["id"], kind="tower_bar",
@@ -80,6 +97,27 @@ class RootStemCountTest(unittest.TestCase):
             ))
         counts = physical_bar_counts(model)
         self.assertEqual(counts.get("112"), 2)
+
+    def test_four_edge_symmetric_bars_count_4(self):
+        """V3（P0 审计）：塔身四棱对称杆 F/B/L/R 几何各不相同 → 计 4 根。
+
+        JC1 实证：bar 105 端点在四条棱 (-,+)/(+,-)/(-,-)/(+,+) 上，
+        BOM qty=4；V1 语义把它们并成 1 根是 63 件号假 under 的主因之一。
+        """
+        from traceability.model import Component, EngineeringModel
+        from traceability.project.module_build import physical_bar_counts
+
+        model = EngineeringModel(name="m")
+        edges = [(-500.0, 500.0), (500.0, -500.0), (-500.0, -500.0), (500.0, 500.0)]
+        faces = ["F", "B", "L", "R"]
+        for i, (ex, ey) in enumerate(edges):
+            model.add_component(Component(**_node(f"a{i}", ex, ey, 1000.0)))
+            model.add_component(Component(**_node(f"b{i}", ex * 0.9, ey * 0.9, 2000.0)))
+            model.add_component(Component(**_bar(
+                f"4f_bar105_front_{faces[i]}", "105", faces[i].lower(),
+                fn=f"a{i}", tn=f"b{i}")))
+        counts = physical_bar_counts(model)
+        self.assertEqual(counts.get("105"), 4)
 
 
 class MasterRowSelectionTest(unittest.TestCase):
@@ -135,8 +173,11 @@ class ConflictClassificationTest(unittest.TestCase):
         self.assertIn("100", under)              # 模型 1 < 图纸 4 → 覆盖缺口
         self.assertNotIn("200", under)           # 1 == 1 → 无冲突
         self.assertNotIn("301", [c["bar_id"] for c in tree["conflicts"]])
-        # 302 纯配件撞号：_select_master_row 取 max-qty 行（-6X128 q2），
-        # model 2 == 2 → 不进任何清单（或按行选择不同，至少不误报 over）
+        # 302 纯配件撞号（无角钢行）：返回 None → fittings_skipped，
+        # 不进杆件数量比对（P0-1 审计修复：此前 fallback 到配件行）
+        self.assertIn("302", tree["fittings_skipped"])
+        self.assertNotIn("302", over)
+        self.assertNotIn("302", under)
 
     def test_harness_rule_semantics(self):
         """over_count → FAILED；仅 under → PENDING；全平 → PASSED。"""
