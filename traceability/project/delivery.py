@@ -8,6 +8,7 @@ M8：master BOM 物理件号核对 + 模块装配 demo + Web 工作台增强。
 from __future__ import annotations
 
 import json
+import re
 import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -258,6 +259,90 @@ def _harness_summary(model: EngineeringModel) -> Dict[str, Any]:
             {"rule": r.target_id, "status": r.status.value, "message": r.message}
             for r in results
         ],
+    }
+
+
+def _classify_projection_refs(
+    raw_refs: List[Dict[str, Any]],
+    model: EngineeringModel,
+    *,
+    proj_exemptions: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """P0-3c（2026-09-09）：unresolved 投影分类降级闸。
+
+    分类语义（已裁决类别只披露不阻塞 verified）：
+      * non_bom_label —— bar_id 不在 BOM 的图纸标注号（1-6/75/109-144/
+        UNLABELED 等，详图编号/板厚标记），或 BOM 行是配件行
+        （row_class != member，如 151/159 板件——side 视图里的板厚
+        标记投影）——与杆件核对语义无关（classify_bom_row 白名单
+        同纪律）；
+      * bar_id_present —— 件号已存在于最终模型（同一物理杆由主视图
+        重建，侧视图投影只是未能挂链）——几何已在、非丢失；
+      * review_exempted —— 人工裁决豁免（projection_exemptions 按
+        component_id 显式列举 + 时效），语义同规则豁免通道——证据链
+        归档于归因报告，非静默通过；
+      * unresolved_unknown —— 真未解（under-28 族的件号覆盖缺口），
+        保持 review_required。
+    模型内无 bom_row 组件时退回保守口径：全部 unknown，不降级。
+    返回 {"counts": {...}, "refs": [...attribution 标注后的全量]}。
+    """
+    proj_exemptions = proj_exemptions or {}
+    bom_row_props: Dict[str, Any] = {}
+    for comp in model.components.values():
+        if comp.kind == "bom_row":
+            bid = str((comp.properties or {}).get("bar_id") or "")
+            if bid:
+                bom_row_props[bid] = comp.properties or {}
+    final_bar_ids = {
+        str(p.get("bar_id") or "")
+        for c in model.components.values()
+        if c.kind == "tower_bar"
+        for p in [c.properties or {}]
+        if p.get("bar_id")
+    }
+    classified: List[Dict[str, Any]] = []
+    n_non_bom = n_present = n_exempt = 0
+    for ref in raw_refs:
+        cid = str(ref.get("component_id") or "")
+        bid = ""
+        m = re.search(r"bar_(.+)_side", cid)
+        if m:
+            bid = m.group(1)
+        cat = "unresolved_unknown"
+        if cid in proj_exemptions:
+            # 人工裁决豁免（component_id 显式列举 + 时效）
+            cat = "review_exempted"
+            n_exempt += 1
+        elif bom_row_props:
+            row = bom_row_props.get(bid) if bid else None
+            if bid and row is None:
+                cat = "non_bom_label"
+                n_non_bom += 1
+            elif bid and row is not None and str(
+                    row.get("row_class") or "member") != "member":
+                # BOM 行是配件（板/螺栓）——投影是板厚标记等
+                # 非杆件语义（fittings_skipped 同纪律）
+                cat = "non_bom_label"
+                n_non_bom += 1
+            elif bid and bid in final_bar_ids:
+                cat = "bar_id_present"
+                n_present += 1
+        classified.append({**ref, "attribution": cat})
+    return {
+        "total": len(raw_refs),
+        "non_bom_label": n_non_bom,
+        "bar_id_present": n_present,
+        "review_exempted": n_exempt,
+        "unresolved_unknown": sum(
+            1 for r in classified
+            if r.get("attribution") == "unresolved_unknown"),
+        "note": (
+            "non_bom_label=图纸标注号非 BOM 件号（BOM 无此行或配件行，非杆件语义）；"
+            "bar_id_present=件号已由主视图重建在最终模型（侧投影未挂链，几何已在）；"
+            "review_exempted=人工裁决豁免（projection_exemptions，证据链归档）；"
+            "unresolved_unknown=保持 review_required 的未解投影"
+        ),
+        "refs": classified,
     }
 
 
@@ -912,8 +997,12 @@ def deliver_project(
 
     bar_inventory = aggregate_bar_inventory(
         sheet_model_list, model_sources=sheet_sources,
+        bom_rows=_load_bom_rows(bom_path) if bom_path else None,
     ) if sheet_model_list else {}
-    cross_sheet_bar_id = cross_file_bar_id_report(sheet_model_list) if sheet_model_list else {}
+    cross_sheet_bar_id = cross_file_bar_id_report(
+        sheet_model_list,
+        bom_rows=_load_bom_rows(bom_path) if bom_path else None,
+    ) if sheet_model_list else {}
     bom_tree = aggregate_bom_tree(
         sheet_model_list,
         master_bom_path=str(bom_path) if bom_path else None,
@@ -1181,13 +1270,57 @@ def deliver_project(
     # 阶段 5.3：未匹配投影（unresolved_projection_refs）不得静默通过——
     # 有跨视图身份未解出时降级为 review_required，供人工复核。
     unresolved_projection_count = 0
+    unresolved_projection_attribution: Dict[str, Any] = {}
     half_width_degraded = False
     if merged_model is not None:
         _df = merged_model.components.get("drawing_file")
         if _df is not None:
-            unresolved_projection_count = len(
-                (_df.properties or {}).get("unresolved_projection_refs") or []
-            )
+            _raw_refs = (_df.properties or {}).get("unresolved_projection_refs") or []
+            # P0-3c（2026-09-09）投影分类降级闸：unresolved 投影先按语义
+            # 分类，已裁决类别只披露不阻塞 verified——
+            #   * non_bom_label：bar_id 不在 BOM 的图纸标注号（1-6/75/
+            #     109-144/UNLABELED 等，详图编号/板厚标记），或 BOM 行是
+            #     配件行（row_class != member，如 151/159 板件——side 视图
+            #     里的板厚标记投影）——与杆件核对语义无关
+            #     （classify_bom_row 白名单同纪律）；
+            #   * bar_id_present：件号已存在于最终模型（同一物理杆由主
+            #     视图重建，侧视图投影只是未能挂链）——几何已在、非丢失；
+            #   * review_exempted：人工裁决豁免（projection_exemptions，
+            #     按 component_id 显式列举 + 时效），语义同规则豁免通道
+            #     ——证据链归档于归因报告，非静默通过。
+            # 剩余 unresolved_unknown（如 under-28 族的件号覆盖缺口）
+            # 保持 review_required。模型内 bom_row 组件与 bar_id 集合
+            # 是判定依据；BOM 行缺失时（无 bom_row）退回保守口径：全部
+            # 计入 unknown，不降级。
+            _proj_exemptions: Dict[str, Dict[str, Any]] = {}
+            if _raw_refs:
+                _ex_path = _load_review_exemptions(ov, layer_map_path)
+                if _ex_path is not None:
+                    try:
+                        from datetime import date as _date
+                        _ex_doc = json.loads(
+                            Path(_ex_path).read_text(encoding="utf-8"))
+                        _expires = _ex_doc.get("expires")
+                        if not (_expires and str(_expires)
+                                < _date.today().isoformat()):
+                            for _pcid, _pex in (
+                                    _ex_doc.get("projection_exemptions")
+                                    or {}).items():
+                                if isinstance(_pex, dict):
+                                    _proj_exemptions[str(_pcid)] = _pex
+                    except (json.JSONDecodeError, OSError):
+                        _proj_exemptions = {}
+                _attr_result = _classify_projection_refs(
+                    _raw_refs, merged_model,
+                    proj_exemptions=_proj_exemptions)
+                unresolved_projection_attribution = _attr_result
+                unresolved_projection_count = _attr_result[
+                    "unresolved_unknown"]
+                # 分类后原列表替换为全量（含 attribution），报告侧可见完整披露
+                _df.properties["unresolved_projection_refs"] = \
+                    _attr_result["refs"]
+            else:
+                unresolved_projection_count = 0
             # 阶段 3.2：生产路径半宽拟合失败（half_width_degraded=True 且非 GT 注入）
             # 时，四面展开退化到 abs(t) 假深度，必须 review_required，禁止假装闭合。
             half_width_degraded = bool(
@@ -1308,10 +1441,18 @@ def deliver_project(
             "message": "空间合并走了降级回退路径",
         })
     if unresolved_projection_count > 0:
+        _attr = unresolved_projection_attribution or {}
+        _cls = ""
+        if _attr:
+            _cls = (f"（全量 {_attr.get('total')} 处："
+                    f"{_attr.get('non_bom_label', 0)} 非 BOM 标注号、"
+                    f"{_attr.get('bar_id_present', 0)} 件号已由主视图重建、"
+                    f"{_attr.get('review_exempted', 0)} 人工豁免、"
+                    f"{unresolved_projection_count} 处未解）")
         review_reasons.append({
             "code": "UNRESOLVED_PROJECTIONS",
             "stage": "solve",
-            "message": f"{unresolved_projection_count} 处跨视图投影未匹配",
+            "message": f"{unresolved_projection_count} 处跨视图投影未匹配{_cls}",
         })
     if half_width_degraded:
         review_reasons.append({
@@ -1441,6 +1582,10 @@ def deliver_project(
         "topology": topology_summary,
         # 阶段 5.3：未匹配投影计数（>0 时降级 review_required）
         "unresolved_projection_refs": unresolved_projection_count,
+        # P0-3c（2026-09-09）：投影分类披露——non_bom_label（图纸标注号非
+        # BOM 件号）/ bar_id_present（件号已由主视图重建，侧投影未挂链）/
+        # unresolved_unknown（真未解，保持 review_required）。
+        "unresolved_projection_attribution": unresolved_projection_attribution,
         # 阶段 3.2：半宽拟合是否退化（true=生产路径走 abs(t) 假深度，已降级 review_required）
         "half_width_degraded": half_width_degraded,
         "mesh_stats": mesh_stats,

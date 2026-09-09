@@ -16,8 +16,14 @@ def aggregate_bar_inventory(
     models: List[EngineeringModel],
     *,
     model_sources: Optional[List[str]] = None,
+    bom_rows: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """按 bar_id 汇总各 sheet 杆件出现次数与截面信息。"""
+    """按 bar_id 汇总各 sheet 杆件出现次数与截面信息。
+
+    bom_rows 提供时（P0-3，2026-09-09）：非 master BOM 件号的跨册出现
+    从 cross_sheet 计数排除（图面噪声件号与 r_project_cross_sheet_bar_id
+    的核对语义无关——与 cross_file_bar_id_report 的白名单闸同纪律）。
+    """
     by_id: Dict[str, Dict[str, Any]] = {}
     qty_by_source: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
@@ -68,23 +74,39 @@ def aggregate_bar_inventory(
 
     entries = []
     cross_sheet = []
+    # P0-3：BOM 白名单（member 行）——非杆件件号的跨册出现是图面噪声
+    member_ids: set = set()
+    if bom_rows:
+        from ..intake.tower_bom import classify_bom_row
+        for row in bom_rows:
+            if classify_bom_row(row.get("bar_id", ""),
+                               row.get("section", "")) == "member":
+                member_ids.add(str(row.get("bar_id", "")))
+    non_bom_cross = []
     for bid in sorted(by_id):
         node = by_id[bid]
         node["count"] = sum(qty_by_source[bid].values())
         node["qty_by_source"] = dict(qty_by_source[bid])
         entries.append(node)
         if len(node["sources"]) > 1:
-            cross_sheet.append({
+            entry = {
                 "bar_id": bid,
                 "sources": list(node["sources"]),
                 "count": node["count"],
-            })
+            }
+            if bom_rows and bid not in member_ids:
+                non_bom_cross.append(entry)
+                continue
+            cross_sheet.append(entry)
 
     return {
         "entries": entries,
         "total_unique_bar_ids": len(entries),
         "cross_sheet_groups": cross_sheet,
         "cross_sheet_count": len(cross_sheet),
+        # P0-3：非 BOM 件号的跨册出现（图面噪声，披露不核对）
+        "non_bom_cross_sheet_groups": non_bom_cross,
+        "non_bom_cross_sheet_count": len(non_bom_cross),
         # 证据链真实统计（阶段 2）
         "evidence_chain": {
             "bars_total": bars_total,

@@ -199,7 +199,52 @@ FP +90 为保留的外推段杆，P 32.3→31.5%，红线只约束 TP/R）。
 
 **豁免文件本身不随本轮提交**——留给人工核对 6 件后填写（P0-1/P0-2）。
 
-## 九、后续行动（按优先级）
+### 8.1 豁免落章（2026-09-09，P0-1 裁决后）
+
+`examples/external/guowang_35A1/review_exemptions.json` 两条已生效：
+
+| 规则 | 通道 | 指纹 | 裁决依据 |
+|---|---|---|---|
+| r_project_bom_master | FAILED+confirm_conflict | 14f0ffb8b85628d7 | §三.2b：602/623 同长对分件计数语义 |
+| r_bom_length_match | pending | 7e30195e47782dce | §七：62 欠识别（split 口径差 + P4 覆盖缺口）、23 存疑（件号错挂归 P4） |
+| projection_exemptions（123/153 side 投影） | component_id 显式列举 | — | §十一：BOM 同长对分件（122+123、152+153），几何已在模型，件号分件归 P4 |
+
+## 十一、P0-3b/3c：UNRESOLVED_PROJECTIONS 55 处分类降级闸（2026-09-09）
+
+55 处 unresolved 投影全部来自 35A1-JC1-02 册 side 视图（81 条 side 投影
+仅 26 条挂链成功）。逐一归因后分四类，`delivery.py` 落分类闸
+（`_classify_projection_refs`）——已裁决类别只披露不阻塞 verified，
+真未解保持 review_required：
+
+| 类别 | 数量 | 形态 | 裁决 |
+|---|---|---|---|
+| non_bom_label | 27+16+2=45 | ① bar_id 1-6/75/109-144/160/UNLABELED 等——不在 205 行 master BOM（详图编号/板厚标注/焊缝符号）；② 126/133/138/145/150/156/157/158/151/159——BOM 行是**配件行**（row_class != member，节点板/垫板），side 视图里的板厚标记投影 | 图纸标注号/配件标记非杆件语义（classify_bom_row 白名单 + fittings_skipped 同纪律），披露不阻塞 |
+| bar_id_present | 8 | 110×2/112×2/122/139/140/152——件号**已由 front 主视图重建**在最终模型，side 投影因「同册多候选无法唯一定位」未挂链 | 几何已在、非丢失；挂链消歧归 P4 件号绑定 |
+| review_exempted | 2 | 123/153——BOM 同长对分件（122+123 L50X4 L=1609 qty=1+1；152+153 L=305 qty=1+1），该长度物理几何已在模型（108 族四面 L=1608.7；z=33500 横隔面 298mm 杆族） | §三.2b 同族语义（BOM 同长对拆两个件号 vs 模型单一几何族），projection_exemptions 显式豁免，件号级分件归 P4 |
+| unresolved_unknown | 0 | —— | 本轮清零；后续新 unknown 仍会阻塞 review_required |
+
+保守口径：模型内无 bom_row 组件（如 110kv 示例）时分类闸不生效，
+全部按 unresolved_unknown 计——不得在无 BOM 证据时降级。
+豁免通道：`review_exemptions.json` 新增 `projection_exemptions` 节
+（按 component_id 显式列举 + 文件级 expires 时效，语义同规则豁免）。
+
+单测 `tests/test_projection_attribution.py` 9 例：四分类语义、
+UNLABELED/# 后缀解析、配件行扩展、豁免优先级、55 处实测形态混合、
+无 BOM 保守口径。
+
+## 十二、P0-3b：r_no_duplicate_bar_id BOM 语义闸（2026-09-09）
+
+18 组 → 0 组的两层收口（实测重跑 PASSED）：
+
+1. **intake 消歧语义补全**（层 1）：组内 primary 实例集中于唯一
+   root stem（其余全为 intake 标记的非 primary 贴线文字）视为已
+   裁决——实测 21 组；
+2. **BOM 语义闸**（层 2）：配件行撞号（133 连板 -6X115，1 组）按
+   fittings_skipped 同纪律摘出；member 行物理杆数 ≤ BOM qty
+   （110 qty=8 计 4 杆、112 同，2 组）为合法多位置复用——BOM 本身
+   声明了多件，非编号错误。
+
+## 十三、后续行动（按优先级）
 
 | # | 事项 | 归属 |
 |---|---|---|
@@ -209,7 +254,7 @@ FP +90 为保留的外推段杆，P 32.3→31.5%，红线只约束 TP/R）。
 | 4 | 非 BOM 件号（1-6/50/64/88/132/620）清理进 UNLABELED | P4 顺带 |
 | 5 | L5+L6 审计 → deliver_status 趋近 verified | P0-5/6 进行中 |
 
-## 十、铁律对齐声明
+## 十四、铁律对齐声明
 
 - 本轮全部改动为**计数/选行/去重语义修复**，零 GT 注入、零评测器
   改动（`traceability/eval/metrics.py` 未触碰）；

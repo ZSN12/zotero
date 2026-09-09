@@ -69,7 +69,13 @@ def classify_bom_row(bar_id: str, section: str) -> str:
 
 
 def parse_bom_csv(csv_path: str | Path) -> List[Dict]:
-    """解析 BOM CSV：bar_id, section, length_mm, qty。"""
+    """解析 BOM CSV：bar_id, section, length_mm, qty, sheet（若有列）。
+
+    P0-1b（2026-09-09）：sheet 列透传——merge_view_bars 的 UNLABELED→BOM
+    长度唯一匹配用「BOM 行 sheet vs 杆来源册」做跨册闸（件号 X 册的杆画
+    在 X 册图纸，长度巧合的跨册行不得绑定）。无该列的 BOM（110kv 示例）
+    sheet 为空串，闸不生效、行为零变化。
+    """
     rows: List[Dict] = []
     with Path(csv_path).open("r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
@@ -79,6 +85,7 @@ def parse_bom_csv(csv_path: str | Path) -> List[Dict]:
                 "section": row.get("section", "").strip(),
                 "length_mm": float(row.get("length_mm", 0) or 0),
                 "qty": int(row.get("qty", 1) or 1),
+                "sheet": (row.get("sheet") or "").strip(),
             })
     return rows
 
@@ -214,6 +221,13 @@ def cross_check_bom(model: EngineeringModel, bom_rows: List[Dict]) -> Engineerin
             source=SourceRef(SourceType.VENDOR, "tower_bom.csv", confidence=0.95),
             applies_to=applies_to,
         )
+        # P0-1b：BOM 行元数据（sheet/qty）并入长度维度 source.detail，
+        # merge_view_bars 跨册闸从这里读取（不新增维度 kind，模型结构零变化）
+        if row.get("sheet") or row.get("qty") is not None:
+            dim_len.source = SourceRef(
+                SourceType.VENDOR, "tower_bom.csv", confidence=0.95,
+                detail=f"sheet={row.get('sheet', '')};qty={row.get('qty', '')}",
+            )
         dim_sec = Dimension(
             id=f"dim_bom_section_{bid}",
             name=f"{bid} BOM 截面",

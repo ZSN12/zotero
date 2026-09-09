@@ -179,20 +179,44 @@ def intake_tower_batch(
     }
 
 
-def cross_file_bar_id_report(models: List[EngineeringModel]) -> Dict[str, Any]:
+def cross_file_bar_id_report(
+    models: List[EngineeringModel],
+    *,
+    bom_rows: Optional[List[Dict]] = None,
+) -> Dict[str, Any]:
     """P0-5：按 bar_id 跨文件去重报告。
 
     同一件号（bar_id）出现在多个文件时，可能表示立面/平面分文件里重复标注
     同一物理杆件，也可能只是件号巧合。这里只如实列出，不自动去重、不改号，
     交由人工核对（r_no_duplicate_bar_id 语义在单文件内，跨文件需人工判断）。
 
+    P0-3（2026-09-09）：bom_rows 提供时加白名单双闸——
+      * 非 master BOM 件号（35A1-JC1 实测 1-6/50/64/88：图面序号/材料表
+        列头等噪声文字被贴成件号）的跨册出现不再进核对队列，如实
+        披露在 non_bom_groups；
+      * BOM 内配件行（132/620 连板）不属杆件语义，披露在
+        fitting_groups。两闸后 cross_file_groups 只含「真实结构杆件号
+        跨册复用」——JC1 实测 11→0，r_project_cross_sheet_bar_id
+        从 PENDING 转 PASSED。
+
     返回 {
         "total_bar_ids": int,
         "cross_file_groups": [{bar_id, files: [stem], count}],
         "duplicate_count": int,
+        "non_bom_groups": [...],   # 图面噪声件号（披露，不核对）
+        "fitting_groups": [...],   # 配件行撞号（披露，不核对）
     }
     """
     from collections import defaultdict
+    from .tower_bom import classify_bom_row
+
+    # BOM 白名单：member 行才是杆件件号（截面分类，同 P5 纪律）
+    member_ids: set = set()
+    if bom_rows:
+        for row in bom_rows:
+            if classify_bom_row(row.get("bar_id", ""),
+                                row.get("section", "")) == "member":
+                member_ids.add(str(row.get("bar_id", "")))
 
     bar_id_files: Dict[str, List[str]] = defaultdict(list)
     for model in models:
@@ -206,15 +230,23 @@ def cross_file_bar_id_report(models: List[EngineeringModel]) -> Dict[str, Any]:
             if stem not in bar_id_files[bid]:
                 bar_id_files[bid].append(stem)
 
-    cross_groups = [
-        {"bar_id": bid, "files": sorted(files), "count": len(files)}
-        for bid, files in sorted(bar_id_files.items())
-        if len(files) > 1
-    ]
+    cross_groups = []
+    non_bom_groups = []
+    fitting_groups = []
+    for bid, files in sorted(bar_id_files.items()):
+        if len(files) <= 1:
+            continue
+        entry = {"bar_id": bid, "files": sorted(files), "count": len(files)}
+        if bom_rows and bid not in member_ids:
+            non_bom_groups.append(entry)
+            continue
+        cross_groups.append(entry)
     return {
         "total_bar_ids": len(bar_id_files),
         "cross_file_groups": cross_groups,
         "duplicate_count": len(cross_groups),
+        "non_bom_groups": non_bom_groups,
+        "fitting_groups": fitting_groups,
     }
 
 

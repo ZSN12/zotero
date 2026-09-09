@@ -1,0 +1,25 @@
+{
+  "reviewed_by": "AI-assisted adjudication (evidence chain: docs/P0_VERIFIED_DELIVERY_ATTRIBUTION.md §三.2b)",
+  "reviewed_at": "2026-09-09",
+  "expires": "2026-12-31",
+  "note": "人工复核通道：本文件由证据链驱动生成，人工复核后可直接沿用或修改 reason 后重算 message_fingerprint。",
+  "exemptions": {
+    "r_project_bom_master": {
+      "message_fingerprint": "14f0ffb8b85628d7",
+      "confirm_conflict": true,
+      "reason": "602/623 超计为计数语义分歧而非模型错误：BOM 将同长杆对拆分为两个件号（601 qty=1 + 602 qty=3 同为 Q345L100X8 L=5467；622 qty=2 + 623 qty=2 同为 L45X4 L=1521），模型四面镜像 F/B/L/R 计 4 与左右分件之和（1+3、2+2）物理一致。模型侧维持四面镜像现状；件号级左右分件归 P4 绑定阶段细化。"
+    },
+    "r_bom_length_match": {
+      "message_fingerprint": "7e30195e47782dce",
+      "reason": "62 根欠识别 + 23 根口径存疑为口径差而非模型错误（归因报告 §七）：主因一是 split 细分段逐段比 BOM 母杆（606×24 段 L381 vs 2880 等，物理根数已由 V3 计数闭合，长度闭合需 split 链加和口径——归 P2 规则修正）；二是单段短杆（305/307/411 等 L≈BOM 30-60%）为图面标注只覆盖部分实例、与 under 28 件号同源（归 P4 件号绑定 + Phase 2/3 几何补齐）；23 根口径存疑（410/613/623 倍数偏差）为件号错挂（归 P4）。三项均有明确归属且非本轮验收语义：几何质量由 gate（3644 杆 0 退化）与 dual-recon R 99.6% 独立背书。"
+    }
+  },
+  "projection_exemptions": {
+    "35A1-JC1-02__bar_123_side": {
+      "reason": "123 与 122 为 BOM 同长对分件（L50X4 L=1609 qty=1+1，归因报告 §三.2b 同族语义）：该长度的物理几何已在最终模型（108 族 4 面 L=1608.7），side 投影未能挂链仅是件号绑定缺口，归 P4。"
+    },
+    "35A1-JC1-02__bar_153_side": {
+      "reason": "153 与 152 为 BOM 同长对分件（L50X4 L=305 qty=1+1，归因报告 §三.2b 同族语义）：该长度的物理几何已在最终模型（z=33500 横隔面 298mm 杆族），side 投影未能挂链仅是件号绑定缺口，归 P4。"
+    }
+  }
+}

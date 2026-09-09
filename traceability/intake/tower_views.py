@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -1279,12 +1280,25 @@ def merge_view_bars(
     # BOM 长度表（dim_bom_length_*）与截面表
     bom_len: Dict[str, float] = {}
     bom_sec: Dict[str, str] = {}
+    # P0-1b（2026-09-09）：BOM 行元数据 sheet/qty（从 dim source.detail
+    # 解析，cross_check_bom 写入）——UNLABELED 长度唯一匹配的跨册闸
+    # 与数量闸用。无元数据（旧 BOM / 示例 CSV）时两闸不生效。
+    bom_sheet: Dict[str, str] = {}
+    bom_qty: Dict[str, int] = {}
     used_ids: set = set()
+    used_count: Dict[str, int] = defaultdict(int)
     for did, d in model.dimensions.items():
         if did.startswith("dim_bom_length_"):
             bid = did[len("dim_bom_length_"):]
             if d.value is not None:
                 bom_len[bid] = float(d.value)
+            det = (d.source.detail or "") if d.source else ""
+            m_sheet = re.search(r"sheet=([^;]*)", det)
+            m_qty = re.search(r"qty=(\d+)", det)
+            if m_sheet:
+                bom_sheet[bid] = m_sheet.group(1).strip()
+            if m_qty:
+                bom_qty[bid] = int(m_qty.group(1))
         elif did.startswith("dim_bom_section_"):
             bid = did[len("dim_bom_section_"):]
             bom_sec[bid] = str(d.value) if d.value is not None else ""
@@ -1297,29 +1311,46 @@ def merge_view_bars(
             unlabeled.append(bar)
             continue
         used_ids.add(bid)
+        used_count[bid] += 1
         ln = _bar_3d_length(bar, model)
         if ln is not None:
             bar.properties["length_mm_3d"] = round(ln, 2)
         if bid in bom_sec:
             bar.properties["section"] = bom_sec[bid]
 
-    # UNLABELED 用 BOM 长度唯一匹配
+    # UNLABELED 用 BOM 长度唯一匹配。P0-1b 三道闸（35A1-JC1 实测 6 件
+    # conflicts 里的 4 件源于无约束匹配）：
+    #   * 跨册闸：BOM 行 sheet 已知且 ≠ 杆来源册 → 排除。件号 X 册的
+    #     杆画在 X 册图纸（分册=BOM 行册）；02/05 册塔身杆被绑到 40 册
+    #     塔头支架件号（3906/3907/3910/3914），纯长度巧合（偏差
+    #     0.09%~0.85%），四面展开后 qty 4>2 假超计。
+    #   * 数量闸：该 bid 已绑实例数（含显式挂码）≥ BOM qty → 排除。
+    #   * 唯一性（既有）：长度 ±1% 候选恰为 1 才接受。
     for bar in unlabeled:
         ln = _bar_3d_length(bar, model)
         if ln is not None:
             bar.properties["length_mm_3d"] = round(ln, 2)
         candidates = []
         if ln is not None:
+            bar_sheet = str(bar.properties.get("source_file")
+                            or bar.properties.get("drawing_view") or "")
             for bid, bl in bom_len.items():
                 if bid in used_ids or bl <= 0:
                     continue
                 if abs(ln - bl) / bl <= 0.01:
+                    bsheet = bom_sheet.get(bid, "")
+                    if bsheet and bar_sheet and bsheet != bar_sheet:
+                        continue
+                    if bid in bom_qty and used_count.get(bid, 0) >= bom_qty[bid]:
+                        continue
                     candidates.append(bid)
         if len(candidates) == 1:
             bid = candidates[0]
             bar.properties["bar_id"] = bid
             bar.properties["section"] = bom_sec.get(bid)
+            bar.properties["bar_id_source"] = "bom_length_unique_match"
             used_ids.add(bid)
+            used_count[bid] += 1
 
     # 重建组件：保留主视图节点/杆件 + 图纸上下文 + BOM + 连接详图
     _KEEP_KINDS = frozenset({

@@ -260,6 +260,10 @@ def validate_no_duplicate_bar_id(model: EngineeringModel, rule_id: str) -> Optio
     （root stem 不同）共享同一 bar_id 才是重复。此前实例级计数把
     「bar 2 → 25 实例（10 物理杆）」报成 25 组重复——其中 15 组是
     四面镜像伪影。
+
+    P0-3b（2026-09-09）：intake 消歧已裁决形态扩展——组内 primary
+    实例集中于唯一 root stem（其余全为 intake 标记的贴线非 primary）
+    视为已裁决，与全非 primary 同语义（几何保留、BOM 排除、透明披露）。
     """
     from collections import defaultdict
     from ..project.module_build import _root_stem
@@ -283,15 +287,59 @@ def validate_no_duplicate_bar_id(model: EngineeringModel, rule_id: str) -> Optio
         if len(stems) <= 1:
             continue
         instances = [inst for lst in stems.values() for inst in lst]
-        if all(inst[2] for inst in instances):
+        # P0-3b（2026-09-09）消歧语义补全：intake 消歧（贪心最近文字）对
+        # 同 bar_id 多杆贴同文字时已标出唯一 primary stem——组内
+        # 「primary 实例集中于同一 root stem、其余全部是 intake_dup」
+        # 与 all(intake_dup) 同为已裁决形态（35A1-JC1 实测 17 组全部
+        # 是 1 primary stem + 1 dup stem：材料表行/多文字贴线的既知
+        # 噪声，几何保留、BOM 计数排除）。仅当 primary 实例本身分布在
+        # ≥2 个 root stem（真同号异杆）才进 review 队列。
+        primary_stems = {stem for stem, lst in stems.items()
+                         if any(not inst[2] for inst in lst)}
+        if len(primary_stems) <= 1:
             resolved[bid] = stems
         else:
             dups[bid] = stems
+    # P0-3b（2026-09-09）BOM 语义闸（模型内 bom_row 组件可读时）：
+    #   * 配件行件号（row_class != member，35A1-JC1 实测 133 连板
+    #     -6X115 撞杆号）不属杆件编号语义——披露计数、不进核对队列
+    #     （fittings_skipped 同纪律）；
+    #   * member 行且物理杆数 ≤ BOM qty：同一件号的合法多位置复用
+    #     （110 qty=8：front 主杆 + sidegen 侧读共 4 物理杆）——BOM
+    #     本身声明了多件，非编号错误。
+    n_fitting = 0
+    n_qty_ok = 0
+    bom_rows = {}
+    for comp in model.components.values():
+        if comp.kind == "bom_row":
+            p = comp.properties
+            bom_rows[str(p.get("bar_id"))] = p
+    if bom_rows:
+        for bid in list(dups.keys()):
+            row = bom_rows.get(bid)
+            if row is None:
+                continue
+            if str(row.get("row_class") or "member") != "member":
+                n_fitting += 1
+                resolved[bid] = dups.pop(bid)
+            else:
+                try:
+                    qty = int(row.get("qty", 0) or 0)
+                except (TypeError, ValueError):
+                    qty = 0
+                if qty > 0 and len(dups[bid]) <= qty:
+                    n_qty_ok += 1
+                    resolved[bid] = dups.pop(bid)
     n_resolved = len(resolved)
+    extra = ""
+    if n_fitting or n_qty_ok:
+        extra = (f"；{n_fitting} 组配件行撞号、{n_qty_ok} 组合法多位置"
+                 f"（物理杆数 ≤ BOM qty）已按 BOM 语义裁决")
     if not dups:
         msg = ("杆件编号物理杆级唯一（镜像/细分/孪生合并；"
                + (f"{n_resolved} 组同视图多文字已由 intake 消歧标记非 primary，"
-                  "BOM 计数排除、几何保留" if n_resolved else "无重复") + ")")
+                  "BOM 计数排除、几何保留" if n_resolved else "无重复")
+               + extra + ")")
         return ValidationResult(rule_id, ValidationStatus.PASSED,
                                 msg, "no-dup-bar-id")
     df = model.components.get("drawing_file")
