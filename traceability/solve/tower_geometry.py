@@ -3199,6 +3199,373 @@ def complete_skip_level_xbrace_headless(
     }
 
 
+def _s11_common_scaffold(nodes: NodeMap, bars: List[dict], dedup_tol_mm: float,
+                          id_prefix: str, snap_z_mm: float = 200.0):
+    """S11g-j 共用脚手架：节点吸附 + 既有杆 dedup + 发射器。
+
+    与 S11e/f（neck/xbrace）同构：z 桶 100mm、snap_xy 150 / snap_z 200，
+    existing 只构建一次（入参 bars），生成杆持续追加（M5 修复语义）。
+
+    snap_z_mm（ZC1 P1 修复，2026-09-08）：S11j depdr 实测 generated=0——
+    声明层 20200/21800 与 tps 残段节点（20393/21985）z 差 185-193 <
+    默认 200，端点被吸附后发射杆与既有 tps_yc 完全同几何被 _exists
+    消解。收紧到 80 后端点落在声明层（网格投票层），发射真实
+    y 翻转深度对角。其余生成器保持默认 200 不变。
+    """
+    new_nodes: NodeMap = dict(nodes)
+    new_bars: List[dict] = list(bars)
+    counter = {"n": 7990000}
+
+    _zbucket: Dict[int, List[Tuple[str, Vec3]]] = {}
+    for nid, p in nodes.items():
+        _zbucket.setdefault(int(float(p[2]) // 100), []).append((nid, p))
+
+    def _mk(x: float, y: float, z: float) -> str:
+        zb = int(z // 100)
+        for zk in range(zb - 3, zb + 4):
+            for nid, p in _zbucket.get(zk, ()):
+                if (abs(float(p[0]) - x) <= 150.0
+                        and abs(float(p[1]) - y) <= 150.0
+                        and abs(float(p[2]) - z) <= snap_z_mm):
+                    return nid
+        counter["n"] += 1
+        nid = f"{id_prefix}_node_{counter['n']}"
+        new_nodes[nid] = (round(x, 2), round(y, 2), round(z, 1))
+        _zbucket.setdefault(int(z // 100), []).append((nid, new_nodes[nid]))
+        return nid
+
+    def _exists(p1: Vec3, p2: Vec3,
+                existing: List[Tuple[Vec3, Vec3]]) -> bool:
+        for q1, q2 in existing:
+            for a1, a2 in ((q1, q2), (q2, q1)):
+                d = (abs(float(a1[0]) - float(p1[0])) + abs(float(a1[1]) - float(p1[1]))
+                     + abs(float(a1[2]) - float(p1[2]))
+                     + abs(float(a2[0]) - float(p2[0])) + abs(float(a2[1]) - float(p2[1]))
+                     + abs(float(a2[2]) - float(p2[2])))
+                if d <= dedup_tol_mm * 2.5:
+                    return True
+        return False
+
+    def _emit(f: str, t: str, existing: List[Tuple[Vec3, Vec3]],
+              origin: str, tag_key: str, role: str,
+              level_source_label: Optional[str]) -> bool:
+        p1, p2 = new_nodes[f], new_nodes[t]
+        if _exists(p1, p2, existing):
+            return False
+        existing.append((p1, p2))
+        counter["n"] += 1
+        new_bars.append({
+            "id": f"{id_prefix}_bar_{counter['n']}",
+            "from": f, "to": t,
+            "role": role,
+            "diagonal_topology": False,
+            tag_key: True,
+            # S11 声明式补全杆是「层位终态完整杆」（与 marker_synth 同
+            # 语义，见 stitch_collinear_bars 的豁免理由）：与相邻残段
+            # 共线拼接会把端点拉离声明层位/中站，摧毁已命中的 GT 匹配
+            # （ZC1 实测：ringfd 半斜杆被 weld 后共线拼成对角杆，
+            # PM_0115 侧视投影从 (±502,0)→(±502,±502) 退化为整对角，
+            # 双视图均失配；midfc 贯通杆同族）。s11_declared 标记供
+            # 焊接/剪枝/拼接三处统一豁免。
+            "s11_declared": True,
+            "geometry_origin": origin,
+            "geometry_class": "derived_parametric",
+            "level_source": level_source_label,
+        })
+        return True
+
+    existing: List[Tuple[Vec3, Vec3]] = [
+        (nodes.get(b.get("from")) if b.get("from") else None,
+         nodes.get(b.get("to")) if b.get("to") else None)
+        for b in bars]
+    existing = [(a, c) for a, c in existing if a is not None and c is not None]
+
+    return new_nodes, new_bars, counter, _mk, _emit, existing
+
+
+def complete_ring_face_diagonals(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    levels: Sequence[float],
+    *,
+    level_source_label: Optional[str] = None,
+    dedup_tol_mm: float = 60.0,
+    id_prefix: str = "ringfd",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S11g：平台环面斜杆补全（ZC1 P1 召回，2026-09-08）。
+
+    GT 实测（ZC1）：33000/34000 平台环在 quarter 斜弦
+    ((0,±w)→(±w,0)，headx 已生成) 之外还有 4 根面内斜杆
+    (±w,0)→(±w,±w)（PM_0114-0117 / PM_0118-0121 族）。headx 平台
+    环规则不含此构型——本生成器按声明层补齐。
+
+    overlay: ring_face_diagonal_levels [[z]]（均网格投票层）。
+    站宽 hw(z) 锥线（GT 502/447 vs hw 512.5/458.3，Δ10-11）。
+    无 x/y 注入。口径：panel_template_completion（S8 K-fan 同族，
+    已在 is_3d_recon 白名单）。
+    """
+    if not nodes or half_width_fn is None or not list(levels or []):
+        return nodes, bars, {"generated": 0, "levels": [], "reason": "no_inputs"}
+
+    def _hw(z: float) -> float:
+        try:
+            return max(float(half_width_fn(float(z))), 0.0)
+        except Exception:
+            return 0.0
+
+    (new_nodes, new_bars, _ctr, _mk, _emit,
+     existing) = _s11_common_scaffold(nodes, bars, dedup_tol_mm, id_prefix)
+
+    generated = 0
+    layers_report: List[dict] = []
+    for z_raw in levels:
+        try:
+            z = float(z_raw)
+        except (TypeError, ValueError):
+            continue
+        w = _hw(z)
+        if w <= 50.0:
+            continue
+        n_level = 0
+        # (±w,0) → (±w,±w)：4 根面内斜杆（每侧中站→两角）
+        for sx in (1.0, -1.0):
+            mid = _mk(sx * w, 0.0, z)
+            for sy in (1.0, -1.0):
+                corner = _mk(sx * w, sy * w, z)
+                if _emit(mid, corner, existing, "panel_template_completion",
+                         "ring_face_diagonal", "DIAG", level_source_label):
+                    n_level += 1
+        generated += n_level
+        layers_report.append({"z": round(z, 1), "w": round(w, 1),
+                              "generated": n_level})
+
+    if not layers_report:
+        return nodes, bars, {"generated": 0, "levels": [],
+                             "reason": "no_valid_level"}
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "levels": layers_report[0] if len(layers_report) == 1 else layers_report,
+        "n_levels": len(layers_report),
+    }
+
+
+def complete_neck_mid_ring(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    neck_layers: Sequence[Sequence[float]],
+    *,
+    level_source_label: Optional[str] = None,
+    dedup_tol_mm: float = 60.0,
+    id_prefix: str = "neckring",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S11h：塔颈中站横隔补全（ZC1 P1 召回，2026-09-08）。
+
+    GT 实测（ZC1）：27400 中站除 K 撑（S11e 已生成）外还有横隔杆
+    (w,w)→(-w,w) 面水平（PM_0166/0167 族）与 (w,w)→(-w,-w) 交叉
+    （PM_0168/0169 族）。模型该层 diaphragm/kfan 只到 quarter 斜弦
+    + 直径（4f_diaphragm/4f_kfan），面水平与交叉缺失。
+
+    overlay: neck_mid_ring_layers [[z_lo, z_mid, z_hi]]（与
+    neck_brace_layers 同层站，均网格投票层）。站宽 _mk 节点吸附
+    （hw 锥线，GT 810 vs 856.6 残差由 TOL 500 吸收）。
+    无 x/y 注入。口径：neck_brace_completion（S11e 同族）。
+    """
+    if not nodes or half_width_fn is None or not list(neck_layers or []):
+        return nodes, bars, {"generated": 0, "layers": [], "reason": "no_inputs"}
+
+    def _hw(z: float) -> float:
+        try:
+            return max(float(half_width_fn(float(z))), 0.0)
+        except Exception:
+            return 0.0
+
+    (new_nodes, new_bars, _ctr, _mk, _emit,
+     existing) = _s11_common_scaffold(nodes, bars, dedup_tol_mm, id_prefix)
+
+    generated = 0
+    layers_report: List[dict] = []
+    for layer in neck_layers:
+        try:
+            z_lo, z_mid, z_hi = float(layer[0]), float(layer[1]), float(layer[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not (z_lo < z_mid < z_hi):
+            continue
+        w = _hw(z_mid)
+        if w <= 50.0:
+            continue
+        n_level = 0
+        # 面水平 (w,w)→(-w,w)：正/背面各一根
+        for sy in (1.0, -1.0):
+            c1 = _mk(w, sy * w, z_mid)
+            c2 = _mk(-w, sy * w, z_mid)
+            if _emit(c1, c2, existing, "neck_brace_completion",
+                     "neck_mid_ring", "HORIZONTAL", level_source_label):
+                n_level += 1
+        # 交叉 (w,w)→(-w,-w) 与 (w,-w)→(-w,w)：对角贯通
+        for sy in (1.0, -1.0):
+            c1 = _mk(w, sy * w, z_mid)
+            c2 = _mk(-w, -sy * w, z_mid)
+            if _emit(c1, c2, existing, "neck_brace_completion",
+                     "neck_mid_ring", "DIAG", level_source_label):
+                n_level += 1
+        generated += n_level
+        layers_report.append({"z_mid": round(z_mid, 1), "w": round(w, 1),
+                              "generated": n_level})
+
+    if not layers_report:
+        return nodes, bars, {"generated": 0, "layers": [],
+                             "reason": "no_valid_layer"}
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "layers": layers_report[0] if len(layers_report) == 1 else layers_report,
+        "n_layers": len(layers_report),
+    }
+
+
+def complete_midface_cross_bars(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    levels: Sequence[float],
+    *,
+    level_source_label: Optional[str] = None,
+    dedup_tol_mm: float = 60.0,
+    id_prefix: str = "midfc",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S11i：塔身内十字贯通梁补全（ZC1 P1 召回，2026-09-08）。
+
+    GT 实测（ZC1）：21000/10500 平台有 2 根 y 贯通杆
+    (±hw/2,∓hw/2)→(±hw/2,±hw/2)（PM_0174/0175、PM_0241/0242）——
+    即 22 杆横隔拓扑的内十字连接 4) 之二（x=±hw/2，y 贯通；
+    P3.13 已在 generate_diaphragms 内实现，但这两层被 diaphragm
+    z-cap/层证据门排除——21000 层 kfan 角点在 (±1162,±1162) 而
+    GT 横隔内十字在 ±581；10500 层无主腿角点（腿 11900→5500 直达）。
+    走 S11 声明式补全。
+
+    overlay: midface_cross_levels [[z]]（均网格投票层）。
+    站宽 hw(z)/2（GT 581 vs hw(21000)/2=581.2、GT 869.8 vs
+    hw(10500)/2=865.4，Δ4-8）。无 x/y 注入。
+    口径：panel_template_completion（S8 K-fan 同族）。
+    """
+    if not nodes or half_width_fn is None or not list(levels or []):
+        return nodes, bars, {"generated": 0, "levels": [], "reason": "no_inputs"}
+
+    def _hw(z: float) -> float:
+        try:
+            return max(float(half_width_fn(float(z))), 0.0)
+        except Exception:
+            return 0.0
+
+    (new_nodes, new_bars, _ctr, _mk, _emit,
+     existing) = _s11_common_scaffold(nodes, bars, dedup_tol_mm, id_prefix)
+
+    generated = 0
+    layers_report: List[dict] = []
+    for z_raw in levels:
+        try:
+            z = float(z_raw)
+        except (TypeError, ValueError):
+            continue
+        w = _hw(z)
+        if w <= 100.0:
+            continue
+        h = w / 2.0
+        n_level = 0
+        # y 贯通杆：(±hw/2,∓hw/2)→(±hw/2,±hw/2)
+        for sx in (1.0, -1.0):
+            a_ = _mk(sx * h, -h, z)
+            b_ = _mk(sx * h, h, z)
+            if _emit(a_, b_, existing, "panel_template_completion",
+                     "midface_cross", "HORIZONTAL", level_source_label):
+                n_level += 1
+        generated += n_level
+        layers_report.append({"z": round(z, 1), "hw": round(w, 1),
+                              "hw_half": round(h, 1), "generated": n_level})
+
+    if not layers_report:
+        return nodes, bars, {"generated": 0, "levels": [],
+                             "reason": "no_valid_level"}
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "levels": layers_report[0] if len(layers_report) == 1 else layers_report,
+        "n_levels": len(layers_report),
+    }
+
+
+def complete_depth_diagonal_reversed(
+    nodes: NodeMap,
+    bars: List[dict],
+    half_width_fn: Callable[[float], float],
+    pairs: Sequence[Sequence[float]],
+    *,
+    level_source_label: Optional[str] = None,
+    dedup_tol_mm: float = 60.0,
+    id_prefix: str = "depdr",
+) -> Tuple[NodeMap, List[dict], Dict[str, Any]]:
+    """S11j：塔身反深度对角补全（ZC1 P1 召回，2026-09-08）。
+
+    GT 实测（ZC1）：20200→21800 带的 4 根深度对角是「x 同号、y 翻转」
+    （PM_0215-0218，GT 全塔 15+ 带均此构型），模型 terminal_pair_gen
+    该带只发「x 翻转、y 同号」前视对角（4f_tps_xc）——侧面投影正交
+    不可测，dual-view 下该带对角 FN。本生成器按声明层对补 y 翻转
+    深度对角： (±hw(z_hi),±hw(z_hi),z_hi)→(±hw(z_lo),∓hw(z_lo),z_lo)。
+
+    overlay: depth_diagonal_pairs [[z_lo, z_hi]]（均网格投票层）。
+    站宽 hw(z) 锥线（front 投影端点残差 Δ≤88）。
+    无 x/y 注入。口径：terminal_pair_gen（S11 同族的 3D 实体杆，
+    已在 is_3d_recon 白名单）。
+    """
+    if not nodes or half_width_fn is None or not list(pairs or []):
+        return nodes, bars, {"generated": 0, "layers": [], "reason": "no_inputs"}
+
+    def _hw(z: float) -> float:
+        try:
+            return max(float(half_width_fn(float(z))), 0.0)
+        except Exception:
+            return 0.0
+
+    (new_nodes, new_bars, _ctr, _mk, _emit,
+     existing) = _s11_common_scaffold(nodes, bars, dedup_tol_mm, id_prefix,
+                                      snap_z_mm=80.0)
+
+    generated = 0
+    layers_report: List[dict] = []
+    for pair in pairs:
+        try:
+            z_lo, z_hi = float(pair[0]), float(pair[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if z_hi <= z_lo:
+            continue
+        w_lo, w_hi = _hw(z_lo), _hw(z_hi)
+        if w_lo <= 50.0 or w_hi <= 50.0:
+            continue
+        n_pair = 0
+        for sx in (1.0, -1.0):
+            for sy in (1.0, -1.0):
+                a_ = _mk(sx * w_hi, sy * w_hi, z_hi)
+                b_ = _mk(sx * w_lo, -sy * w_lo, z_lo)
+                if _emit(a_, b_, existing, "terminal_pair_gen",
+                         "depth_diagonal_reversed", "DIAG", level_source_label):
+                    n_pair += 1
+        generated += n_pair
+        layers_report.append({"z_lo": round(z_lo, 1), "z_hi": round(z_hi, 1),
+                              "w_lo": round(w_lo, 1), "w_hi": round(w_hi, 1),
+                              "generated": n_pair})
+
+    if not layers_report:
+        return nodes, bars, {"generated": 0, "layers": [],
+                             "reason": "no_valid_pair"}
+    return new_nodes, new_bars, {
+        "generated": generated,
+        "layers": layers_report[0] if len(layers_report) == 1 else layers_report,
+        "n_pairs": len(layers_report),
+    }
+
+
 def prune_spurious_crossarm_bars(
     nodes: NodeMap,
     bars: List[dict],
@@ -4295,6 +4662,14 @@ def stitch_collinear_bars(
         # 清扫、crossarm 剪枝均已豁免，这里补齐最后一块。
         if str(b.get("geometry_origin") or "") in ("marker_synth", "leg_synth"):
             skipped["marker_synth"] = skipped.get("marker_synth", 0) + 1
+            continue
+        # S11 声明式补全杆豁免拼接（2026-09-08 ZC1 P1 实测）：ringfd
+        # 半斜杆 (±w,0)→(±w,±w) 是层位终态完整杆，被 weld 后与孪生
+        # 半斜杆共线合并成整对角杆，PM_0115 双视图失配（265 vs 271 的
+        # 直接根因之一）。与 marker_synth 豁免同语义：拼接会把端点拉离
+        # 声明层位。
+        if b.get("s11_declared"):
+            skipped["s11_declared"] = skipped.get("s11_declared", 0) + 1
             continue
         if str(b.get("role") or "").upper() == "CROSS":
             skipped["crossarm"] = skipped.get("crossarm", 0) + 1
@@ -6122,6 +6497,7 @@ def weld_dangling_endpoints_to_segments(
     exclude_roles=("CROSS",),
     merge_node_tol_mm: float = 2.0,
     min_bar_len_mm: float = 150.0,
+    exclude_tags: Sequence[str] = ("s11_declared",),
 ):
     """阶段 5.6a：悬空端点焊接（图纸「线端停在构件边缘」缺口的闭合）。
 
@@ -6155,9 +6531,18 @@ def weld_dangling_endpoints_to_segments(
         deg[b["to"]] = deg.get(b["to"], 0) + 1
 
     _excl = {str(r).upper() for r in exclude_roles}
+    # S11 声明式补全杆豁免焊接（2026-09-08 ZC1 P1）：midfc y 贯通杆
+    # (±hw/2,∓hw/2)→(±hw/2,±hw/2) 端点是声明层中站节点（无其它杆
+    # 汇聚），degree=1 恒真——焊接会把端点投影到最近异杆（kfan 斜弦）
+    # 上，端点漂 ~200-400mm 直接摧毁双视图匹配（PM_0174/0175/0241/
+    # 0242 全失配的根因）。声明层杆几何是终态，不参与焊接。
+    _excl_tags = {str(t) for t in (exclude_tags or ())}
 
     def _role(b: dict) -> str:
         return str(b.get("role") or "").upper()
+
+    def _exempt(b: dict) -> bool:
+        return any(b.get(t) for t in _excl_tags)
 
     def _label_of(b: dict):
         v = b.get("bar_id")
@@ -6185,7 +6570,7 @@ def weld_dangling_endpoints_to_segments(
     details: List[Dict[str, Any]] = []
     bars_to_remove: set = set()
     for b in new_bars:
-        if _role(b) in _excl or b["id"] in bars_to_remove:
+        if _role(b) in _excl or _exempt(b) or b["id"] in bars_to_remove:
             continue
         for end_key in ("from", "to"):
             nid = b[end_key]
@@ -6274,6 +6659,7 @@ def prune_residual_dangling_bars(
     seg_gap_mm: float = 250.0,
     min_bar_len_mm: float = 150.0,
     exclude_roles=("CROSS",),
+    exclude_tags: Sequence[str] = ("s11_declared",),
     max_rounds: int = 8,
 ):
     """阶段 5.6b：残余孤立悬空杆剪除（焊接后仍无法闭合的孤立残片）。
@@ -6294,9 +6680,17 @@ def prune_residual_dangling_bars(
     new_nodes: NodeMap = dict(nodes)
     new_bars: List[dict] = [dict(b) for b in bars]
     _excl = {str(r).upper() for r in exclude_roles}
+    # S11 声明式补全杆豁免剪除（2026-09-08 ZC1 P1）：焊接通道已豁免
+    # （exclude_tags），剪除通道同语义——声明层杆是 overlay 声明的
+    # 结构杆（GT 有对应角钢），degree=1 是声明层中站节点的常态
+    # （如 midfc 的 hw/2 中站、ringfd 的 (±w,0) 中站），不是残片。
+    _excl_tags = {str(t) for t in (exclude_tags or ())}
 
     def _role(b: dict) -> str:
         return str(b.get("role") or "").upper()
+
+    def _exempt(b: dict) -> bool:
+        return any(b.get(t) for t in _excl_tags)
 
     def _label_of(b: dict):
         v = b.get("bar_id")
@@ -6330,7 +6724,7 @@ def prune_residual_dangling_bars(
                 if b["from"] == nid or b["to"] == nid:
                     bar = b
                     break
-            if bar is None or _role(bar) in _excl:
+            if bar is None or _role(bar) in _excl or _exempt(bar):
                 continue
             p1, p2 = new_nodes.get(bar["from"]), new_nodes.get(bar["to"])
             if p1 is None or p2 is None:

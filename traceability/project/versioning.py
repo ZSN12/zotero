@@ -236,6 +236,12 @@ def collect_version_info(out_dir: Path, repo_root: Path,
                 "leg_span_layers",
                 "neck_brace_layers",
                 "skip_level_xbrace_layers",
+                # S11g-j（2026-09-08 ZC1 P1 召回）：同一披露义务——
+                # z-only 网格投票层 + 人工圈选的声明式补全键。
+                "ring_face_diagonal_levels",
+                "neck_mid_ring_layers",
+                "midface_cross_levels",
+                "depth_diagonal_pairs",
             ):
                 _ovv = _ov.get(_ovk)
                 if isinstance(_ovv, list) and _ovv:

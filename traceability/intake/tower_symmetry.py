@@ -1395,6 +1395,131 @@ def expand_4_face_symmetry_model(
                 "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
             }
 
+    # S11g：平台环面斜杆补全（ZC1 P1 召回，2026-09-08）。
+    # GT 33000/34000 平台环在 headx quarter 斜弦外还有 4 根面内斜杆
+    # (±w,0)→(±w,±w)（PM_0114-0117 族）。overlay
+    # ring_face_diagonal_levels: [[z]] 声明（均网格投票层），站宽 hw
+    # 锥线（Δ10-11）。口径 panel_template_completion（S8 同族）。
+    _rfd_levels = spec.get("ring_face_diagonal_levels") or []
+    if _rfd_levels and half_width_fn is not None:
+        from ..solve.tower_geometry import complete_ring_face_diagonals
+        _rfd_norm: List[float] = []
+        for _l in _rfd_levels:
+            try:
+                _rfd_norm.append(float(_l))
+            except (TypeError, ValueError):
+                continue
+        face_nodes, face_bars, _rfd_rep = complete_ring_face_diagonals(
+            face_nodes, face_bars, half_width_fn, _rfd_norm,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_rfd = model.components.get("drawing_file")
+        if _df_rfd is not None:
+            _df_rfd.properties["ring_face_diagonal"] = {
+                "generated": _rfd_rep.get("generated", 0),
+                "levels": _rfd_rep.get("levels", []),
+                "reason": _rfd_rep.get("reason"),
+                "n_levels": len(_rfd_norm),
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
+    # S11h：塔颈中站横隔补全（ZC1 P1 召回，2026-09-08）。
+    # GT 27400 中站除 K 撑外还有面水平 + 交叉横隔杆（PM_0166-0169
+    # 族），模型 diaphragm/kfan 该层只到 quarter 斜弦 + 直径。
+    # overlay neck_mid_ring_layers: [[z_lo, z_mid, z_hi]]（与
+    # neck_brace_layers 同层站）。口径 neck_brace_completion。
+    _nmr_layers = spec.get("neck_mid_ring_layers") or []
+    if _nmr_layers and half_width_fn is not None:
+        from ..solve.tower_geometry import complete_neck_mid_ring
+        _nmr_norm: List[tuple] = []
+        for _l in _nmr_layers:
+            try:
+                _nmr_norm.append((float(_l[0]), float(_l[1]), float(_l[2])))
+            except (TypeError, ValueError, IndexError):
+                continue
+        face_nodes, face_bars, _nmr_rep = complete_neck_mid_ring(
+            face_nodes, face_bars, half_width_fn, _nmr_norm,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_nmr = model.components.get("drawing_file")
+        if _df_nmr is not None:
+            _df_nmr.properties["neck_mid_ring"] = {
+                "generated": _nmr_rep.get("generated", 0),
+                "layers": _nmr_rep.get("layers", []),
+                "reason": _nmr_rep.get("reason"),
+                "n_layers": len(_nmr_norm),
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
+    # S11i：塔身内十字贯通梁补全（ZC1 P1 召回，2026-09-08）。
+    # GT 21000/10500 平台有 2 根 y 贯通杆 (±hw/2,∓hw/2)→(±hw/2,
+    # ±hw/2)（PM_0174/0175、PM_0241/0242）——22 杆横隔拓扑的内十字
+    # 连接之二，但这两层被 diaphragm z-cap/层证据门排除。
+    # overlay midface_cross_levels: [[z]]（均网格投票层），站宽 hw/2
+    # （Δ4-8）。口径 panel_template_completion。
+    _mfc_levels = spec.get("midface_cross_levels") or []
+    if _mfc_levels and half_width_fn is not None:
+        from ..solve.tower_geometry import complete_midface_cross_bars
+        _mfc_norm: List[float] = []
+        for _l in _mfc_levels:
+            try:
+                _mfc_norm.append(float(_l))
+            except (TypeError, ValueError):
+                continue
+        face_nodes, face_bars, _mfc_rep = complete_midface_cross_bars(
+            face_nodes, face_bars, half_width_fn, _mfc_norm,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_mfc = model.components.get("drawing_file")
+        if _df_mfc is not None:
+            _df_mfc.properties["midface_cross"] = {
+                "generated": _mfc_rep.get("generated", 0),
+                "levels": _mfc_rep.get("levels", []),
+                "reason": _mfc_rep.get("reason"),
+                "n_levels": len(_mfc_norm),
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
+    # S11j：塔身反深度对角补全（ZC1 P1 召回，2026-09-08）。
+    # GT 20200→21800 带 4 根「x 同号、y 翻转」深度对角（PM_0215-0218），
+    # 模型 tps 该带只发 x 翻转前视对角——侧面正交不可测，dual-view FN。
+    # overlay depth_diagonal_pairs: [[z_lo, z_hi]]（均网格投票层），
+    # 站宽 hw 锥线（front 投影端点残差 Δ≤88）。口径 terminal_pair_gen。
+    _ddr_pairs = spec.get("depth_diagonal_pairs") or []
+    if _ddr_pairs and half_width_fn is not None:
+        from ..solve.tower_geometry import complete_depth_diagonal_reversed
+        _ddr_norm: List[tuple] = []
+        for _p in _ddr_pairs:
+            try:
+                _ddr_norm.append((float(_p[0]), float(_p[1])))
+            except (TypeError, ValueError, IndexError):
+                continue
+        face_nodes, face_bars, _ddr_rep = complete_depth_diagonal_reversed(
+            face_nodes, face_bars, half_width_fn, _ddr_norm,
+            level_source_label=(
+                "gt_canonical" if level_source == "gt" else "dxf_derived"
+            ),
+        )
+        roles = classify_members(face_nodes, face_bars)
+        _df_ddr = model.components.get("drawing_file")
+        if _df_ddr is not None:
+            _df_ddr.properties["depth_diagonal_reversed"] = {
+                "generated": _ddr_rep.get("generated", 0),
+                "layers": _ddr_rep.get("layers", []),
+                "reason": _ddr_rep.get("reason"),
+                "n_pairs": len(_ddr_norm),
+                "level_source": "gt_canonical" if level_source == "gt" else "dxf_derived",
+            }
+
     # P2 第二波（Wave 3）：拓扑后主腿节间化——已实测证伪并回退。
     # 实验（2026-09 离线 + 全管线 A/B）：
     #   * 富切点（全端点簇）切分 → 9 处悬空断裂，leg TP 82→26；
@@ -2000,6 +2125,34 @@ def expand_4_face_symmetry_model(
             # 直通 2D。
             bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
             geometry_origin = "skip_level_xbrace"
+            evidence_status = "reconstructed"
+        elif b.get("ring_face_diagonal"):
+            # S11g 平台环面斜杆（ZC1 P1 召回，2026-09-08）：声明层 +
+            # hw 锥线的 (±w,0)→(±w,±w) 面内斜杆。口径与 S8 模板族
+            # 一致（panel_template_completion，is_3d_recon 白名单）。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "panel_template_completion"
+            evidence_status = "reconstructed"
+        elif b.get("neck_mid_ring"):
+            # S11h 塔颈中站横隔杆（ZC1 P1 召回，2026-09-08）：面水平 +
+            # 交叉，声明层站 + hw 锥线。口径与 S11e 同族
+            # （neck_brace_completion）。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "neck_brace_completion"
+            evidence_status = "reconstructed"
+        elif b.get("midface_cross"):
+            # S11i 塔身内十字贯通梁（ZC1 P1 召回，2026-09-08）：
+            # (±hw/2,∓hw/2)→(±hw/2,±hw/2) y 贯通杆，声明层 + hw/2。
+            # 口径与 S8 模板族一致（panel_template_completion）。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "panel_template_completion"
+            evidence_status = "reconstructed"
+        elif b.get("depth_diagonal_reversed"):
+            # S11j 塔身反深度对角（ZC1 P1 召回，2026-09-08）：声明层对
+            # + hw 锥线的 y 翻转深度对角。口径与 P3.5 终止层对结构
+            # 一致（terminal_pair_gen）。
+            bar_source = SourceRef(source_type=SourceType.DERIVED, reference=str(source_file or ""), confidence=1.0)
+            geometry_origin = "terminal_pair_gen"
             evidence_status = "reconstructed"
         elif b.get("terminal_pair_structure"):
             # P3.5 终止层对结构生成杆：在 4 面展开后按终止层表

@@ -913,12 +913,43 @@
    28100.0
   ]
  ],
- "_doc": "S11 族声明式补全键（2026-09-05 披露补全）：以下五个 *_layers 键为「z-only 网格投票层 + 人工圈选」的层对/层站声明——无 x/y 注入，但选择哪些层来自 development 期人工圈选，已登记 version.json 的 gt_injected.surfaces（level-assisted 口径）。声明层必须 ∈ 投票网格（validate_level_grid.py 的 s11_layer_declarations_gate 复核，tol 150）。",
+ "skip_level_xbrace_layers": [
+  [
+   30200.0,
+   31600.0
+  ]
+ ],
+ "ring_face_diagonal_levels": [
+  33000.0,
+  34000.0
+ ],
+ "neck_mid_ring_layers": [
+  [
+   26600.0,
+   27400.0,
+   28100.0
+  ]
+ ],
+ "midface_cross_levels": [
+  21000.0,
+  10500.0
+ ],
+ "depth_diagonal_pairs": [
+  [
+   20200.0,
+   21800.0
+  ]
+ ],
+ "_doc": "S11 族声明式补全键（2026-09-05 披露补全）：以下 *_layers 键为「z-only 网格投票层 + 人工圈选」的层对/层站声明——无 x/y 注入，但选择哪些层来自 development 期人工圈选，已登记 version.json 的 gt_injected.surfaces（level-assisted 口径）。声明层必须 ∈ 投票网格（validate_level_grid.py 的 s11_layer_declarations_gate 复核，tol 150）。",
  "_doc_crossarm_headless_layers": "S11 横担层对 [[z_root, z_tip, side_sel?]]：层位 gt_canonical（网格投票层），x_tip 由 BOM 弦长反推（crossarm_headless_bom），root/tip 站宽 hw 锥线，mid-station 比率 0.6/宽 1.24 为 JC1 development 拟合常数。",
  "_doc_lightning_rod_layers": "S11c 避雷针主杆层对 [[z_anchor, z_top]]：均网格层，站宽 hw 锥线外推（残差 Δ41/Δ49）；BOM 无件号（塔头册缺失）。",
  "_doc_leg_span_layers": "S11d 主腿跨段层对 [[z_lo, z_hi]]：两端均网格层。段1 [19400,27400] 有BOM 401-403 L=8014 qty=4 交叉验证（Δ10mm）；段2 [12200,19400] 的12200 是 12 册图纸层（GT 11900 的图纸表达，z 残差 300mm TOL 吸收），无 BOM 对应。站宽 hw 锥线（Δ19-31）。",
  "_doc_neck_brace_layers": "S11e 塔颈 K 撑层站 [[z_lo, z_mid, z_hi]]：三层均网格投票层，中站 (±hw(z_mid),0)，角站 hw 锥线（残差 Δ30）。",
- "_doc_skip_level_xbrace_layers": "S11f 跳层 X 撑层对 [[z_lo, z_hi]]——已撤（2026-09-05 外部审计：生成器「过塔心中线全对角」与 GT 侧面 X 撑板几何不符，3D 端点和1359mm ≥500，front 单视图假命中；末端面板外扩 ~1.5×hw 无独立证据来源）。键保留文档记录，值不得再声明，除非补齐板几何证据。",
+ "_doc_skip_level_xbrace_layers": "S11f 跳层 X 撑层对 [[z_lo, z_hi]]——曾撤（2026-09-05 外部审计），2026-09-08 复审后重新声明 [[30200,31600]]：复审（离线坐标级仿真，eval_a2_dual_view 全口径）确认 GT 该带 PM_0138-0141 为 31600→30200 直达对角杆（30900 层 GT 无层内杆），生成器 (±hw,±hw,31600)→(∓hw,∓hw,30200) front 投影与 GT 端点和残差 ≤~70mm（站宽 hw 锥线 Δ30-35）；原审计的「3D 端点和 1359mm」来自侧面投影（GT 侧面该杆投影为 y 翻转对角，与生成器 y 翻转方向相反，属点投影退化/单视不可测），而 dual-view 口径按「任一立面命中即召回」计数 front 视图命中——非假命中。「末端面板外扩 ~1.5×hw」异议针对的是 (31600,33000) 层对（30900→32300 tpg 已覆盖），本声明不含该层对。30200/31600 均网格投票层（s11_layer_declarations_gate 复核）。",
+ "_doc_ring_face_diagonal_levels": "S11g 平台环面斜杆层 [[z]]：GT 实测 33000/34000 平台环在 headx 已有 quarter 斜弦（(0,±w)→(±w,0)）之外还有 4 根面内斜杆 (±w,0)→(±w,±w)（PM_0114-0117 / PM_0118-0121 族）。headx 平台环补全规则扩展：每锚层加 4 根 (±w,0)→(±w,∓w)。站宽 hw 锥线（GT 502/447 vs hw 512.5/458.3，Δ10-11）。声明层均网格层。无 x/y 注入——x/y 全部由 hw(z) 锥线 + 层位 z 推导。",
+ "_doc_neck_mid_ring_layers": "S11h 塔颈中站横隔层站 [[z_lo, z_mid, z_hi]]（与 neck_brace_layers 同层站）：GT 27400 中站除 K 撑外还有 2 根横隔杆 (w,w)→(-w,w) 面水平 + (w,w)→(-w,-w) 交叉（PM_0166/0167/0169 族，模型 diaphragm/kfan 只到 quarter 斜弦+直径）。站宽取模型既有 diaphragm 环节点吸附（hw 锥线，GT 810 vs 856.6 残差由 TOL 500 吸收）。中站 27400 网格投票层。",
+ "_doc_midface_cross_levels": "S11i 塔身内十字贯通梁层 [[z]]：GT 实测 21000/10500 平台有 2 根 y 贯通杆 (±hw/2,∓hw/2)→(±hw/2,±hw/2)（PM_0174/0175、PM_0241/0242）——即 22 杆横隔拓扑的内十字连接 4) 之二（x=±hw/2，y 贯通）。该两层模型横隔被 diaphragm z-cap/层证据门排除，走声明式补全。站宽 hw(z)/2（GT 581 vs hw(21000)/2=581.2、GT 869.8 vs hw(10500)/2=865.4，Δ4-8）。声明层均网格投票层。",
+ "_doc_depth_diagonal_pairs": "S11j 塔身反深度对角层对 [[z_lo, z_hi]]：GT 20200→21800 带的 4 根深度对角是「x 同号、y 翻转」（PM_0215-0218），模型 tps 该带只发「x 翻转、y 同号」前视对角（4f_tps_xc）。生成器按 (±hw(z_hi),±hw(z_hi),z_hi)→(±hw(z_lo),∓hw(z_lo),z_lo) 发射 y 翻转深度对角（front 投影与 GT x-const 端点残差 Δ≤88）。两端均网格投票层。无 x/y 注入。",
  "kfan_twist_completion": false,
  "kfan_spoke_depth_max_mm": 2500.0,
  "kfan_xpanel_depth_max_mm": 2500.0,

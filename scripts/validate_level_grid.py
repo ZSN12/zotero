@@ -137,6 +137,11 @@ def main() -> int:
         ("leg_span_layers", 2),
         ("neck_brace_layers", 3),
         ("skip_level_xbrace_layers", 2),
+        # S11g-j（2026-09-08）：同门控义务——声明层须 ∈ 投票网格 ±150。
+        ("ring_face_diagonal_levels", 1),
+        ("neck_mid_ring_layers", 3),
+        ("midface_cross_levels", 1),
+        ("depth_diagonal_pairs", 2),
     ):
         groups = overlay.get(key) or []
         if not isinstance(groups, list) or not groups:
