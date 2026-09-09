@@ -919,6 +919,26 @@ def deliver_project(
                     f"bars {_ep_report.get('n_before')}→{_ep_report.get('n_after')}",
                     flush=True)
 
+        # P4（2026-09-08）：件号同族扩绑。BOM qty=4~8 而模型只绑 1~4 根的
+        # 件号（图面只在一处标号），按「sheet 锚 + 长度窗 + 数量闸」把
+        # front 面无号物理杆（独立杆/整链 span 单元）扩绑到同族件号。
+        # 披露字段 bar_id_source=family_expansion（非直读），报告落
+        # drawing_file.properties.bar_id_expansion_report。overlay 显式
+        # 开关（expand_family_binding），默认关闭保证既有口径零变化。
+        # 只改 bar_id 系属性、不加杆不改几何——A2 各口径按
+        # geometry_class/origin/face 选杆，不受影响。
+        if isinstance(ov, dict) and ov.get("expand_family_binding"):
+            from .bar_id_expansion import expand_family_bar_id_binding
+            _fx_report = expand_family_bar_id_binding(
+                merged_model,
+                length_tol=float(ov.get("expand_family_length_tol", 0.03)),
+            )
+            if _fx_report.get("expanded_units"):
+                print(
+                    f"[P4 family_expansion] 件号 {len(_fx_report.get('detail') or {})} "
+                    f"个 / 扩绑单元 {_fx_report.get('expanded_units')}",
+                    flush=True)
+
     # A1 证据集 BOM 白名单核验（2026-09-06）：识别件号与 master BOM 交叉
     # 核对，非 BOM 件号降级「待验证」（bar_id=UNLABELED_BOM_PENDING_*，原值
     # 留 bar_id_raw，A1 不进预测集）。必须放在 4-face expansion 之后——

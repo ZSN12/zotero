@@ -1897,5 +1897,7 @@
     "tol_mm": 300.0
   },
   "review_exemptions_file": "review_exemptions.json",
-  "_doc_review_exemptions_file": "P0-6 人工复核豁免（显式/带消息指纹/有时效；FAILED 豁免须 confirm_conflict=true）。当前豁免 r_project_bom_master 602/623 计数语义分歧（同长对 BOM 左右分件 vs 模型四面镜像），证据链见 docs/P0_VERIFIED_DELIVERY_ATTRIBUTION.md §三.2b。"
+  "_doc_review_exemptions_file": "P0-6 人工复核豁免（显式/带消息指纹/有时效；FAILED 豁免须 confirm_conflict=true）。当前豁免 r_project_bom_master 602/623 计数语义分歧（同长对 BOM 左右分件 vs 模型四面镜像），证据链见 docs/P0_VERIFIED_DELIVERY_ATTRIBUTION.md §三.2b。",
+  "_doc_expand_family_binding": "P4 件号同族扩绑（2026-09-08）：BOM qty=4~8 而模型只绑 1~4 根的件号（图面只在一处标号），按 sheet 锚+长度窗(±3%)+数量闸把 front 面无号物理杆（独立杆/split 链 span 单元）扩绑到同族件号。写 bar_id_source=family_expansion 披露，报告落 drawing_file.bar_id_expansion_report。只改 bar_id 不改几何——A2 口径按 geometry_class/origin/face 选杆不受影响。",
+  "expand_family_binding": true
 }
