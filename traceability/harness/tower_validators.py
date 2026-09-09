@@ -65,8 +65,39 @@ def _physical_stem(cid: str) -> str:
     return cid
 
 
+def _chain_span_mm(model: "EngineeringModel", segs: list) -> Optional[float]:
+    """split 链端到端距离（3D 节点坐标的最远两点）。
+
+    链加和会把 T 接打断产生的重叠段重复计量（606 实证：同一棱上
+    6 段互相 T 接，加和 9348 vs span 2337）；分段画线的物理母杆长度
+    是端到端距离。节点坐标缺失返回 None，调用方退化为段长加和。
+    """
+    pts: list = []
+    for _cid, _bar, _len, _bom in segs:
+        for end in ("from_node", "to_node"):
+            nid = _bar.properties.get(end)
+            node = model.components.get(str(nid)) if nid else None
+            if node is None:
+                continue
+            p = node.properties or {}
+            try:
+                pts.append((float(p["x"]), float(p["y"]), float(p["z"])))
+            except (TypeError, KeyError):
+                continue
+    if not pts:
+        return None
+    best = 0.0
+    for i in range(len(pts)):
+        for j in range(i + 1, len(pts)):
+            d = ((pts[i][0] - pts[j][0]) ** 2 + (pts[i][1] - pts[j][1]) ** 2
+                 + (pts[i][2] - pts[j][2]) ** 2) ** 0.5
+            if d > best:
+                best = d
+    return best
+
+
 def validate_bom_length_match(model: EngineeringModel, rule_id: str) -> Optional[ValidationResult]:
-    """杆件 3D 长度 vs BOM 长度，偏差 ≤ 3%（P0.1 按物理杆聚合）。
+    """杆件 3D 长度 vs BOM 长度，偏差 ≤ 3%。
 
     2026-08-31 前的旧口径把四面展开的每个实例当独立杆核验——同一物理杆的
     F/B/L/R 四个镜像实例被计 4 次（319 根「超差」里 4/5 是重复计数）。
@@ -75,20 +106,31 @@ def validate_bom_length_match(model: EngineeringModel, rule_id: str) -> Optional
         物理杆 = 同一 stem 的四面实例取 front 代表（无 front 取任一面），
         B/L/R 镜像不再单独计数。
 
-    split 段（__splitN 链）各自独立核验（2026-09-02 V1 语义对齐）：
-        段长 < BOM 长 = 欠识别（识别覆盖缺口，Phase 2/3 主战场）→ PENDING
+    split 链加和口径（P2，2026-09-08）：图纸分段画线（制造分段/视图
+    分段）的 BOM 母杆核验以**链**为单位——
+
+        核验对象 = front 面同一 root_bar_id（无 root 用剥面 stem）的全部
+        段；单段链用段长，多段链用端到端 span（不叠加——T 接打断的
+        重叠段加和会重复计量，606 实证：6 段互相 T 接，加和 9348 vs
+        span 2337）。
+
+        链 span < BOM = 欠识别（识别覆盖缺口，Phase 2/3 主战场）→ PENDING
         不拦交付（与 r_project_bom_master 的 under_identified 同语义）；
-        段长 > BOM 长 = 件号错配或母杆未截断重复（Phase 4.3）→ FAILED。
+        链 span > BOM = 件号错挂或母杆未截断重复（Phase 4.3）→ suspect
+        已标（bar_id_length_suspect）或 bar_id_dup/非 primary（同视图
+        重复标注的次实例）走 review 队列；无标记的纯超差才 FAILED
+        （诚实失败）。
 
     消息带物理杆/实例两种口径计数，便于审计对比。
     """
     failures = []
-    under = []    # 欠识别：段长 < BOM 长（识别覆盖缺口，非数据矛盾）
-    suspect = []  # 口径存疑：P4.3 已标 bar_id_length_suspect（同号歧义/塔头
-                  # 连续绘制 vs BOM 下料口径），属 review 队列，不自动判死
+    under = []    # 欠识别：链 span < BOM 长（识别覆盖缺口，非数据矛盾）
+    suspect = []  # 口径存疑：P4.3 已标 bar_id_length_suspect / bar_id_dup
+                  # 非 primary（同号歧义/重复标注次实例），review 队列
     matched = 0
     instance_count = 0
-    phys: dict = {}  # stem -> (actual_len, bar_id, bom_len, suspect_flag)
+    # 链分组：(root_bar_id | 剥面 stem, face) → [(cid, bar)]
+    chains: dict = {}
     for cid, bar in _iter_bars(model):
         bid = bar.properties.get("bar_id")
         bom_dim = model.dimensions.get(f"dim_bom_length_{bid}")
@@ -104,18 +146,28 @@ def validate_bom_length_match(model: EngineeringModel, rule_id: str) -> Optional
         if bom_len <= 0:
             continue
         instance_count += 1
-        stem = _physical_stem(cid)
+        root = bar.properties.get("root_bar_id") or _physical_stem(cid)
         face = str(bar.properties.get("face") or "")
-        _sus = bool(bar.properties.get("bar_id_length_suspect"))
-        # front 是识别源头，优先作为物理杆代表
-        if stem not in phys or face == "f":
-            phys[stem] = (float(actual), bid, bom_len, _sus)
-    for stem, (actual, bid, bom_len, _sus) in phys.items():
+        chains.setdefault((root, face), []).append((cid, bar, float(actual), bom_len))
+    for (root, face), segs in chains.items():
+        # front 是识别源头，优先作为物理杆代表（无 front 的链单独核验）
+        if face != "f" and any(f == "f" for (_r, f) in chains if _r == root):
+            continue
+        bid = segs[0][1].properties.get("bar_id")
+        bom_len = segs[0][3]
+        if len(segs) == 1:
+            actual = segs[0][2]
+        else:
+            actual = _chain_span_mm(model, segs)
+            if actual is None:  # 节点坐标缺失 → 退化为段长加和
+                actual = sum(s[2] for s in segs)
         matched += 1
         dev = abs(actual - bom_len) / bom_len
         if dev <= 0.03:
             continue
         rec = (bid, round(actual, 1), round(bom_len, 1), round(dev * 100, 1))
+        _sus = (bool(segs[0][1].properties.get("bar_id_length_suspect"))
+                or bool(segs[0][1].properties.get("bar_id_dup")))
         if actual < bom_len:
             under.append(rec)
         elif _sus:
@@ -135,14 +187,14 @@ def validate_bom_length_match(model: EngineeringModel, rule_id: str) -> Optional
             "bom-length")
     if under or suspect:
         # V1 同语义（r_project_bom_master）：欠识别是召回缺口、suspect 是
-        # P4.3 已登记的人工复核口径歧义（塔头连续绘制 vs BOM 下料长），
-        # 均非可自动裁决的数据矛盾 → PENDING 不拦交付；无标记的纯超差
-        # （件号错挂/重复）才 FAILED。
+        # P4.3 已登记的人工复核口径歧义（bar_id_length_suspect / bar_id_dup
+        # 同视图重复标注次实例），均非可自动裁决的数据矛盾 → PENDING
+        # 不拦交付；无标记的纯超差（件号错挂/重复）才 FAILED。
         return ValidationResult(
             rule_id, ValidationStatus.PENDING,
-            f"{matched} 核验 / {len(under)} 根欠识别（段长 < BOM 母杆，"
-            f"Phase 2/3 主战场）/ {len(suspect)} 根口径存疑（bar_id_length_"
-            f"suspect 已标，review 队列；旧实例口径 {instance_count}）："
+            f"{matched} 核验 / {len(under)} 根欠识别（链 span < BOM 母杆，"
+            f"Phase 2/3 主战场）/ {len(suspect)} 根口径存疑（suspect/dup 已标，"
+            f"review 队列；旧实例口径 {instance_count}）："
             f"{sorted(suspect, key=lambda t: -t[3])[:3]}",
             "bom-length")
     return ValidationResult(rule_id, ValidationStatus.PASSED,
