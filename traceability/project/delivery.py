@@ -156,12 +156,17 @@ def _apply_review_exemptions(
 ) -> Dict[str, Any]:
     """把有效的人工豁免应用到 harness 摘要（in-place 修改 + 返回披露）。
 
-    有效性三条件：规则当前 pending；豁免未过期；消息指纹匹配
+    有效性条件：规则当前 pending；豁免未过期；消息指纹匹配
     （sha256 前 16 位 == 豁免文件的 message_fingerprint）。三者任一
     不满足则豁免不生效，规则保持 pending。
 
-    应用后：rule 从 pending 列表移入 review_exempted 列表（不是
-    passed——报告中永远可见）；counts 里 pending-1、新增
+    P0-6（2026-09-08）扩展：FAILED 规则（数据冲突）也可豁免，但必须
+    显式带 ``confirm_conflict: true``——人工裁决「该冲突经核对属图纸/
+    模型数据分歧，模型侧维持现状」。豁免后规则移入 review_exempted
+    （不是 passed——报告中永远可见），failed 清零。
+
+    应用后：rule 从 pending/failed 列表移入 review_exempted 列表（不是
+    passed——报告中永远可见）；counts 里相应计数 -1、新增
     review_exempted 计数。
     """
     disclosure: Dict[str, Any] = {
@@ -182,36 +187,52 @@ def _apply_review_exemptions(
             return disclosure
         exemptions = doc.get("exemptions") or {}
         for ex_rule, ex in exemptions.items():
-            msg = next((r["message"] for r in harness.get("results", [])
-                        if r.get("rule") == ex_rule
-                        and r.get("status") == "pending"), None)
-            if msg is None:
+            r_found = next((r for r in harness.get("results", [])
+                            if r.get("rule") == ex_rule
+                            and r.get("status") in ("pending", "failed")), None)
+            if r_found is None:
                 disclosure["rejected"].append({
-                    "rule": ex_rule, "reason": "规则当前非 pending（豁免无对象）"})
+                    "rule": ex_rule, "reason": "规则当前非 pending/failed（豁免无对象）"})
                 continue
+            msg = r_found.get("message")
             fp = hashlib.sha256(str(msg).encode("utf-8")).hexdigest()[:16]
             if ex.get("message_fingerprint") != fp:
                 disclosure["rejected"].append({
                     "rule": ex_rule,
                     "reason": "消息指纹不匹配（pending 内容已变化，豁免失效）"})
                 continue
-            # 生效：pending → review_exempted（显式，非 passed）
+            if r_found.get("status") == "failed" and not ex.get("confirm_conflict"):
+                disclosure["rejected"].append({
+                    "rule": ex_rule,
+                    "reason": "FAILED 规则豁免必须显式 confirm_conflict: true"
+                              "（人工裁决数据分歧，模型侧维持现状）"})
+                continue
+            # 生效：pending/failed → review_exempted（显式，非 passed）
+            old_status = r_found.get("status")
             for r in harness.get("results", []):
-                if r.get("rule") == ex_rule and r.get("status") == "pending":
+                if r.get("rule") == ex_rule and r.get("status") == old_status:
                     r["status"] = "review_exempted"
                     r["message"] = (f"[人工复核豁免] {ex.get('reason', '')}"
                                     f"（reviewed_by={doc.get('reviewed_by')}, "
                                     f"at={doc.get('reviewed_at')}）")
-            harness["pending"] = [p for p in harness.get("pending", [])
-                                  if p != ex_rule]
+            if old_status == "pending":
+                harness["pending"] = [p for p in harness.get("pending", [])
+                                       if p != ex_rule]
+            else:
+                harness["failed"] = [p for p in harness.get("failed", [])
+                                     if p != ex_rule]
             harness.setdefault("review_exempted", []).append(ex_rule)
             counts = harness.setdefault("counts", {})
-            if counts.get("pending"):
-                counts["pending"] -= 1
+            if counts.get(old_status):
+                counts[old_status] -= 1
             counts["review_exempted"] = counts.get("review_exempted", 0) + 1
+            harness["all_passed"] = (
+                not (harness.get("failed") or [])
+                and not (harness.get("pending") or []))
             disclosure["applied"].append({
                 "rule": ex_rule,
                 "reason": ex.get("reason", ""),
+                "confirm_conflict": bool(ex.get("confirm_conflict")),
                 "reviewed_by": doc.get("reviewed_by"),
                 "reviewed_at": doc.get("reviewed_at"),
             })
@@ -920,6 +941,15 @@ def deliver_project(
         bar_inventory=bar_inventory,
         assembly_info=assembly_info,
     )
+    # P0-6（2026-09-08）：图册级规则同样走人工复核豁免（与单模型 harness
+    # 同纪律：显式、带消息指纹、有时效；FAILED 豁免额外要求
+    # confirm_conflict=True——人工裁决「模型侧正确/图纸数据分歧」）。
+    # 豁免后规则标 review_exempted（非 passed，报告永远可见），
+    # deliver_status 才可能离开 failed。
+    project_exemption_path = _load_review_exemptions(ov, layer_map_path)
+    if project_exemption_path is not None:
+        project_harness["review_exemptions"] = _apply_review_exemptions(
+            project_harness, project_exemption_path)
     artifact_paths = _write_project_artifacts(
         out_dir,
         bar_inventory=bar_inventory,
