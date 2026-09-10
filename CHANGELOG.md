@@ -6,6 +6,12 @@
 ## [Unreleased]
 
 - LevelGridSolver：从 DXF 尺寸/标注投票自推层网格（设计论证中）。
+- P3 35A2-JC1 全塔接入：02-07 册定标（overlay region_span_linear），
+  dual-recon R 33.8%→78.5%（TP 134→311）；tower_dxf.py 多 region
+  版面 region 外文字不再参与件号贴挂（材料表假冲突修复）；
+  centerline_extract.py leg_synth_min_span_mm 可配置。红线零回退
+  （JC1 304/99.6%、ZC1 95.1%）。
+- 基线表更新：ZC1 dual-recon 271/95.1%（P1 收口，此前误报 216/75.8%）。
 
 ## [0.4.0] - 2026-09-05
 

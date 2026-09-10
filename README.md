@@ -46,12 +46,13 @@ python3 web/server.py          # http://127.0.0.1:8000
 领域包契约与换塔纪律：[`domains/angle-tower/SKILL.md`](domains/angle-tower/SKILL.md)；
 口径诚实性纪律：[`domains/angle-tower/docs/CALIBER_DISCIPLINE.md`](domains/angle-tower/docs/CALIBER_DISCIPLINE.md)。
 
-### 当前基线（诚实呈报，2026-09-05，P2.6 注入撤回后）
+### 当前基线（诚实呈报，2026-09-10，P3 35A2-JC1 全塔接入后）
 
 | 塔 | 对外主口径 A2-dual-view-pure（直读并集） | 重建并集（辅助口径，仅内部归因） |
 |---|---|---|
 | 35A1-JC1（国网，36.6m） | TP 304 / P 63.5% / R 28.4% | 1067 / 99.6% @500mm |
-| 35A2-ZC1（换塔泛化） | TP 9 / P 6.2% / R 3.2% | 216 / 75.8% @500mm |
+| 35A2-ZC1（换塔泛化） | TP 9 / P 6.2% / R 3.2% | 271 / 95.1% @500mm（不可回退线） |
+| 35A2-JC1（P3 全塔接入） | TP 206 / P 29.4% / R 52.0% | 311 / 78.5% @500mm |
 
 > 重建并集含镜像/层表补全杆件，**不得冒充直读能力**；GT 注入面在
 > version.json `gt_injected.surfaces` 强制披露，门禁 2（validate_public_ir）
