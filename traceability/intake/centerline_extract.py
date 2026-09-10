@@ -1735,9 +1735,10 @@ def extract_centerline_drawing_segments(
                         _spans.append((_z1, _z2))
                 except Exception:
                     continue
+            _leg_min_span_mm = float((cfg or {}).get("leg_synth_min_span_mm", 800.0))
             for (z1, z2) in _spans:
-                if (z2 - z1) * 1.0 < 800.0:
-                    continue  # 最小主材长 800mm（设计常数跨型均 ≥1500）
+                if (z2 - z1) * 1.0 < _leg_min_span_mm:
+                    continue  # 最小主材长（设计常数跨型均 ≥1500；塔顶细段可显式放宽）
                 y1, y2 = _y_of_z(z1), _y_of_z(z2)
                 if y1 is None or y2 is None or y2 - y1 < 20.0:
                     continue

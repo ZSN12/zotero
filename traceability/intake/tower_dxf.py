@@ -2131,12 +2131,20 @@ def extract_tower_from_dxf(
     # (距离, 杆段序号, 文字序号, 件号)：先收集候选对，再全局按距离升序贪心
     # 无视图规范 / fallback 视图时，文本可能落在杆段 bbox 之外；
     # 此时不回退到空集合，而是全图兜底配对（单视图图纸）。
+    # P3（2026-09-08，35A2-JC1 压力测试）：图纸**声明了 view regions** 时，
+    # 落在全部 region 之外的文字（材料表 / 详图标注 / 图签）不参与贴挂——
+    # 此前 view=None 回退全图配对，35A2-02 材料表 169 个数字文字全在
+    # TEXT_SNAP=400 危险带，件号 146 从材料表 (26653) 贴到 315 单位外
+    # 塔身杆上，制造 r_project_bom_master 假冲突（4>1）。仅多 region
+    # 版面混排图受影响；无 regions 的单视图图纸保留全图兜底（旧行为）。
     all_seg_indices = list(range(len(bar_segments)))
     pairs: List[Tuple[float, int, int, str]] = []
     for ti, label in enumerate(text_labels):
         if label is None:
             continue
         view = text_view[ti]
+        if view is None and regions:
+            continue
         cands = segs_by_view.get(view) or segs_by_view.get("_all") or []
         if not cands:
             cands = all_seg_indices
@@ -2204,6 +2212,8 @@ def extract_tower_from_dxf(
         if label is None:
             continue
         view = text_view[ti]
+        if view is None and regions:
+            continue
         cands = segs_by_view.get(view) or segs_by_view.get("_all") or []
         if not cands:
             cands = all_seg_indices
