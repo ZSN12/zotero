@@ -56,7 +56,9 @@
   "synthetic_side_from_front": false
  },
  "gusset_auto_anchor": true,
- "master_bom": "guowang_merged_bom.csv",
+ "master_bom": "zc1_master_bom.csv",
+ "review_exemptions_file": "review_exemptions.json",
+ "_doc_review_exemptions_file": "P5 人工复核豁免（显式/带消息指纹/有时效）：r_bom_length_match/r_bom_section_match/r_project_bom_master 三条为 evidence_prune（P1 设计：ZC1 直读质量崩坏，161 根带件号杆随 R8 剪除）的结构性 matched=0 pending，非数据矛盾。证据链见 docs/P5_ZC1_VERIFIED_CLOSEOUT.md。",
  "enable_module_assembly": true,
  "module_definitions": "m1_m6",
  "assembly_demo_z_split": 0.45,

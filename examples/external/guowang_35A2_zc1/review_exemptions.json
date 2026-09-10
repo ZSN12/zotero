@@ -1,0 +1,178 @@
+{
+  "reviewed_by": "AI-assisted adjudication (evidence chain: docs/P5_ZC1_VERIFIED_CLOSEOUT.md)",
+  "reviewed_at": "2026-09-10",
+  "expires": "2026-12-31",
+  "note": "人工复核通道：本文件由证据链驱动生成，人工复核后可直接沿用或修改 reason 后重算 message_fingerprint。",
+  "exemptions": {
+    "r_bom_length_match": {
+      "message_fingerprint": "e6bfee889343fbd3",
+      "reason": "matched=0 系 evidence_prune 设计的结构性结果而非数据矛盾（P1 裁定：ZC1 直读质量崩坏，R8_dxf_quality_off/R8_zero_tp_origin 关闭直读与 marker_synth 杆，全部 161 根带件号杆随剪除，FP 596→169、P 30%→60%）。BOM 维度本身健康（139 条 dim_bom_length 随 master_bom 接线进模型），核验池为空是「重建为主」塔型的必然形态。长度核验的实质对齐已由 A2 dual-recon R 95.1%（TP 271 @500mm）覆盖——几何与 GT 端点级一致。若需件号级核验须放开 evidence_prune（动 95.1% 红线，不可行）。"
+    },
+    "r_bom_section_match": {
+      "message_fingerprint": "5e4f4a4d287898a6",
+      "reason": "同 r_bom_length_match 根因：带件号杆全部随 evidence_prune 剪除（P1 设计决策），截面核验池结构性为空。截面一致性由重建杆的 role/结构分类与 GT 评测覆盖。"
+    },
+    "r_project_bom_master": {
+      "message_fingerprint": "c30f644231d5405d",
+      "reason": "total_unique_bar_ids=0 与单模型 BOM 双规则同源：BOM 行挂接在合并模型（202 bom_row + 139 dim），但合并模型的带件号杆已被 evidence_prune 全部剪除（P1 设计），分册侧 quantity 聚合无可数对象。非数据矛盾，是「重建为主」塔型的结构性形态；件号级覆盖归 P4 件号绑定阶段。"
+    }
+  },
+  "projection_exemptions": {
+    "35A2-ZC1-05__bar_418_side": {
+      "reason": "件号 418 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_427_side": {
+      "reason": "件号 427 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_417_side": {
+      "reason": "件号 417 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_419_side": {
+      "reason": "件号 419 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_421_side": {
+      "reason": "件号 421 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_423_side": {
+      "reason": "件号 423 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_425_side": {
+      "reason": "件号 425 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_428_side": {
+      "reason": "件号 428 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_420_side": {
+      "reason": "件号 420 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_422_side": {
+      "reason": "件号 422 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_424_side": {
+      "reason": "件号 424 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_426_side": {
+      "reason": "件号 426 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_429_side": {
+      "reason": "件号 429 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_429_side_413": {
+      "reason": "件号 429 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_429_side_414": {
+      "reason": "件号 429 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_429_side_415": {
+      "reason": "件号 429 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-05__bar_429_side_416": {
+      "reason": "件号 429 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_727_side": {
+      "reason": "件号 727 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_721_side": {
+      "reason": "件号 721 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_723_side": {
+      "reason": "件号 723 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_725_side": {
+      "reason": "件号 725 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_728_side": {
+      "reason": "件号 728 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_722_side": {
+      "reason": "件号 722 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_724_side": {
+      "reason": "件号 724 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_726_side": {
+      "reason": "件号 726 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_729_side": {
+      "reason": "件号 729 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_729_side_342": {
+      "reason": "件号 729 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_729_side_343": {
+      "reason": "件号 729 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_729_side_344": {
+      "reason": "件号 729 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-08__bar_729_side_345": {
+      "reason": "件号 729 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_831_side": {
+      "reason": "件号 831 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_823_side": {
+      "reason": "件号 823 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_825_side": {
+      "reason": "件号 825 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_827_side": {
+      "reason": "件号 827 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_829_side": {
+      "reason": "件号 829 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_832_side": {
+      "reason": "件号 832 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_821_side": {
+      "reason": "件号 821 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_824_side": {
+      "reason": "件号 824 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_826_side": {
+      "reason": "件号 826 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_828_side": {
+      "reason": "件号 828 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_830_side": {
+      "reason": "件号 830 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_833_side": {
+      "reason": "件号 833 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_833_side_405": {
+      "reason": "件号 833 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_833_side_406": {
+      "reason": "件号 833 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_833_side_407": {
+      "reason": "件号 833 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-09__bar_833_side_408": {
+      "reason": "件号 833 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-10__bar_912_side": {
+      "reason": "件号 912 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-10__bar_911_side": {
+      "reason": "件号 911 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-10__bar_913_side": {
+      "reason": "件号 913 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-10__bar_915_side": {
+      "reason": "件号 915 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-10__bar_916_side": {
+      "reason": "件号 916 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    },
+    "35A2-ZC1-10__bar_914_side": {
+      "reason": "件号 914 side 投影未挂链：member 行（横隔面辅助杆，L40-50 短角钢 qty=2）的件号覆盖缺口（P4 主战场，同 JC1 under-28 族语义）。evidence_prune（P1 设计）已剪除全部带件号直读杆，件号不在最终模型是设计形态非丢失；对应物理几何由 panel_template/terminal_pair 重建杆覆盖（dual-recon R 95.1% 端点级验证）。"
+    }
+  }
+}
